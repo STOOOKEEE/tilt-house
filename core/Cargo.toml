@@ -1,0 +1,16 @@
+[package]
+name = "tilt-house-core"
+version = "0.1.0"
+edition = "2021"
+description = "Tilt House game rules, pool math and dealer pricing rules (shared by the contract and the simulator)"
+license = "MIT"
+
+[lib]
+name = "core_rules"
+
+[dependencies]
+borsh = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
