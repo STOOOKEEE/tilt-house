@@ -1,29 +1,43 @@
 import type { SignedDelegate } from 'near-api-js'
 import { signedDelegateToBase64 } from './delegate'
 
-export class RelayError extends Error {}
+/** A non-2xx reply; `code` is the relayer's error code (e.g. `rpc_timeout`: the tx may still land). */
+export class RelayError extends Error {
+  readonly code: string
 
-/** Relayer reply on 200. `pending` means its RPC wait timed out: the tx may still land. */
+  constructor(message: string, code: string) {
+    super(message)
+    this.code = code
+  }
+}
+
 export interface RelayResult {
   txHash: string
-  status: 'success' | 'pending'
 }
 
 /** Posts a SignedDelegate to `${relayerUrl}/relay`. Refusals and on-chain failures throw. */
 export async function relay(relayerUrl: string, signedDelegate: SignedDelegate): Promise<RelayResult> {
   const body = await postJson(`${relayerUrl}/relay`, { signedDelegate: signedDelegateToBase64(signedDelegate) })
-  if (!isRecord(body) || typeof body.txHash !== 'string') throw new RelayError('relayer sent an unexpected reply')
+  if (!isRecord(body) || typeof body.txHash !== 'string') {
+    throw new RelayError('relayer sent an unexpected reply', 'bad_reply')
+  }
   if (body.status === 'failure') {
     const reason = typeof body.failure === 'string' ? body.failure : 'unknown'
-    throw new RelayError(`transaction ${body.txHash} failed: ${reason}`)
+    throw new RelayError(`transaction ${body.txHash} failed: ${reason}`, 'tx_failure')
   }
-  if (body.status !== 'success' && body.status !== 'pending') throw new RelayError('relayer sent an unknown status')
-  return { txHash: body.txHash, status: body.status }
+  if (body.status !== 'success') throw new RelayError('relayer sent an unknown status', 'bad_reply')
+  return { txHash: body.txHash }
 }
 
-/** Asks the relayer to fund a new implicit account and register it on the token. Idempotent. */
+/** Asks the relayer to fund a new implicit account and register it on the token. */
 export async function activate(relayerUrl: string, accountId: string): Promise<void> {
-  await postJson(`${relayerUrl}/activate`, { accountId })
+  try {
+    await postJson(`${relayerUrl}/activate`, { accountId })
+  } catch (error) {
+    // Activation is one-time per account: a repeat (e.g. new browser) is fine.
+    if (error instanceof RelayError && error.code === 'already_activated') return
+    throw error
+  }
 }
 
 async function postJson(url: string, payload: object): Promise<unknown> {
@@ -34,8 +48,8 @@ async function postJson(url: string, payload: object): Promise<unknown> {
   })
   const body: unknown = await response.json().catch(() => null)
   if (!response.ok) {
-    const code = isRecord(body) && typeof body.error === 'string' ? body.error : 'no error code'
-    throw new RelayError(`relayer refused (${response.status}): ${code}`)
+    const code = isRecord(body) && typeof body.error === 'string' ? body.error : 'no_error_code'
+    throw new RelayError(`relayer refused (${response.status}): ${code}`, code)
   }
   return body
 }
