@@ -61,8 +61,8 @@ export function NearPrivyProvider({ config, children }: PropsWithChildren<{ conf
   }, [nearAccount, config])
 
   const value = useMemo(
-    () => ({ provider, nearAccount, walletId, gameKey }),
-    [provider, nearAccount, walletId, gameKey],
+    () => ({ config, provider, nearAccount, walletId, gameKey }),
+    [config, provider, nearAccount, walletId, gameKey],
   )
   return <NearContext.Provider value={value}>{children}</NearContext.Provider>
 }

@@ -1,6 +1,8 @@
 import { useLogin, useLogout, usePrivy } from '@privy-io/react-auth'
 import { NavLink } from 'react-router'
+import { formatUsdc } from '../format'
 import { useNear, type GameKeyStatus } from '../near/useNear'
+import { usePlayer } from '../near/usePoll'
 
 const NAV = [
   { to: '/', label: 'Lobby' },
@@ -31,6 +33,7 @@ export function TopBar() {
   const { login } = useLogin()
   const { logout } = useLogout()
   const { walletId, gameKey } = useNear()
+  const player = usePlayer()
 
   return (
     <header className="topbar">
@@ -46,8 +49,9 @@ export function TopBar() {
         {authenticated && walletId ? (
           <>
             <span title={walletId}>{shortAccount(walletId)}</span>
-            {/* Placeholder until the token contract is wired: balance comes from ft_balance_of. */}
-            <span className="money">— tUSDC</span>
+            <span className="money" title="your balance in the house (deposit and withdraw in Pools)">
+              {player.data ? `${formatUsdc(player.data.balance)} tUSDC` : '— tUSDC'}
+            </span>
             <span className={gameKey.state === 'error' ? 'loss' : 'key'}>{keyLabel(gameKey)}</span>
           </>
         ) : null}

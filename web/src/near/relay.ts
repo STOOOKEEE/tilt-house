@@ -40,6 +40,13 @@ export async function activate(relayerUrl: string, accountId: string): Promise<v
   }
 }
 
+/** Claims free testnet tUSDC (once per hour per account); returns the minted base units. */
+export async function claimFaucet(relayerUrl: string, accountId: string): Promise<string> {
+  const body = await postJson(`${relayerUrl}/faucet`, { accountId })
+  if (!isRecord(body) || typeof body.minted !== 'string') throw new RelayError('relayer sent an unexpected reply', 'bad_reply')
+  return body.minted
+}
+
 async function postJson(url: string, payload: object): Promise<unknown> {
   const response = await fetch(url, {
     method: 'POST',

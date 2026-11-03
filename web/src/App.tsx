@@ -7,6 +7,7 @@ import { Dealers } from './pages/Dealers'
 import { FastForward } from './pages/FastForward'
 import { Lobby } from './pages/Lobby'
 import { Pools } from './pages/Pools'
+import { Table } from './pages/Table'
 
 export default function App({ config }: { config: Config }) {
   return (
@@ -23,6 +24,7 @@ export default function App({ config }: { config: Config }) {
           <main className="page">
             <Routes>
               <Route path="/" element={<Lobby />} />
+              <Route path="/table/:dealer" element={<Table />} />
               <Route path="/pools" element={<Pools />} />
               <Route path="/dealers" element={<Dealers />} />
               <Route path="/sim" element={<FastForward />} />

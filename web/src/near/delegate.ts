@@ -15,8 +15,8 @@ export type GameMethod = (typeof GAME_METHODS)[number]
 /** 0.25 NEAR in yoctoNEAR: caps what a stolen browser key can burn in gas. */
 export const GAME_KEY_ALLOWANCE = 250_000_000_000_000_000_000_000n
 
-/** Bets may request VRF through OutLayer (yield/resume), so leave headroom. */
-export const MOVE_GAS = 100_000_000_000_000n
+/** Each move requests VRF from OutLayer; the house needs ≥ 150 TGas prepaid (contract-api.md). */
+export const MOVE_GAS = 200_000_000_000_000n
 
 /** AddKey for the browser game key: function calls to the house only, no deposits possible. */
 export function gameKeyAction(gameKey: PublicKey, houseContract: string): Action {

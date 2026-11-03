@@ -94,3 +94,258 @@ h1 {
   color: var(--loss);
   padding: 1.5rem;
 }
+
+h2 {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+a {
+  color: var(--pink);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+a.button {
+  display: inline-block;
+  color: var(--bg);
+  background: var(--pink);
+  padding: 0.35rem 0.9rem;
+  text-decoration: none;
+}
+
+button.ghost {
+  color: var(--text);
+  background: transparent;
+  border: 1px solid #33363b;
+}
+
+input,
+select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid #33363b;
+  padding: 0.3rem 0.5rem;
+}
+
+.prompt,
+.panel,
+.play,
+.round {
+  background: var(--panel);
+  border: 1px solid #222428;
+  padding: 1rem;
+  margin: 1rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.prompt {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid #222428;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.card.closed {
+  border-color: var(--loss);
+}
+
+.card header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25rem;
+}
+
+.tag {
+  margin-left: auto;
+  color: var(--gold);
+  font-size: 0.8rem;
+}
+
+.card dl,
+.proof {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.3rem 1rem;
+  margin: 0;
+}
+
+.card dt,
+.proof dt {
+  color: var(--muted);
+}
+
+.card dd,
+.proof dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The reason is shown on hover (title) and, in short, under the edge. */
+.reason {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.card footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.badge {
+  color: var(--loss);
+  font-size: 0.85rem;
+}
+
+.badge.open {
+  color: var(--win);
+}
+
+.choices,
+.amount-form,
+.sim-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.game-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.game-form > button {
+  align-self: flex-start;
+}
+
+.game-form label,
+.stake {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.game-form input[type='range'] {
+  width: 20rem;
+}
+
+input.number {
+  width: 3rem;
+}
+
+.outcome {
+  font-size: 1.1rem;
+}
+
+.pocket {
+  padding: 0.1rem 0.5rem;
+  color: #fff;
+}
+
+.pocket.red {
+  background: #b8323a;
+}
+
+.pocket.black {
+  background: #222;
+}
+
+.pocket.green {
+  background: #1f7a3a;
+}
+
+.cards-row {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.playing-card {
+  border: 1px solid var(--muted);
+  padding: 0 0.35rem;
+}
+
+.grid {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+  font-size: 0.85rem;
+}
+
+.grid th,
+.grid td {
+  text-align: left;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid #222428;
+}
+
+.grid th {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.sim-controls input[type='range'] {
+  flex: 1;
+}
+
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 1rem;
+}
+
+.chart {
+  margin: 0;
+  background: var(--panel);
+  padding: 0.75rem;
+}
+
+.chart figcaption {
+  font-size: 0.8rem;
+  margin-bottom: 0.5rem;
+}
+
+.chart svg {
+  width: 100%;
+  height: 160px;
+  display: block;
+}
+
+.chart .axis {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.chart .cursor {
+  stroke: var(--muted);
+  stroke-dasharray: 2 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.events {
+  list-style: none;
+  padding: 0;
+  font-size: 0.85rem;
+}
