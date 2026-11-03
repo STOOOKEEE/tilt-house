@@ -125,8 +125,8 @@ The promise result is the wasm's stdout JSON, verbatim (round 8):
 
 - `alpha` = `vrf:{request_id}:{sender_id}:{seed}`, and **`sender_id` is the transaction signer**
   (`env::signer_account_id()`), not the contract that called OutLayer (`contract/src/execution.rs`:
-  `"sender_id": signer_id`). For a player's bet relayed as a meta-transaction, that should be the player (NEAR
-  sets the receipt signer to the delegate action's sender). This is **unverified on chain**.
+  `"sender_id": signer_id`). For a player's bet relayed as a meta-transaction it is the **relayer** (observed on testnet,
+  round 7: `vrf:6817:relayer.tilthouse.testnet:round-7-0`).
 - `value` = hex of SHA-256(signature). Recompute it; don't trust it.
 
 ### Latency (request → our callback, from block timestamps)
@@ -219,6 +219,5 @@ tampered value, other round, other signer, `round-41`, empty request id and `nul
 ## Unverified
 
 - Yield-timeout and `request_execution`-panic rows above (read from the OutLayer contract source, not triggered).
-- Alpha signer for meta-transactions (expected: the delegate sender).
 - Coordinator wasm cache retention (FastFS testnet still 502 at the end of the spike).
 - Minimum workable `REQUEST_GAS` below 100 TGas.

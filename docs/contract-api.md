@@ -97,7 +97,10 @@ proof and the round advances:
 
 VRF checks (any failure = step `failed`, never a panic): exactly one result; alpha is exactly
 `vrf:{digits}:{signer}:round-{id}-{step}` where `signer` is the account that signed the transaction that requested the
-step (stored with the round; for a relayed meta-transaction the delegate sender, i.e. the player); Ed25519 signature over
+step (stored with the round; for a relayed meta-transaction it is the **relayer**, which signs the outer transaction —
+observed on testnet, round 7: `vrf:6817:relayer.tilthouse.testnet:round-7-0`). The seed's round id and step make every
+alpha unique, so a proof can never be replayed on another round or step; the player is bound through the round record,
+not the alpha. Ed25519 signature over
 alpha with the configured key; `value == sha256(signature)`. The 32-byte output seeds `core::Rng`.
 
 `refund_stuck_round` refunds the whole wager (double included) to the player and releases the pool's reserve when the
