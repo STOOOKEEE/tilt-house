@@ -1,4 +1,3 @@
-import { useLogin, useLogout, usePrivy } from '@privy-io/react-auth'
 import { NavLink } from 'react-router'
 import { formatUsdc } from '../format'
 import { useNear, type GameKeyStatus } from '../near/useNear'
@@ -29,10 +28,8 @@ function keyLabel(status: GameKeyStatus): string {
 }
 
 export function TopBar() {
-  const { ready, authenticated } = usePrivy()
-  const { login } = useLogin()
-  const { logout } = useLogout()
-  const { walletId, gameKey } = useNear()
+  const { auth, walletId, gameKey } = useNear()
+  const authenticated = auth.available && auth.authenticated
   const player = usePlayer()
 
   return (
@@ -55,9 +52,15 @@ export function TopBar() {
             <span className={gameKey.state === 'error' ? 'loss' : 'key'}>{keyLabel(gameKey)}</span>
           </>
         ) : null}
-        <button type="button" disabled={!ready} onClick={() => (authenticated ? void logout() : login())}>
-          {authenticated ? 'Logout' : 'Login'}
-        </button>
+        {auth.available ? (
+          <button type="button" disabled={!auth.ready} onClick={authenticated ? auth.logout : auth.login}>
+            {authenticated ? 'Logout' : 'Login'}
+          </button>
+        ) : (
+          <button type="button" disabled>
+            login unavailable: {auth.reason}
+          </button>
+        )}
       </div>
     </header>
   )

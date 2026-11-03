@@ -1,4 +1,5 @@
 export interface Config {
+  /** Empty: no login, the app runs read-only (lobby, tables, dealers, sim still work). */
   privyAppId: string
   houseContract: string
   tokenContract: string
@@ -19,7 +20,7 @@ function required(env: Env, name: string): string {
 // Fails closed: the app refuses to start rather than sign for an unknown contract or relayer.
 export function readConfig(env: Env): Config {
   return {
-    privyAppId: required(env, 'VITE_PRIVY_APP_ID'),
+    privyAppId: env.VITE_PRIVY_APP_ID?.trim() ?? '',
     houseContract: required(env, 'VITE_HOUSE_CONTRACT'),
     tokenContract: required(env, 'VITE_TOKEN_CONTRACT'),
     relayerUrl: required(env, 'VITE_RELAYER_URL').replace(/\/+$/, ''),

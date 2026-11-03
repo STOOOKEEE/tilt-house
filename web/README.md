@@ -14,14 +14,14 @@ pnpm --filter @tilt-house/web build
 
 | Variable | Meaning |
 | - | - |
-| `VITE_PRIVY_APP_ID` | Privy app id. Needs a real app from dashboard.privy.io with NEAR embedded wallets enabled and `http://localhost:5173` (and the deployed origin) allowed. There is no working default: without it you cannot log in. |
+| `VITE_PRIVY_APP_ID` | Privy app id. Needs a real app from dashboard.privy.io with NEAR embedded wallets enabled and `http://localhost:5173` (and the deployed origin) allowed. Optional: empty (or rejected by Privy) runs the app read-only: lobby, tables, dealers and sim work, login is off. |
 | `VITE_HOUSE_CONTRACT` | House contract account; receiver of game moves and of the browser game key. |
 | `VITE_TOKEN_CONTRACT` | Test USDC token (NEP-141), `tusdc.tilthouse.testnet`. |
 | `VITE_RELAYER_URL` | Relayer base URL (`/activate`, `/relay`, `/faucet`). |
 | `VITE_RELAYER_ACCOUNT` | Account the relayer signs with (`relayer.tilthouse.testnet`). A relayed draw's VRF alpha names this signer, not the player, so "verify the draw" accepts the player or this account. |
 | `VITE_NEAR_RPC_URL` | NEAR testnet RPC. |
 
-The app refuses to start if any of them is missing.
+The app refuses to start if any of the others is missing.
 
 ## Login and keys
 

@@ -1,16 +1,18 @@
-import { usePrivy } from '@privy-io/react-auth'
+import { useLogin, useLogout, usePrivy } from '@privy-io/react-auth'
 import { useCreateWallet, useSignRawHash } from '@privy-io/react-auth/extended-chains'
 import { Account, JsonRpcProvider } from 'near-api-js'
 import { useEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react'
 import type { Config } from '../config'
 import { ensureGameKey } from './session'
 import { PrivySigner } from './signer'
-import { NearContext, type GameKeyStatus } from './useNear'
+import { NearContext, type Auth, type GameKeyStatus, type NearContextValue } from './useNear'
 
 // Follows near-examples/hello-privy (src/context/provider.tsx), plus the game-key setup.
 export function NearPrivyProvider({ config, children }: PropsWithChildren<{ config: Config }>) {
   const provider = useMemo(() => new JsonRpcProvider({ url: config.rpcUrl }), [config.rpcUrl])
-  const { authenticated, user } = usePrivy()
+  const { ready, authenticated, user } = usePrivy()
+  const { login } = useLogin()
+  const { logout } = useLogout()
   const { signRawHash } = useSignRawHash()
   const { createWallet } = useCreateWallet()
   const creatingWallet = useRef(false)
@@ -60,9 +62,29 @@ export function NearPrivyProvider({ config, children }: PropsWithChildren<{ conf
     }
   }, [nearAccount, config])
 
+  const auth = useMemo<Auth>(
+    () => ({ available: true, ready, authenticated, login: () => login(), logout: () => void logout() }),
+    [ready, authenticated, login, logout],
+  )
   const value = useMemo(
-    () => ({ config, provider, nearAccount, walletId, gameKey }),
-    [config, provider, nearAccount, walletId, gameKey],
+    () => ({ auth, config, provider, nearAccount, walletId, gameKey }),
+    [auth, config, provider, nearAccount, walletId, gameKey],
+  )
+  return <NearContext.Provider value={value}>{children}</NearContext.Provider>
+}
+
+/** No Privy: views still work over RPC, nothing can be signed. */
+export function ReadOnlyNearProvider({ config, reason, children }: PropsWithChildren<{ config: Config; reason: string }>) {
+  const value = useMemo<NearContextValue>(
+    () => ({
+      auth: { available: false, reason },
+      config,
+      provider: new JsonRpcProvider({ url: config.rpcUrl }),
+      nearAccount: null,
+      walletId: '',
+      gameKey: { state: 'none' },
+    }),
+    [config, reason],
   )
   return <NearContext.Provider value={value}>{children}</NearContext.Provider>
 }
