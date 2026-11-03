@@ -24,17 +24,14 @@ Keys are read from near-cli credential files `<dir>/<account>.json` (`private_ke
 
 - **hunter**: dice at the open dice table with the lowest `total_edge_bp`, stake = table min.
 - **loyal**: always the same dealer (`BOT_LOYAL_DEALER`, default the first dice/roulette dealer by id), stake = table min.
-- **whale**: 1 turn in 5, roulette `Red` at the open roulette table with the largest max bet, stake = half its balance capped by the table max.
+- **whale**: 1 turn in 5, roulette `"red"` at the open roulette table with the largest max bet, stake = half its balance capped by the table max.
 
-Each turn: bet, poll `get_round` until settled (calls `refund_stuck_round` after 130 s), pause 5–20 s.
-A bot sits out while its in-contract balance is below the table min.
+Each turn: finish any `open_round` left from a previous run, else bet (200 TGas), poll `get_round` until
+`settled`/`refunded`, pause 5–20 s. A `failed` round blocks new bets, so the bot calls `refund_stuck_round`
+at once; it also does after 120 s still `waiting_vrf`. A bot sits out while its in-contract balance is below the table min.
 
-## Contract shapes assumed (plan Task 3)
+Create and fund the bots once (1 NEAR each, 200 tUSDC deposited in the house): `scripts/create-bots.sh`.
 
-Change these in `src/near.ts` / `src/bots.ts` if the contract differs:
+## Contract
 
-- `get_lobby()` → array of `{ id, name, game, rake_bp, total_edge_bp, max_bet, min_bet, boost_until, reason, reason_text, open, bankroll, share_price_buy, share_price_sell }`, amounts as decimal strings.
-- `get_player({ account_id })` → `{ balance: "<decimal>" }` or `null`.
-- `get_round({ round_id })` → object with `status` (`"settled"`/`"refunded"` when done, any case) or `settled: true`.
-- `bet_dice({ dealer_id, stake, chance_bp, over })`, `bet_roulette({ dealer_id, stake, bet: "Red" })` return the round id (number or `{ round_id }`).
-  If no id comes back, the bot logs the bet and does not wait.
+Shapes follow `docs/contract-api.md`; the views are parsed in `src/near.ts` (`get_lobby`, `get_player`, `get_round`).

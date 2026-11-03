@@ -1,4 +1,4 @@
-import type { DealerView, House } from "../src/near.ts";
+import type { DealerView, House, RoundStatus } from "../src/near.ts";
 
 export function dealer(over: Partial<DealerView> & Pick<DealerView, "id" | "game">): DealerView {
   return {
@@ -8,7 +8,7 @@ export function dealer(over: Partial<DealerView> & Pick<DealerView, "id" | "game
     max_bet: "50000000",
     min_bet: "1000000",
     boost_until: 0,
-    reason: "Steady",
+    reason: "steady",
     reason_text: "steady",
     open: true,
     bankroll: "1000000000",
@@ -27,10 +27,10 @@ export const LOBBY: DealerView[] = [
   dealer({ id: "rex", game: "roulette", max_bet: "90000000" }),
 ];
 
-export function fakeHouse(lobby: DealerView[], balance = 10_000_000n, rounds: unknown[] = []): House {
+export function fakeHouse(lobby: DealerView[], balance = 10_000_000n, statuses: RoundStatus[] = [], openRound: number | null = null): House {
   return {
     lobby: async () => lobby,
-    balance: async () => balance,
-    round: async () => rounds.shift() ?? { status: "settled" },
+    player: async () => ({ balance, openRound }),
+    roundStatus: async () => statuses.shift() ?? "settled",
   };
 }

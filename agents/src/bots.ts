@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { JsonRpcProvider } from "near-api-js";
 import { loadConfig } from "./config.ts";
-import { errorMessage, houseViews, sendFor, sleep, type Call, type DealerView, type House, type Send } from "./near.ts";
+import { errorMessage, houseViews, sendFor, sleep, type Call, type DealerView, type House, type RoundStatus, type Send } from "./near.ts";
 
 export type Strategy = "hunter" | "loyal" | "whale";
 
@@ -19,14 +19,14 @@ export const BOTS: readonly Bot[] = [
 /** Dice bet the bots place: 49.5 % chance, roll over. */
 const DICE_CHANCE_BP = 4950;
 /** Roulette bet the whale places (serde unit variant of `RouletteBet`). */
-const ROULETTE_BET = "Red";
+const ROULETTE_BET = "red";
 /** The whale only plays this share of its turns. */
 const WHALE_PLAY_ODDS = 0.2;
 const PAUSE_MIN_MS = 5_000;
 const PAUSE_MAX_MS = 20_000;
 const POLL_MS = 2_000;
-/** The contract allows `refund_stuck_round` after 120 s; wait a bit longer. */
-const STUCK_AFTER_MS = 130_000;
+/** The contract refunds a round still `waiting_vrf` after 120 s. */
+const REFUND_AFTER_MS = 120_000;
 
 const byId = (a: DealerView, b: DealerView): number => a.id.localeCompare(b.id);
 
@@ -67,23 +67,13 @@ export function betCall(signer: string, table: DealerView, stake: bigint): Call 
   throw new Error(`bots do not play ${table.game}`);
 }
 
-/** Round id returned by a bet: a number, or an object carrying `round_id`/`id`. */
-export function parseRoundId(value: unknown): number | null {
-  if (Number.isSafeInteger(value)) return value as number;
-  if (typeof value === "object" && value !== null) {
-    const id = "round_id" in value ? value.round_id : "id" in value ? value.id : undefined;
-    if (Number.isSafeInteger(id)) return id as number;
-  }
-  return null;
+/** Bets return the round id as a JSON number. */
+export function parseRoundId(value: unknown): number {
+  if (!Number.isSafeInteger(value)) throw new Error("bet did not return a round id");
+  return value as number;
 }
 
-const SETTLED = ["settled", "refunded"];
-
-export function isSettled(round: unknown): boolean {
-  if (typeof round !== "object" || round === null) return false;
-  if ("settled" in round && round.settled === true) return true;
-  return "status" in round && typeof round.status === "string" && SETTLED.includes(round.status.toLowerCase());
-}
+const DONE: readonly (RoundStatus | null)[] = ["settled", "refunded"];
 
 export interface BotDeps {
   house: House;
@@ -100,29 +90,43 @@ function logLine(deps: BotDeps, bot: Bot, data: Record<string, unknown>): void {
   deps.log(JSON.stringify({ at: new Date(deps.now()).toISOString(), bot: bot.name, ...data }));
 }
 
-async function waitForSettle(deps: BotDeps, signer: string, roundId: number): Promise<boolean> {
-  const deadline = deps.now() + STUCK_AFTER_MS;
-  while (deps.now() < deadline) {
-    if (isSettled(await deps.house.round(roundId))) return true;
+/**
+ * Polls `get_round` until the round is done. A `failed` round blocks the bot's next bet, so it is
+ * refunded at once; one still `waiting_vrf` after 120 s is refunded too.
+ */
+export async function settle(deps: BotDeps, signer: string, roundId: number): Promise<RoundStatus | null> {
+  const refundAt = deps.now() + REFUND_AFTER_MS;
+  for (;;) {
+    const status = await deps.house.roundStatus(roundId);
+    if (DONE.includes(status)) return status;
+    const stuck = status === "waiting_vrf" && deps.now() >= refundAt;
+    if (status === "failed" || stuck) {
+      await deps.send({ signer, method: "refund_stuck_round", args: { round_id: roundId } });
+      return "refunded";
+    }
+    if (deps.now() >= refundAt) return status;
     await deps.wait(POLL_MS);
   }
-  await deps.send({ signer, method: "refund_stuck_round", args: { round_id: roundId } });
-  return false;
 }
 
-/** One bot turn: pick a table, bet, wait for the round to settle. */
+/** One bot turn: finish any open round, else pick a table, bet, and wait for the round to end. */
 export async function botTurn(deps: BotDeps, bot: Bot): Promise<void> {
   const signer = `bot-${bot.name}.${deps.accountSuffix}`;
+  const player = await deps.house.player(signer);
+  if (player.openRound !== null) {
+    const status = await settle(deps, signer, player.openRound);
+    return logLine(deps, bot, { round: player.openRound, status });
+  }
   const table = chooseTable(bot.strategy, await deps.house.lobby(), deps.loyalDealer);
   if (!table) return logLine(deps, bot, { skip: "no table" });
-  const balance = await deps.house.balance(signer);
-  const stake = stakeFor(bot.strategy, table, balance, deps.rand);
-  if (stake === null) return logLine(deps, bot, { skip: "sitting out", dealer: table.id, balance: balance.toString() });
+  const stake = stakeFor(bot.strategy, table, player.balance, deps.rand);
+  if (stake === null) return logLine(deps, bot, { skip: "sitting out", dealer: table.id, balance: player.balance.toString() });
   const call = betCall(signer, table, stake);
-  const roundId = parseRoundId(await deps.send(call));
-  if (roundId === null) return logLine(deps, bot, { dealer: table.id, method: call.method, stake: stake.toString() });
-  const settled = await waitForSettle(deps, signer, roundId);
-  logLine(deps, bot, { dealer: table.id, method: call.method, stake: stake.toString(), round: roundId, settled });
+  const result = await deps.send(call);
+  if (result === undefined) return; // dry run: the call was printed, nothing was sent
+  const roundId = parseRoundId(result);
+  const status = await settle(deps, signer, roundId);
+  logLine(deps, bot, { dealer: table.id, method: call.method, stake: stake.toString(), round: roundId, status });
 }
 
 export function pauseMs(rand: () => number): number {

@@ -32,17 +32,34 @@ export interface Call {
 /** Sends a call and returns the contract's JSON return value. */
 export type Send = (call: Call) => Promise<unknown>;
 
+export type RoundStatus = "waiting_vrf" | "player_turn" | "failed" | "settled" | "refunded";
+
+/** The parts of `get_player` the agents use. */
+export interface PlayerView {
+  balance: bigint;
+  openRound: number | null;
+}
+
 /** Read-only views of the house contract; faked in tests. */
 export interface House {
   lobby(): Promise<DealerView[]>;
-  balance(accountId: string): Promise<bigint>;
-  round(roundId: number): Promise<unknown>;
+  player(accountId: string): Promise<PlayerView>;
+  /** Status of a round, null if the round is unknown. */
+  roundStatus(roundId: number): Promise<RoundStatus | null>;
 }
 
-/** Bets may request VRF through OutLayer, so leave headroom (same as the web client). */
+/** Play calls need >= 150 TGas prepaid (docs/contract-api.md); send 200 like the doc advises. */
+export const PLAY_GAS = teraToGas(200);
+/** Enough for `reprice` and views-sized work. */
 export const CALL_GAS = teraToGas(100);
+const PLAY_METHODS: readonly string[] = ["bet_dice", "bet_roulette", "bj_deal", "bj_hit", "bj_double", "bj_stand", "refund_stuck_round"];
+
+export function gasFor(method: string): bigint {
+  return PLAY_METHODS.includes(method) ? PLAY_GAS : CALL_GAS;
+}
 
 const GAMES: readonly string[] = ["dice", "roulette", "blackjack"];
+const STATUSES: readonly string[] = ["waiting_vrf", "player_turn", "failed", "settled", "refunded"];
 const DECIMAL = /^\d+$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -60,6 +77,7 @@ const isDecimal = (v: unknown): v is string => typeof v === "string" && DECIMAL.
 const isInt = (v: unknown): v is number => Number.isSafeInteger(v);
 const isBool = (v: unknown): v is boolean => typeof v === "boolean";
 const isGame = (v: unknown): v is GameKind => typeof v === "string" && GAMES.includes(v);
+const isStatus = (v: unknown): v is RoundStatus => typeof v === "string" && STATUSES.includes(v);
 
 function parseDealer(entry: unknown): DealerView {
   if (!isRecord(entry)) throw new Error("get_lobby: entry is not an object");
@@ -86,11 +104,18 @@ export function parseLobby(value: unknown): DealerView[] {
   return value.map(parseDealer);
 }
 
-/** Reads `balance` from `get_player`; an unknown player has no balance. */
-export function parseBalance(value: unknown): bigint {
-  if (value === null || value === undefined) return 0n;
+/** `get_player` always returns an object (zeros for an unknown player). */
+export function parsePlayer(value: unknown): PlayerView {
   if (!isRecord(value) || !isDecimal(value.balance)) throw new Error("get_player: invalid balance");
-  return BigInt(value.balance);
+  const open = value.open_round;
+  if (open !== null && !isInt(open)) throw new Error("get_player: invalid open_round");
+  return { balance: BigInt(value.balance), openRound: open };
+}
+
+export function parseRoundStatus(value: unknown): RoundStatus | null {
+  if (value === null || value === undefined) return null;
+  if (!isRecord(value) || !isStatus(value.status)) throw new Error("get_round: invalid status");
+  return value.status;
 }
 
 export function houseViews(provider: JsonRpcProvider, house: string): House {
@@ -100,11 +125,11 @@ export function houseViews(provider: JsonRpcProvider, house: string): House {
     async lobby() {
       return parseLobby(await view("get_lobby", {}));
     },
-    async balance(accountId) {
-      return parseBalance(await view("get_player", { account_id: accountId }));
+    async player(accountId) {
+      return parsePlayer(await view("get_player", { account_id: accountId }));
     },
-    async round(roundId) {
-      return view("get_round", { round_id: roundId });
+    async roundStatus(roundId) {
+      return parseRoundStatus(await view("get_round", { round_id: roundId }));
     },
   };
 }
@@ -135,7 +160,7 @@ export function nearSend(provider: JsonRpcProvider, house: string, keysDir: stri
   };
   return async ({ signer, method, args }) => {
     const account = await accountFor(signer);
-    return account.callFunction({ contractId: house, methodName: method, args, gas: CALL_GAS });
+    return account.callFunction({ contractId: house, methodName: method, args, gas: gasFor(method) });
   };
 }
 

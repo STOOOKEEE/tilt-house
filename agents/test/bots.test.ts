@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { botTurn, chooseTable, isSettled, parseRoundId, stakeFor, type BotDeps } from "../src/bots.ts";
+import { botTurn, chooseTable, parseRoundId, stakeFor, type BotDeps } from "../src/bots.ts";
 import { dryRunSend, type Call } from "../src/near.ts";
 import { dealer, fakeHouse, LOBBY } from "./fixtures.ts";
 
@@ -59,39 +59,50 @@ describe("stakeFor", () => {
 });
 
 describe("rounds", () => {
-  it("reads round ids and settled states", () => {
+  function recording(house = fakeHouse(LOBBY)) {
+    const calls: Call[] = [];
+    const d = deps({
+      house,
+      send: async (call) => {
+        calls.push(call);
+        return call.method.startsWith("bet_") ? 42 : null;
+      },
+    });
+    return { calls, d };
+  }
+
+  it("reads the round id a bet returns", () => {
     expect(parseRoundId(7)).toBe(7);
-    expect(parseRoundId({ round_id: 8 })).toBe(8);
-    expect(parseRoundId(undefined)).toBeNull();
-    expect(isSettled({ status: "Settled" })).toBe(true);
-    expect(isSettled({ status: "pending" })).toBe(false);
+    expect(() => parseRoundId(undefined)).toThrow();
   });
 
   it("polls get_round until settled", async () => {
-    const calls: Call[] = [];
-    const d = deps({
-      house: fakeHouse(LOBBY, 10_000_000n, [{ status: "pending" }, { status: "pending" }, { status: "settled" }]),
-      send: async (call) => {
-        calls.push(call);
-        return 42;
-      },
-    });
+    const { calls, d } = recording(fakeHouse(LOBBY, 10_000_000n, ["waiting_vrf", "waiting_vrf", "settled"]));
     await botTurn(d, { name: "hunter", strategy: "hunter" });
-    expect(calls).toHaveLength(1);
-    expect(JSON.parse(d.lines.at(-1) ?? "")).toMatchObject({ bot: "hunter", round: 42, settled: true });
+    expect(calls.map((c) => c.method)).toEqual(["bet_dice"]);
+    expect(JSON.parse(d.lines.at(-1) ?? "")).toMatchObject({ bot: "hunter", round: 42, status: "settled" });
   });
 
-  it("asks for a refund when a round never settles", async () => {
-    const calls: Call[] = [];
-    const d = deps({
-      house: { ...fakeHouse(LOBBY), round: async () => ({ status: "pending" }) },
-      send: async (call) => {
-        calls.push(call);
-        return 9;
-      },
-    });
+  it("refunds a failed round at once", async () => {
+    const { calls, d } = recording(fakeHouse(LOBBY, 10_000_000n, ["waiting_vrf", "failed"]));
+    await botTurn(d, { name: "hunter", strategy: "hunter" });
+    expect(calls).toEqual([
+      expect.objectContaining({ method: "bet_dice" }),
+      { signer: "bot-hunter.tilthouse.testnet", method: "refund_stuck_round", args: { round_id: 42 } },
+    ]);
+  });
+
+  it("refunds a round still waiting for VRF after 120 s", async () => {
+    const { calls, d } = recording({ ...fakeHouse(LOBBY), roundStatus: async () => "waiting_vrf" });
     await botTurn(d, { name: "hunter", strategy: "hunter" });
     expect(calls.map((c) => c.method)).toEqual(["bet_dice", "refund_stuck_round"]);
+    expect(d.now()).toBeGreaterThanOrEqual(120_000);
+  });
+
+  it("finishes a leftover open round before betting again", async () => {
+    const { calls, d } = recording(fakeHouse(LOBBY, 10_000_000n, ["failed"], 5));
+    await botTurn(d, { name: "loyal", strategy: "loyal" });
+    expect(calls).toEqual([{ signer: "bot-loyal.tilthouse.testnet", method: "refund_stuck_round", args: { round_id: 5 } }]);
   });
 });
 
@@ -114,7 +125,7 @@ describe("dry run", () => {
     expect(JSON.parse(d.lines[0] ?? "")).toMatchObject({
       signer: "bot-whale.tilthouse.testnet",
       method: "bet_roulette",
-      args: { dealer_id: "rex", stake: "5000000", bet: "Red" },
+      args: { dealer_id: "rex", stake: "5000000", bet: "red" },
     });
   });
 });
