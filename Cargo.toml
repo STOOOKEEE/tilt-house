@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "sim"]
+members = ["core", "sim", "token", "contract"]
 
 [profile.release]
 codegen-units = 1

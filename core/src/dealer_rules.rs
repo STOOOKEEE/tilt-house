@@ -61,6 +61,25 @@ pub struct Temperament {
     pub promo: u8,
 }
 
+/// Greedy: rake high in its range, cashes in on busy tables, almost never boosts.
+pub const GREEDY: Temperament = Temperament {
+    greed: 85,
+    caution: 30,
+    promo: 10,
+};
+/// Promoter: low usual rake, deep cuts and long boosts to bring players back, bold max bet.
+pub const PROMOTER: Temperament = Temperament {
+    greed: 25,
+    caution: 20,
+    promo: 90,
+};
+/// Cautious: middling rake, small max bet, backs off hard when players beat it.
+pub const CAUTIOUS: Temperament = Temperament {
+    greed: 50,
+    caution: 90,
+    promo: 30,
+};
+
 /// What happened at the table over the last hour.
 #[derive(
     Clone,

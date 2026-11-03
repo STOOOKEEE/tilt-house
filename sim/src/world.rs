@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use core_rules::dealer_rules::{CAUTIOUS, GREEDY, PROMOTER};
 use core_rules::{
     reprice, worst_case_multiple, BjStrategy, Game, Offer, Pool, Reason, Rng, Stats,
     Temperament, SHARES_PER_UNIT,
@@ -34,25 +35,6 @@ pub const SEED_BANKROLL: u128 = 2_000 * USDC;
 pub const PRICE_SCALE: u128 = 1_000_000;
 /// Hourly share-price snapshots kept per dealer: enough for a trailing 24 h return.
 const PRICE_HISTORY: usize = 25;
-
-/// Greedy: rake high in its range, cashes in on busy tables, almost never boosts.
-pub const GREEDY: Temperament = Temperament {
-    greed: 85,
-    caution: 30,
-    promo: 10,
-};
-/// Promoter: low usual rake, deep cuts and long boosts to bring players back, bold max bet.
-pub const PROMOTER: Temperament = Temperament {
-    greed: 25,
-    caution: 20,
-    promo: 90,
-};
-/// Cautious: middling rake, small max bet, backs off hard when players beat it.
-pub const CAUTIOUS: Temperament = Temperament {
-    greed: 50,
-    caution: 90,
-    promo: 30,
-};
 
 pub struct DealerSpec {
     pub id: &'static str,
