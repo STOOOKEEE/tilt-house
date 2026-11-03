@@ -60,6 +60,8 @@ export class FakeChain implements Chain {
   activations: string[] = [];
   relayError: Error | null = null;
   activateError: Error | null = null;
+  mints: { accountId: string; tokens: bigint }[] = [];
+  mintError: Error | null = null;
 
   async blockHeight(): Promise<bigint> {
     return this.height;
@@ -75,9 +77,14 @@ export class FakeChain implements Chain {
     return { txHash: `tx${this.relayed.length}`, status: "success" };
   }
 
-  async activate(accountId: string): Promise<Activation> {
+  async activate(accountId: string, _near: bigint, tokens: bigint): Promise<Activation> {
     if (this.activateError) throw this.activateError;
     this.activations.push(accountId);
-    return { funded: true, registered: true };
+    return { funded: true, registered: true, minted: tokens.toString() };
+  }
+
+  async mint(accountId: string, tokens: bigint): Promise<void> {
+    if (this.mintError) throw this.mintError;
+    this.mints.push({ accountId, tokens });
   }
 }

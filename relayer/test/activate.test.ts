@@ -26,7 +26,7 @@ async function activate(accountId: unknown, ip = "10.0.0.1") {
 
 describe("POST /activate", () => {
   it("funds and registers a new implicit account once", async () => {
-    expect(await activate(implicit(1))).toEqual({ status: 200, body: { funded: true, registered: true } });
+    expect(await activate(implicit(1))).toEqual({ status: 200, body: { funded: true, registered: true, minted: "100000000" } });
     expect(chain.activations).toEqual([implicit(1)]);
     expect(await activate(implicit(1))).toEqual({ status: 409, body: { error: "already_activated" } });
     expect(chain.activations).toHaveLength(1);

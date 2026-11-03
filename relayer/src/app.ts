@@ -5,6 +5,7 @@ import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { TransactionTimeoutError } from "near-api-js/rpc-errors";
 import type { Chain } from "./chain.ts";
+import { ACCOUNT_ID } from "./config.ts";
 import {
   checkDelegate,
   checkExpiry,
@@ -19,12 +20,16 @@ const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const MAX_BODY_BYTES = 16 * 1024;
 const IMPLICIT_ACCOUNT = /^[0-9a-f]{64}$/;
+/** 100 tUSDC (6 decimals), minted on activation and per faucet claim. */
+export const MINT_AMOUNT = 100_000_000n;
 
 export const LIMITS = {
   relayPerSender: 30,
   relayGlobal: 600,
   activatePerIp: 5,
   activateGlobalPerHour: 100,
+  faucetPerIp: 5,
+  faucetGlobalPerHour: 100,
 } as const;
 
 export interface AppDeps {
@@ -57,6 +62,10 @@ export function createApp({ config, chain, now = Date.now }: AppDeps): Hono {
   const relayGlobal = new RateLimiter(LIMITS.relayGlobal, MINUTE_MS);
   const activateIp = new RateLimiter(LIMITS.activatePerIp, MINUTE_MS);
   const activateGlobal = new RateLimiter(LIMITS.activateGlobalPerHour, HOUR_MS);
+  const faucetIp = new RateLimiter(LIMITS.faucetPerIp, MINUTE_MS);
+  const faucetGlobal = new RateLimiter(LIMITS.faucetGlobalPerHour, HOUR_MS);
+  // One claim per account per hour; the token contract also caps mints per 24 h.
+  const faucetAccount = new RateLimiter(1, HOUR_MS);
   // Accounts this process already funded; an in-flight activation counts too, so
   // two concurrent requests cannot both pay.
   const activated = new Set<string>();
@@ -110,12 +119,29 @@ export function createApp({ config, chain, now = Date.now }: AppDeps): Hono {
     if (activated.has(accountId)) return fail(c, 409, "already_activated");
     activated.add(accountId);
     try {
-      return c.json(await chain.activate(accountId, config.activationYocto));
+      return c.json(await chain.activate(accountId, config.activationYocto, MINT_AMOUNT));
     } catch (error) {
-      // Let the player retry; a retry skips the transfer once the balance is there.
+      // Let the player retry; a retry skips the transfer and registration already done.
       activated.delete(accountId);
       console.error("activation failed", error);
       return fail(c, 502, "rpc_error");
+    }
+  });
+
+  app.post("/faucet", async (c) => {
+    const ip = clientIp(c) ?? "unknown";
+    if (!faucetIp.take(ip, now()) || !faucetGlobal.take("*", now())) return fail(c, 429, "rate_limited");
+    const accountId = await jsonField(c, "accountId");
+    if (accountId === null) return fail(c, 400, "invalid_body");
+    if (!ACCOUNT_ID.test(accountId)) return fail(c, 403, "invalid_account");
+    // The claim is spent even if the mint fails: fail closed, the player retries in an hour.
+    if (!faucetAccount.take(accountId, now())) return fail(c, 429, "already_claimed");
+    try {
+      await chain.mint(accountId, MINT_AMOUNT);
+      return c.json({ minted: MINT_AMOUNT.toString() });
+    } catch (error) {
+      console.error("faucet mint failed", error);
+      return fail(c, 502, "mint_failed");
     }
   });
 

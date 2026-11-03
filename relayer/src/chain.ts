@@ -26,6 +26,8 @@ export interface RelayOutcome {
 export interface Activation {
   funded: boolean;
   registered: boolean;
+  /** tUSDC base units minted to the account, decimal string. */
+  minted: string;
 }
 
 /** Everything the HTTP layer needs from NEAR; faked in tests. */
@@ -33,10 +35,14 @@ export interface Chain {
   blockHeight(): Promise<bigint>;
   accessKey(accountId: string, publicKey: string): Promise<AccessKeyInfo | null>;
   relay(signed: DecodedSignedDelegate): Promise<RelayOutcome>;
-  activate(accountId: string, amount: bigint): Promise<Activation>;
+  /** Sends `near` yocto if the account holds less, registers it on the token, mints `tokens`. */
+  activate(accountId: string, near: bigint, tokens: bigint): Promise<Activation>;
+  /** Mints `tokens` tUSDC to the account (relayer is the token's minter). */
+  mint(accountId: string, tokens: bigint): Promise<void>;
 }
 
 const STORAGE_DEPOSIT_GAS = teraToGas(30);
+const MINT_GAS = teraToGas(30);
 
 function isKeyPairString(value: string): value is KeyPairString {
   return value.startsWith("ed25519:") || value.startsWith("secp256k1:");
@@ -62,24 +68,44 @@ export function nearChain(config: Config): Chain {
     }
   }
 
-  async function registerOnToken(accountId: string): Promise<boolean> {
-    const existing = await provider.callFunction({
+  async function isRegistered(accountId: string): Promise<boolean> {
+    const balance = await provider.callFunction({
       contractId: config.token,
       method: "storage_balance_of",
       args: { account_id: accountId },
     });
-    if (existing !== null && existing !== undefined) return false;
+    return balance !== null && balance !== undefined;
+  }
+
+  async function storageMin(): Promise<bigint> {
     const bounds = await provider.callFunction({ contractId: config.token, method: "storage_balance_bounds", args: {} });
     const min = typeof bounds === "object" && bounds !== null && "min" in bounds ? bounds.min : undefined;
     if (typeof min !== "string" || !/^\d+$/.test(min)) throw new Error("token returned invalid storage_balance_bounds");
+    return BigInt(min);
+  }
+
+  async function registerOnToken(accountId: string): Promise<boolean> {
+    if (await isRegistered(accountId)) return false;
     await relayer.callFunction({
       contractId: config.token,
       methodName: "storage_deposit",
       args: { account_id: accountId, registration_only: true },
-      deposit: BigInt(min),
+      deposit: await storageMin(),
       gas: STORAGE_DEPOSIT_GAS,
     });
     return true;
+  }
+
+  async function mint(accountId: string, tokens: bigint): Promise<void> {
+    // mint_to is payable: it registers an unknown receiver with the attached storage deposit.
+    const deposit = (await isRegistered(accountId)) ? 0n : await storageMin();
+    await relayer.callFunction({
+      contractId: config.token,
+      methodName: "mint_to",
+      args: { account_id: accountId, amount: tokens.toString() },
+      deposit,
+      gas: MINT_GAS,
+    });
   }
 
   return {
@@ -113,11 +139,14 @@ export function nearChain(config: Config): Chain {
       return failure === undefined ? { txHash, status: "success" } : { txHash, status: "failure", failure };
     },
 
-    async activate(accountId, amount) {
-      const funded = (await balanceOf(accountId)) < amount;
-      if (funded) await relayer.transfer({ receiverId: accountId, amount });
+    async activate(accountId, near, tokens) {
+      const funded = (await balanceOf(accountId)) < near;
+      if (funded) await relayer.transfer({ receiverId: accountId, amount: near });
       const registered = await registerOnToken(accountId);
-      return { funded, registered };
+      await mint(accountId, tokens);
+      return { funded, registered, minted: tokens.toString() };
     },
+
+    mint,
   };
 }

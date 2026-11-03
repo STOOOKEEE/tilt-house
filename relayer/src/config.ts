@@ -13,7 +13,7 @@ export interface Config {
 const TESTNET_RPC = "https://test.rpc.fastnear.com";
 const DEFAULT_PORT = 8787;
 const DEFAULT_ACTIVATION_NEAR = "0.02";
-const ACCOUNT_ID = /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
+export const ACCOUNT_ID = /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
 const NEAR_AMOUNT = /^\d+(\.\d{1,24})?$/;
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
