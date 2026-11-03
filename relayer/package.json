@@ -1,0 +1,22 @@
+{
+  "name": "@tilt-house/relayer",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.6",
+    "borsh": "^2.0.0",
+    "hono": "^4.13.16",
+    "near-api-js": "^7.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "~5.9.3",
+    "vitest": "^5.1.0"
+  }
+}
