@@ -30,7 +30,7 @@ Each turn: finish any `open_round` left from a previous run, else bet (200 TGas)
 `settled`/`refunded`, pause 5–20 s. A `failed` round blocks new bets, so the bot calls `refund_stuck_round`
 at once; it also does after 120 s still `waiting_vrf`. A bot sits out while its in-contract balance is below the table min.
 
-Create and fund the bots once (1 NEAR each, 200 tUSDC deposited in the house): `scripts/create-bots.sh`.
+Create and fund the bots once (1 NEAR each, 200 tUSDC deposited in the house): `agents/scripts/create-bots.sh`.
 
 ## Contract
 

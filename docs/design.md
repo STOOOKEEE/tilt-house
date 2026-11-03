@@ -23,9 +23,8 @@ economy the track judges. "Players become owners of the house" is the part Arman
 ## Goals
 
 1. Three games: dice, roulette (single bet types, no chip layouts), blackjack (1 hand, hit, stand,
-   double; no split). Rules reused from Armand's existing Rust code
-   (`Tilt/chain/programs/tilt/src/games/{dice,roulette,blackjack}.rs`, Armand's own zone), stripped
-   of Anchor types.
+   double; no split). Rules written fresh for this repo (decided at build time: nothing is copied
+   from the private Tilt code base).
 2. Dealers: 3 to 5 NPC dealers at launch, each with one table (one game), its own NEAR sub-account,
    a bankroll and a temperament (cautious, greedy, promoter…).
 3. Player ownership: any player can invest USDC into a dealer and receive its shares as NEP-245
