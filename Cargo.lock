@@ -169,6 +169,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tilt-house-sim"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tilt-house-core",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "1.1.2+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

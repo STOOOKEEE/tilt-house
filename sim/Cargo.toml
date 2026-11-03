@@ -1,0 +1,15 @@
+[package]
+name = "tilt-house-sim"
+version = "0.1.0"
+edition = "2021"
+description = "Tilt House fast-forward: a week of dealers, players and LPs on the same rules as the contract"
+license = "MIT"
+
+[[bin]]
+name = "sim"
+path = "src/main.rs"
+
+[dependencies]
+tilt-house-core = { path = "../core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
