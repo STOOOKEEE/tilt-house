@@ -12,6 +12,8 @@ export interface Options {
   rpcUrl: string;
   funder: Funder | undefined;
   dryRun: boolean;
+  /** Play the dice round through the relayer with a game key (NEP-366 meta-transactions). */
+  relayed: boolean;
 }
 
 const DEFAULT_HOUSE = "house.tilthouse.testnet";
@@ -19,7 +21,7 @@ const DEFAULT_TOKEN = "tusdc.tilthouse.testnet";
 const TESTNET_RPC = "https://test.rpc.fastnear.com";
 const ACCOUNT_ID = /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
 
-export const USAGE = `Usage: pnpm demo [--house <account>] [--token <account>] [--relayer <url>] [--dry-run]
+export const USAGE = `Usage: pnpm demo [--house <account>] [--token <account>] [--relayer <url>] [--relayed] [--dry-run]
 
 Env: HOUSE_CONTRACT, TOKEN_CONTRACT, RELAYER_URL, NEAR_RPC_URL,
      FUNDER_ACCOUNT + FUNDER_KEY (create the demo account as a sub-account of the funder).`;
@@ -63,9 +65,11 @@ export function parseOptions(argv: readonly string[], env: NodeJS.ProcessEnv): O
       token: { type: "string" },
       relayer: { type: "string" },
       "dry-run": { type: "boolean", default: false },
+      relayed: { type: "boolean", default: false },
     },
   });
   const relayer = values.relayer ?? (env.RELAYER_URL || undefined);
+  if (values.relayed && relayer === undefined) throw new Error("--relayed needs --relayer <url> or RELAYER_URL");
   return {
     house: testnetAccount(values.house ?? env.HOUSE_CONTRACT ?? DEFAULT_HOUSE, "house"),
     token: testnetAccount(values.token ?? env.TOKEN_CONTRACT ?? DEFAULT_TOKEN, "token"),
@@ -73,5 +77,6 @@ export function parseOptions(argv: readonly string[], env: NodeJS.ProcessEnv): O
     rpcUrl: httpUrl(env.NEAR_RPC_URL ?? TESTNET_RPC, "NEAR_RPC_URL"),
     funder: funder(env),
     dryRun: values["dry-run"],
+    relayed: values.relayed,
   };
 }

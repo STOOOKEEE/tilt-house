@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   Account,
+  actions,
   getTransactionLastResult,
   JsonRpcProvider,
   KeyPair,
@@ -14,6 +15,7 @@ import {
   type KeyPairString,
 } from "near-api-js";
 import { parseOptions, USAGE, type Options } from "./args.ts";
+import { GAME_KEY_ALLOWANCE, GAME_METHODS, relayActions } from "./relay.ts";
 import { verifyVrfProof, type VrfProof } from "./vrf.ts";
 
 /** Sponsors a new named `.testnet` account (what `near account create-account sponsor-by-faucet-service` calls). */
@@ -246,6 +248,9 @@ function printPlan(options: Options): void {
   step(5);
   const bet = { dealer_id: "<lowest-edge open dice dealer>", stake: STAKE.toString(), chance_bp: CHANCE_BP, over: OVER };
   see(`${options.house}.bet_dice(${JSON.stringify(bet)}), then get_round every ${POLL_MS / 1000} s for up to 60 s`);
+  if (options.relayed) {
+    see(`relayed: AddKey (game key for ${GAME_METHODS.join(", ")}) and bet_dice sent as SignedDelegates to ${options.relayer}/relay`);
+  }
   see(`VRF proof checked locally against ${options.house}.get_config().vrf_pubkey_hex`);
   step(6);
   see(`${options.house}.invest({"dealer_id":"<same dealer>","amount":"${INVEST}"}), then divest(half the shares)`);
@@ -311,19 +316,41 @@ async function run(options: Options): Promise<void> {
   const dealer = pickDiceDealer(lobby, STAKE);
   if (!dealer) throw new Error(`no open dice table takes a ${tusdc(STAKE)} tUSDC stake`);
   console.log(`  dealer: ${dealer.id} (edge ${(dealer.totalEdgeBp / 100).toFixed(2)}%)`);
-  const bet = await call(
-    "dice bet",
-    options.house,
-    "bet_dice",
-    { dealer_id: dealer.id, stake: STAKE.toString(), chance_bp: CHANCE_BP, over: OVER },
-    0n,
-    BET_GAS,
-  );
-  const roundId = bet.result;
-  if (typeof roundId !== "number") throw new Error(`bet_dice returned ${String(roundId)}`);
-  see(txLink(bet.hash));
+  const betArgs = { dealer_id: dealer.id, stake: STAKE.toString(), chance_bp: CHANCE_BP, over: OVER };
+  let roundId: unknown;
+  // The contract binds the VRF alpha to the signer of the transaction that placed the bet.
+  let vrfSigner = accountId;
+  if (options.relayed && options.relayer) {
+    // Browser-style session: a function-call key for the house, added and used through the relayer.
+    const gameKey = KeyPair.fromRandom("ed25519");
+    const addKeyAction = actions.addFunctionCallAccessKey(
+      gameKey.getPublicKey(),
+      options.house,
+      [...GAME_METHODS],
+      GAME_KEY_ALLOWANCE,
+    );
+    const addKey = await relayActions(options.relayer, player, accountId, [addKeyAction]);
+    txs.push({ label: "add game key (relayed)", hash: addKey });
+    see(`game key ${gameKey.getPublicKey().toString()} added, relayer tx ${txLink(addKey)}`);
+    const gamePlayer = new Account(accountId, provider, new KeyPairSigner(gameKey));
+    const betAction = actions.functionCall("bet_dice", betArgs, BET_GAS, 0n);
+    const bet = await relayActions(options.relayer, gamePlayer, options.house, [betAction]);
+    txs.push({ label: "dice bet (relayed)", hash: bet });
+    see(`bet signed by the game key, relayer tx ${txLink(bet)}`);
+    const betTx = await provider.viewTransactionStatus({ txHash: bet, accountId, waitUntil: "NONE" });
+    vrfSigner = betTx.transaction.signer_id;
+    see(`outer transaction signed (and gas paid) by ${vrfSigner}`);
+    // The relayer returns no call result: the new round is the player's latest one.
+    const after = await view(options.house, "get_player", { account_id: accountId });
+    roundId = isRecord(after) ? after.last_round : undefined;
+  } else {
+    const bet = await call("dice bet", options.house, "bet_dice", betArgs, 0n, BET_GAS);
+    roundId = bet.result;
+    see(txLink(bet.hash));
+  }
+  if (typeof roundId !== "number") throw new Error(`no round id after bet_dice: ${String(roundId)}`);
   const round = await waitForRound(view, options.house, roundId);
-  await reportRound(round, roundId, accountId, options, view, call);
+  await reportRound(round, roundId, vrfSigner, options, view, call);
 
   step(6);
   const invested = await call("invest", options.house, "invest", { dealer_id: dealer.id, amount: INVEST.toString() });
@@ -355,7 +382,7 @@ async function waitForRound(view: View, house: string, roundId: number): Promise
 async function reportRound(
   round: Round,
   roundId: number,
-  accountId: string,
+  vrfSigner: string,
   options: Options,
   view: View,
   call: (label: string, contractId: string, methodName: string, args: object) => Promise<{ hash: string }>,
@@ -377,7 +404,7 @@ async function reportRound(
   console.log(`  roll: ${round.roll ?? "?"} (wins ${OVER ? "over" : "under"} ${CHANCE_BP})`);
   console.log(`  payout: ${round.payout === null ? "?" : tusdc(amount(round.payout, "payout"))} tUSDC`);
   for (const proof of round.proofs) {
-    const verdict = verifyVrfProof(proof, pubkey, accountId, `round-${roundId}-${proof.step}`);
+    const verdict = verifyVrfProof(proof, pubkey, vrfSigner, `round-${roundId}-${proof.step}`);
     console.log(`  VRF output: ${proof.output_hex}`);
     console.log(`  alpha: ${proof.alpha}`);
     console.log(`  signature: ${proof.signature_hex}`);

@@ -10,6 +10,7 @@ describe("parseOptions", () => {
       rpcUrl: "https://test.rpc.fastnear.com",
       funder: undefined,
       dryRun: false,
+      relayed: false,
     });
   });
 
@@ -49,6 +50,12 @@ describe("parseOptions", () => {
     expect(() => parseOptions(["--relayer", "ftp://x"], {})).toThrow(/http/);
     expect(() => parseOptions(["--relayer", "not a url"], {})).toThrow(/URL/);
     expect(() => parseOptions([], { FUNDER_ACCOUNT: "me.near", FUNDER_KEY: "ed25519:a" })).toThrow(/testnet/);
+  });
+
+  it("accepts --relayed only with a relayer", () => {
+    expect(parseOptions(["--relayer", "http://127.0.0.1:8787", "--relayed"], {}).relayed).toBe(true);
+    expect(parseOptions(["--relayed"], { RELAYER_URL: "http://127.0.0.1:8787" }).relayed).toBe(true);
+    expect(() => parseOptions(["--relayed"], {})).toThrow(/relayer/);
   });
 
   it("refuses unknown flags and positionals", () => {
