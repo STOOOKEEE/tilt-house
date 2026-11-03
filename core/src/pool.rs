@@ -6,9 +6,14 @@
 //!
 //! Buying is priced as if every open bet lost for the players (bankroll + open stakes), selling
 //! as if every open bet won at its worst case (bankroll − reserved). The spread removes the
-//! "sell just before a known loss" trade. Buys never go below 1 base unit per share, so a
-//! busted pool can be rescued without minting absurd share counts; sells always pay the true
-//! value, so that floor can never pay out money the pool does not have.
+//! "sell just before a known loss" trade.
+//!
+//! Launch price: 1 base unit buys `SHARES_PER_UNIT` shares. Fine-grained shares let a busted
+//! pool's price fall far below launch, so rescuers of a near-zero pool get most of it and old
+//! holders are diluted (design call 3). Buys never go below `FLOOR_SHARES_PER_UNIT` shares per
+//! base unit, so a pool at zero can still be bought without dividing by zero or minting share
+//! counts that could overflow. Sells always pay the true value, so the floor can never pay out
+//! money the pool does not have.
 //!
 //! Invariant kept by every method: `reserved ≤ bankroll`.
 
@@ -18,6 +23,14 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
 use crate::{worst_case_multiple, Game};
+
+/// Shares minted per base unit by a pool's first deposit (the launch price).
+pub const SHARES_PER_UNIT: u128 = 1_000_000;
+
+/// Most shares one base unit can ever buy: the buy price floor, a millionth of the launch price.
+/// It only binds once a pool has lost more than 99.9999 % of its value; it also caps the share
+/// supply at about 1e12 per base unit ever deposited, far below `u128::MAX` for any real amount.
+pub const FLOOR_SHARES_PER_UNIT: u128 = SHARES_PER_UNIT * SHARES_PER_UNIT;
 
 #[derive(
     Clone, Debug, Default, PartialEq, Eq, BorshSerialize, BorshDeserialize, Serialize, Deserialize,
@@ -75,19 +88,20 @@ impl Pool {
     }
 
     /// Adds `amount` to the bankroll and returns the shares minted for it (rounded down, in the
-    /// existing holders' favour). The first deposit mints 1 share per base unit. Returns 0 and
-    /// changes nothing when the amount is too small to buy one share (or on overflow): the caller
-    /// must refuse the deposit.
+    /// existing holders' favour). The first deposit mints `SHARES_PER_UNIT` shares per base unit.
+    /// Returns 0 and changes nothing when the amount is too small to buy one share (or on
+    /// overflow): the caller must refuse the deposit.
     pub fn buy_shares(&mut self, amount: u128) -> u128 {
+        let value = self.bankroll.saturating_add(self.open_stakes);
+        let at_floor = value.saturating_mul(FLOOR_SHARES_PER_UNIT) < self.shares;
         let minted = if self.shares == 0 {
-            amount
+            amount.checked_mul(SHARES_PER_UNIT)
+        } else if at_floor {
+            amount.checked_mul(FLOOR_SHARES_PER_UNIT)
         } else {
-            let value = self
-                .bankroll
-                .saturating_add(self.open_stakes)
-                .max(self.shares);
-            mul_div(amount, self.shares, value).unwrap_or(0)
-        };
+            mul_div(amount, self.shares, value)
+        }
+        .unwrap_or(0);
         let (Some(bankroll), Some(shares)) = (
             self.bankroll.checked_add(amount),
             self.shares.checked_add(minted),
@@ -191,18 +205,21 @@ impl Pool {
 mod tests {
     use super::*;
 
+    const S: u128 = SHARES_PER_UNIT;
+    const USDC: u128 = 1_000_000;
+
     fn funded(amount: u128) -> Pool {
         let mut pool = Pool::default();
-        assert_eq!(pool.buy_shares(amount), amount);
+        assert_eq!(pool.buy_shares(amount), amount * S);
         pool
     }
 
     #[test]
-    fn first_buy_is_one_to_one_then_priced_at_value() {
+    fn first_buy_at_launch_price_then_priced_at_value() {
         let mut pool = funded(1_000);
         pool.bankroll = 2_000; // the pool doubled
-        assert_eq!(pool.buy_shares(500), 250);
-        assert_eq!(pool.shares, 1_250);
+        assert_eq!(pool.buy_shares(500), 250 * S);
+        assert_eq!(pool.shares, 1_250 * S);
         assert_eq!(pool.bankroll, 2_500);
     }
 
@@ -211,22 +228,41 @@ mod tests {
         let mut pool = funded(1_000);
         pool.open_bet(1_000, 2_000).unwrap_err(); // cannot cover
         pool.open_bet(500, 1_000).unwrap();
-        // Bought as if the open bet lost for the player: value 1_500 for 1_000 shares.
-        assert_eq!(pool.buy_shares(1_500), 1_000);
+        // Bought as if the open bet lost for the player: value 1_500 for 1_000 × S shares.
+        assert_eq!(pool.buy_shares(1_500), 1_000 * S);
+    }
+
+    /// Design call 3: whoever refills a near-dead pool gets most of it.
+    #[test]
+    fn rescuer_of_a_near_zero_pool_gets_most_of_it() {
+        let mut pool = funded(2_000 * USDC);
+        pool.bankroll = 2 * USDC; // lost 99.9 %
+        let founders = pool.shares;
+        let rescued = pool.buy_shares(100 * USDC);
+        assert!(
+            rescued * 100 > (founders + rescued) * 95,
+            "rescuer holds {rescued} of {}",
+            founders + rescued
+        );
     }
 
     #[test]
-    fn buy_price_floor_is_one_unit_per_share() {
+    fn buy_price_floor_applies_at_zero() {
         let mut pool = funded(1_000);
-        pool.bankroll = 10; // busted
-        assert_eq!(pool.buy_shares(100), 100);
-        assert_eq!(pool.shares, 1_100);
+        pool.bankroll = 0; // busted
+        assert_eq!(pool.buy_shares(100), 100 * FLOOR_SHARES_PER_UNIT);
+        assert_eq!(pool.shares, 1_000 * S + 100 * FLOOR_SHARES_PER_UNIT);
+        assert_eq!(pool.bankroll, 100);
     }
 
     #[test]
     fn buy_too_small_changes_nothing() {
-        let mut pool = funded(10);
-        pool.bankroll = 1_000;
+        let mut pool = Pool {
+            bankroll: 1_000,
+            shares: 10,
+            reserved: 0,
+            open_stakes: 0,
+        };
         let before = pool.clone();
         assert_eq!(pool.buy_shares(50), 0);
         assert_eq!(pool, before);
@@ -236,8 +272,8 @@ mod tests {
     fn sell_pays_value_and_burns() {
         let mut pool = funded(1_000);
         pool.bankroll = 1_500;
-        assert_eq!(pool.sell_shares(400), Ok(600));
-        assert_eq!(pool.shares, 600);
+        assert_eq!(pool.sell_shares(400 * S), Ok(600));
+        assert_eq!(pool.shares, 600 * S);
         assert_eq!(pool.bankroll, 900);
     }
 
@@ -245,8 +281,8 @@ mod tests {
     fn sell_cannot_take_reserved_money() {
         let mut pool = funded(1_000);
         pool.open_bet(100, 900).unwrap();
-        // Priced as if the open bet won at its worst case: free 100 for 1_000 shares.
-        assert_eq!(pool.sell_shares(1_000), Ok(100));
+        // Priced as if the open bet won at its worst case: free 100 for all the shares.
+        assert_eq!(pool.sell_shares(1_000 * S), Ok(100));
         assert_eq!(pool.bankroll, 900);
         assert_eq!(pool.reserved, 900);
         assert_eq!(pool.sell_shares(1), Err(PoolError::NotEnoughShares));
@@ -260,9 +296,12 @@ mod tests {
     fn sell_errors() {
         let mut pool = funded(1_000);
         assert_eq!(pool.sell_shares(0), Err(PoolError::ZeroShares));
-        assert_eq!(pool.sell_shares(1_001), Err(PoolError::NotEnoughShares));
+        assert_eq!(
+            pool.sell_shares(1_000 * S + 1),
+            Err(PoolError::NotEnoughShares)
+        );
         pool.open_bet(10, 1_000).unwrap();
-        assert_eq!(pool.sell_shares(500), Err(PoolError::ZeroPayout));
+        assert_eq!(pool.sell_shares(500 * S), Err(PoolError::ZeroPayout));
     }
 
     #[test]
@@ -305,7 +344,7 @@ mod tests {
         let json = serde_json::to_string(&funded(5)).unwrap();
         assert_eq!(
             json,
-            r#"{"bankroll":"5","shares":"5","reserved":"0","open_stakes":"0"}"#
+            r#"{"bankroll":"5","shares":"5000000","reserved":"0","open_stakes":"0"}"#
         );
     }
 
@@ -323,7 +362,7 @@ mod tests {
                         pool.buy_shares(u128::from(rng.below(100_000)));
                     }
                     1 => {
-                        let _ = pool.sell_shares(u128::from(rng.below(200_000)));
+                        let _ = pool.sell_shares(u128::from(rng.below(200_000)) * S);
                     }
                     2 => {
                         let stake = u128::from(rng.below(10_000)) + 1;

@@ -20,7 +20,7 @@ pub use blackjack::{
 };
 pub use dealer_rules::{reprice, Offer, Reason, Stats, Temperament};
 pub use dice::{dice_gross, dice_roll, DiceBet};
-pub use pool::{Pool, PoolError};
+pub use pool::{Pool, PoolError, FLOOR_SHARES_PER_UNIT, SHARES_PER_UNIT};
 pub use rng::Rng;
 pub use roulette::{roulette_gross, roulette_spin, RouletteBet};
 
