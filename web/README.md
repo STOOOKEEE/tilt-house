@@ -38,7 +38,9 @@ The app refuses to start if any of the others is missing.
 Views are read with JSON-RPC `call_function` (`src/near/views.ts`, no wallet needed) and checked at
 runtime against `docs/contract-api.md`; the table polls every 2 s, other pages every 5 s.
 
-- `/` lobby: one card per dealer (edge, max bet, boost, reason, pool, LP price vs launch, open/closed).
+- `/` lobby: a 3D casino floor (three.js, `src/scene/lobby`): each dealer at its table with a nameplate,
+  a mood from its pool and offer (`src/scene/mood.ts`) and its reason in a speech bubble; click a table to
+  open it. Below, a compact table per dealer (edge, max bet, pool, boost, LP price vs launch, open/closed).
 - `/table/:dealer`: dice, roulette or blackjack; one round at a time; the result shows the VRF proofs,
   re-checked in the browser (`src/vrf.ts`), and the transaction links.
 - `/pools`: house balance, deposit (`ft_transfer_call`) and withdraw, test tUSDC faucet, LP positions,
