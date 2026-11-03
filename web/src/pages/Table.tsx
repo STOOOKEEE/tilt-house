@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useParams, useSearchParams } from 'react-router'
 import { LoginPrompt } from '../components/LoginPrompt'
 import { DiceForm, RouletteForm } from '../components/GameForms'
 import { RoundResult } from '../components/RoundResult'
@@ -10,11 +10,18 @@ import { playMove } from '../near/session'
 import { useNear } from '../near/useNear'
 import { TABLE_POLL_MS, useLobby, usePlayer, usePoll } from '../near/usePoll'
 import { getConfig, getRound, type DealerView, type PlayerView, type RoundView } from '../near/views'
+import { dealerMood } from '../scene/mood'
+import { demoRound } from '../scene/table/demo'
+import { watchTable } from '../scene/table/spectator'
+import { createTableScene } from '../scene/table/TableScene'
+import type { TableSceneApi } from '../scene/types'
 import { useNow } from '../useNow'
 
 // The VRF key and refund delay only change with an owner call; a slow poll is plenty.
 const CONFIG_POLL_MS = 60_000
 const DEFAULT_REFUND_AFTER_SECS = 120
+/** Dev `?demo=1`: one scripted snapshot every this many ms. */
+const DEMO_STEP_MS = 2_500
 
 export function Table() {
   const { dealer: dealerId = '' } = useParams()
@@ -73,6 +80,7 @@ export function Table() {
 
   return (
     <>
+      <TableStage dealer={dealer} ownRound={shownRound?.dealer_id === dealer.id ? shownRound : null} walletId={walletId} />
       <DealerHeader dealer={dealer} />
       {!walletId ? <LoginPrompt action="play" /> : null}
       <PlayArea
@@ -100,6 +108,101 @@ export function Table() {
         />
       ) : null}
     </>
+  )
+}
+
+interface StageProps {
+  dealer: DealerView
+  /** The player's round at this table; null shows other players' rounds instead. */
+  ownRound: RoundView | null
+  walletId: string
+}
+
+/** The 3D table: the player's own round when there is one, else live rounds of others at this dealer. */
+function TableStage({ dealer, ownRound, walletId }: StageProps) {
+  const { config } = useNear()
+  const [searchParams] = useSearchParams()
+  const demo = import.meta.env.DEV && searchParams.get('demo') === '1'
+  const host = useRef<HTMLDivElement>(null)
+  const [scene, setScene] = useState<TableSceneApi | null>(null)
+  const [onFelt, setOnFelt] = useState<string | null>(null)
+  const [spectatorError, setSpectatorError] = useState('')
+
+  useEffect(() => {
+    if (!host.current) return
+    const created = createTableScene(host.current, {
+      dealerId: dealer.id,
+      dealerName: dealer.name,
+      game: dealer.game,
+      onRound: (round) => setOnFelt(round.player),
+    })
+    setScene(created)
+    return () => {
+      created.dispose()
+      setScene(null)
+    }
+    // Rebuilt only for another dealer: live fields are pushed by the effects below.
+  }, [dealer.id])
+
+  const mood = dealerMood(dealer)
+  useEffect(() => {
+    scene?.setGame(dealer.game)
+    scene?.setMood(mood)
+    scene?.say(dealer.reason_text)
+    scene?.setOpen(dealer.open)
+  }, [scene, dealer.game, mood, dealer.reason_text, dealer.open])
+
+  const shown = useRef<RoundView | null>(null)
+  useEffect(() => {
+    if (!scene || !ownRound || demo) return
+    scene.showRound(shown.current, ownRound)
+    shown.current = ownRound
+  }, [scene, ownRound, demo])
+
+  const spectating = ownRound === null && !demo
+  useEffect(() => {
+    if (!scene || !spectating) return
+    return watchTable({
+      target: config,
+      dealerId: dealer.id,
+      intervalMs: TABLE_POLL_MS,
+      onRound: (previous, next) => scene.showRound(previous, next),
+      onError: setSpectatorError,
+    })
+  }, [scene, spectating, config, dealer.id])
+
+  useEffect(() => {
+    if (!scene || !demo) return
+    let id = 1
+    let snapshots = demoRound(dealer.game, dealer.id, id)
+    let previous: RoundView | null = null
+    const timer = window.setInterval(() => {
+      const next = snapshots.shift()
+      if (!next) {
+        id += 1
+        snapshots = demoRound(dealer.game, dealer.id, id)
+        previous = null
+        return
+      }
+      scene.showRound(previous, next)
+      previous = next
+    }, DEMO_STEP_MS)
+    return () => window.clearInterval(timer)
+  }, [scene, demo, dealer.game, dealer.id])
+
+  const watching = onFelt !== null && onFelt !== walletId ? onFelt : null
+  return (
+    <div style={{ position: 'relative', height: 'min(58vh, 540px)', marginBottom: '1rem' }}>
+      <div ref={host} style={{ position: 'absolute', inset: 0, borderRadius: 6, overflow: 'hidden' }} />
+      <p className="muted" style={{ position: 'absolute', left: 12, top: 4, margin: 0 }}>
+        {demo ? 'demo round (scripted)' : watching ? `watching ${watching}` : spectating ? 'waiting for players…' : null}
+      </p>
+      {spectatorError ? (
+        <p className="loss" style={{ position: 'absolute', left: 12, bottom: 4, margin: 0 }}>
+          live rounds: {spectatorError}
+        </p>
+      ) : null}
+    </div>
   )
 }
 

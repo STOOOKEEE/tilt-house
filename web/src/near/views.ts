@@ -134,6 +134,8 @@ export interface VrfConfig {
   vrf_pubkey_hex: string
   min_bet: string
   refund_after_secs: number
+  /** Id the next round will get: rounds 1..next_round_id-1 exist (spectator view). */
+  next_round_id: number
 }
 
 // ---- guards -------------------------------------------------------------------------------
@@ -330,6 +332,7 @@ export function parseConfig(value: unknown): VrfConfig {
     vrf_pubkey_hex: pubkey,
     min_bet: amount(c.min_bet, 'config.min_bet'),
     refund_after_secs: int(c.refund_after_secs, 'config.refund_after_secs'),
+    next_round_id: int(c.next_round_id, 'config.next_round_id'),
   }
 }
 

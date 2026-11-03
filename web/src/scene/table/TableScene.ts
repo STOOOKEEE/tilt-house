@@ -1,0 +1,333 @@
+// One dealer's table: room, felt, the dealer rig and the game props, playing rounds step by step
+// as planned by the director. Steps run strictly in order (a draw is never skipped); when rounds
+// queue up the clock runs faster instead.
+import * as THREE from 'three'
+import { formatUsdc } from '../../format'
+import type { Game, RoundView, RouletteBet } from '../../near/views'
+import { createCharacter } from '../characters'
+import { dealerLook } from '../looks'
+import { disposeObject, mountRenderer, type MountedRenderer } from '../renderer'
+import type { CharacterRig, Mood, TableSceneApi } from '../types'
+import { BLACKJACK_BET, Cards, paintBlackjackFelt } from './cards'
+import { Dice, paintDiceFelt } from './dice'
+import { planRound, type Step } from './director'
+import {
+  Animator,
+  arcTo,
+  buildLights,
+  buildRoom,
+  buildTable,
+  chipCount,
+  chipStack,
+  CURTAIN_UP_Y,
+  curtain,
+  type FeltTable,
+  feltPoint,
+  FELT_Y,
+  hourglass,
+  TABLE_D,
+} from './props'
+import { betCell, paintRouletteFelt, Roulette } from './roulette'
+
+export interface TableSceneOptions {
+  dealerId: string
+  dealerName: string
+  game: Game
+  /** Called when a round's first step plays, so the page can label whose round is on the felt. */
+  onRound?: (round: RoundView) => void
+}
+
+/** The dealer sits this far behind the felt's back edge, its hands resting over the felt. */
+const DEALER_Z = -TABLE_D / 2 - 0.35
+/** Each round still waiting in the queue speeds the clock up by this much. */
+const BACKLOG_SPEEDUP = 0.75
+const MAX_TIME_SCALE = 4
+const RESULT_HOLD_S = 1.4
+const DICE_BET = { u: 0.5, v: 0.66 }
+
+type Props =
+  | { game: 'blackjack'; cards: Cards }
+  | { game: 'roulette'; wheel: Roulette }
+  | { game: 'dice'; dice: Dice }
+
+export function createTableScene(el: HTMLElement, options: TableSceneOptions): TableSceneApi {
+  return new TableScene(el, options)
+}
+
+class TableScene implements TableSceneApi {
+  private readonly mounted: MountedRenderer
+  private readonly anim = new Animator()
+  private readonly rig: CharacterRig
+  private readonly table: FeltTable
+  private readonly hourglass = hourglass()
+  private readonly curtain = curtain()
+  private props: Props | null = null
+  /** The roulette bet of the round on the felt: where its chips go. */
+  private rouletteBet: RouletteBet | null = null
+  private stake: THREE.Group[] = []
+  private queue: Step[] = []
+  private lastQueued: RoundView | null = null
+  private running = false
+  private disposed = false
+  private reason: string | null = null
+  private open = true
+  private readonly unsubscribe: () => void
+
+  private readonly options: TableSceneOptions
+
+  constructor(host: HTMLElement, options: TableSceneOptions) {
+    this.options = options
+    this.mounted = mountRenderer(host)
+    const { scene, camera } = this.mounted
+    camera.position.set(0, 2.05, 3.3)
+    camera.lookAt(0, 1.4, -0.8)
+    buildLights(scene)
+    const look = dealerLook(options.dealerId)
+    scene.add(buildRoom(options.dealerName, look.accent))
+    this.table = buildTable(look.accent)
+    scene.add(this.table.object)
+    this.rig = createCharacter(look, options.dealerName)
+    this.rig.object.position.set(0, 0, DEALER_Z)
+    scene.add(this.rig.object)
+    this.hourglass.position.copy(feltPoint(0.7, 0.22, 0.75))
+    scene.add(this.hourglass, this.curtain)
+    this.setGame(options.game)
+    this.unsubscribe = this.mounted.onFrame((dt, elapsed) => this.frame(dt, elapsed))
+  }
+
+  setGame(game: Game): void {
+    if (this.props?.game === game) return
+    if (this.props) {
+      const group = this.propsGroup(this.props)
+      group.removeFromParent()
+      disposeObject(group)
+    }
+    this.props = buildProps(game, this.anim)
+    this.table.object.add(this.propsGroup(this.props))
+    if (this.props.game === 'roulette') this.table.object.add(this.props.wheel.marker)
+    this.table.paint(game === 'blackjack' ? paintBlackjackFelt : game === 'roulette' ? paintRouletteFelt : paintDiceFelt)
+  }
+
+  showRound(previous: RoundView | null, next: RoundView): void {
+    if (this.disposed) return
+    if (next.game !== this.props?.game) this.setGame(next.game)
+    // Diff against what the felt will actually show: `previous` only counts if it is the last snapshot
+    // queued. Otherwise (another round queued in between) the round is replayed whole.
+    const shown = previous !== null && previous.id === this.lastQueued?.id ? this.lastQueued : null
+    this.queue.push(...planRound(shown, next))
+    this.lastQueued = next
+    void this.drain()
+  }
+
+  setMood(mood: Mood): void {
+    this.rig.setMood(mood)
+  }
+
+  say(text: string | null): void {
+    this.reason = text
+    this.rig.say(text)
+  }
+
+  setOpen(open: boolean): void {
+    if (open === this.open) return
+    this.open = open
+    this.curtain.visible = true
+    const from = this.curtain.position.y
+    const to = open ? CURTAIN_UP_Y : 0
+    void this.anim.tween(1.2, (t) => (this.curtain.position.y = from + (to - from) * t)).then(() => {
+      if (this.open) this.curtain.visible = false
+    })
+  }
+
+  dispose(): void {
+    this.disposed = true
+    this.queue = []
+    this.unsubscribe()
+    this.anim.finishAll()
+    this.rig.dispose()
+    this.mounted.dispose()
+  }
+
+  // ---- frame loop -----------------------------------------------------------------------------
+
+  private frame(dt: number, elapsed: number): void {
+    this.anim.update(dt)
+    this.rig.update(dt)
+    if (this.props?.game === 'roulette') this.props.wheel.update(dt)
+    if (this.hourglass.visible) {
+      // Quarter turns, ticking like a clock: reads as "waiting" more than a smooth spin.
+      this.hourglass.rotation.y = Math.floor(elapsed * 3) * (Math.PI / 4)
+      this.hourglass.rotation.z = Math.floor(elapsed / 1.5) % 2 === 0 ? 0 : Math.PI
+      this.hourglass.position.y = FELT_Y + 0.75 + Math.sin(elapsed * 2) * 0.04
+    }
+  }
+
+  // ---- step runner ----------------------------------------------------------------------------
+
+  private async drain(): Promise<void> {
+    if (this.running) return
+    this.running = true
+    while (this.queue.length > 0 && !this.disposed) {
+      const step = this.queue.shift() as Step
+      const backlog = this.queue.filter((s) => s.kind === 'clear').length
+      this.anim.timeScale = Math.min(MAX_TIME_SCALE, 1 + backlog * BACKLOG_SPEEDUP)
+      if (step.kind !== 'think' && this.hourglass.visible) {
+        // The draw came back: the thinking loop ends and the dealer's reason returns.
+        this.hourglass.visible = false
+        this.rig.say(this.reason)
+      }
+      try {
+        await this.play(step)
+      } catch (error) {
+        // A broken animation must not freeze the table: report it and go on with the next step.
+        console.error('table step failed', step.kind, error)
+      }
+    }
+    this.running = false
+  }
+
+  private async play(step: Step): Promise<void> {
+    switch (step.kind) {
+      case 'clear':
+        return this.clear()
+      case 'bet':
+        return this.placeBet(step.round)
+      case 'think':
+        this.hourglass.visible = true
+        this.rig.say('drawing… the VRF decides')
+        return
+      case 'double':
+        return this.addChips(this.stake.length > 0 ? chipCountOf(this.stake[0]) : 1, 0.26)
+      case 'deal':
+        return this.deal(step.to, step.index, step.rank)
+      case 'reveal':
+        if (this.props?.game !== 'blackjack') return
+        await Promise.all([this.rig.gesture({ kind: 'flip' }), this.props.cards.reveal(step.rank)])
+        return
+      case 'spin':
+        return this.spin(step.pocket)
+      case 'throw':
+        return this.throwDice(step.roll)
+      case 'settle':
+        return this.settle(step.outcome, step.payout, step.wager)
+      case 'void':
+        return this.voidRound(step.refunded)
+    }
+  }
+
+  private async clear(): Promise<void> {
+    const toDealer = feltPoint(0.5, 0.05, 0.02)
+    const props = this.props
+    const work: Promise<unknown>[] = [this.sweepStake(toDealer)]
+    if (props?.game === 'blackjack') work.push(props.cards.clear(toDealer))
+    if (props?.game === 'dice') work.push(props.dice.clear())
+    if (props?.game === 'roulette') props.wheel.clear()
+    await Promise.all(work)
+  }
+
+  private async placeBet(round: RoundView): Promise<void> {
+    this.options.onRound?.(round)
+    this.rig.say(this.reason)
+    const props = this.props
+    if (props?.game === 'blackjack') props.cards.newRound(round.id)
+    if (props?.game === 'dice' && typeof round.bet === 'object' && 'dice' in round.bet) props.dice.setBet(round.bet.dice)
+    this.rouletteBet = typeof round.bet === 'object' && 'roulette' in round.bet ? round.bet.roulette : null
+    await this.addChips(chipCount(round.stake), 0)
+  }
+
+  /** A stack slides in from the player's edge to the betting spot (offset sideways for a double). */
+  private async addChips(count: number, offsetX: number): Promise<void> {
+    const stack = chipStack(count, this.stake.length * 2)
+    stack.userData.count = count
+    stack.position.copy(feltPoint(0.5, 1.05, 0.02))
+    this.table.object.add(stack)
+    this.stake.push(stack)
+    const spot = this.betSpot()
+    spot.x += offsetX
+    await arcTo(this.anim, stack, spot, 0.45, 0.2)
+  }
+
+  private betSpot(): THREE.Vector3 {
+    const props = this.props
+    if (props?.game === 'blackjack') return feltPoint(BLACKJACK_BET.u, BLACKJACK_BET.v, 0.002)
+    if (props?.game === 'roulette' && this.rouletteBet !== null) {
+      const cell = betCell(this.rouletteBet)
+      return feltPoint(cell.u + cell.w / 2, cell.v + cell.h / 2, 0.002)
+    }
+    return feltPoint(DICE_BET.u, DICE_BET.v, 0.002)
+  }
+
+  private async deal(to: 'player' | 'dealer', index: number, rank: number | null): Promise<void> {
+    if (this.props?.game !== 'blackjack') return
+    const cards = this.props.cards
+    const spot = cards.spot(to, index)
+    const reach = this.rig.gesture({ kind: 'deal', to: spot })
+    await this.anim.wait(0.25)
+    await Promise.all([reach, cards.deal(to, index, rank, this.rig.handPosition())])
+  }
+
+  private async spin(pocket: number): Promise<void> {
+    if (this.props?.game !== 'roulette') return
+    this.rig.say('no more bets!')
+    await Promise.all([this.rig.gesture({ kind: 'spin' }), this.props.wheel.spin(pocket)])
+  }
+
+  private async throwDice(roll: number): Promise<void> {
+    if (this.props?.game !== 'dice') return
+    await Promise.all([this.rig.gesture({ kind: 'throw' }), this.props.dice.throw(roll)])
+  }
+
+  private async settle(outcome: 'win' | 'lose' | 'push', payout: string, wager: string): Promise<void> {
+    if (outcome === 'lose') {
+      this.rig.say('the house wins this one')
+      await Promise.all([this.rig.gesture({ kind: 'collect' }), this.sweepStake(feltPoint(0.5, 0.05, 0.02))])
+      await this.rig.gesture({ kind: 'celebrate' })
+    } else {
+      const gain = BigInt(payout) - BigInt(wager)
+      this.rig.say(outcome === 'push' ? 'push: stake back' : `you win +${formatUsdc(gain)} tUSDC`)
+      await this.rig.gesture({ kind: 'pay' })
+      if (outcome === 'win') await this.addChips(chipCount(gain.toString()), -0.26)
+      await this.sweepStake(feltPoint(0.5, 1.15, 0.02))
+      if (outcome === 'win') await this.rig.gesture({ kind: 'facepalm' })
+    }
+    await this.anim.wait(RESULT_HOLD_S)
+    this.rig.say(this.reason)
+  }
+
+  private async voidRound(refunded: boolean): Promise<void> {
+    this.rig.say(refunded ? 'stake refunded' : 'the draw failed: your stake is safe')
+    await this.rig.gesture({ kind: 'facepalm' })
+    if (refunded) {
+      await this.rig.gesture({ kind: 'pay' })
+      await this.sweepStake(feltPoint(0.5, 1.15, 0.02))
+    }
+    await this.anim.wait(RESULT_HOLD_S)
+    this.rig.say(this.reason)
+  }
+
+  /** Every chip on the felt slides to `to` and goes away. */
+  private async sweepStake(to: THREE.Vector3): Promise<void> {
+    const stacks = this.stake
+    this.stake = []
+    await Promise.all(stacks.map((stack) => arcTo(this.anim, stack, to, 0.4, 0.1)))
+    for (const stack of stacks) {
+      stack.removeFromParent()
+      disposeObject(stack)
+    }
+  }
+
+  private propsGroup(props: Props): THREE.Group {
+    if (props.game === 'blackjack') return props.cards.group
+    return props.game === 'roulette' ? props.wheel.group : props.dice.group
+  }
+}
+
+function buildProps(game: Game, anim: Animator): Props {
+  if (game === 'blackjack') return { game, cards: new Cards(anim) }
+  if (game === 'roulette') return { game, wheel: new Roulette(anim) }
+  return { game, dice: new Dice(anim) }
+}
+
+function chipCountOf(stack: THREE.Group): number {
+  return typeof stack.userData.count === 'number' ? stack.userData.count : 1
+}

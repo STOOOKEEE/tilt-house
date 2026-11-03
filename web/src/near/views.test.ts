@@ -129,9 +129,15 @@ describe('parseHistory', () => {
 
 describe('parseConfig', () => {
   it('needs a 32-byte hex VRF key', () => {
-    const config = { vrf_pubkey_hex: 'c0'.repeat(32), min_bet: '100000', refund_after_secs: 120, owner: 'x' }
+    const config = { vrf_pubkey_hex: 'c0'.repeat(32), min_bet: '100000', refund_after_secs: 120, next_round_id: 13, owner: 'x' }
     expect(parseConfig(config).refund_after_secs).toBe(120)
     expect(() => parseConfig({ ...config, vrf_pubkey_hex: 'c0' })).toThrow(/vrf_pubkey_hex/)
+  })
+
+  it('reads next_round_id, which the spectator view polls', () => {
+    const config = { vrf_pubkey_hex: 'c0'.repeat(32), min_bet: '100000', refund_after_secs: 120, next_round_id: 13 }
+    expect(parseConfig(config).next_round_id).toBe(13)
+    expect(() => parseConfig({ ...config, next_round_id: undefined })).toThrow(/next_round_id/)
   })
 })
 
