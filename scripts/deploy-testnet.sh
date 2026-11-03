@@ -5,7 +5,7 @@
 # and the keys of tilthouse.testnet (owner) and relayer.tilthouse.testnet (tUSDC minter) in
 # ~/.near-credentials. New account keys are saved there by near-cli, never in this repo.
 #
-# Steps: build; create house.tilthouse.testnet (5 NEAR, pays OutLayer fees and player storage)
+# Steps: build; create house.tilthouse.testnet (10 NEAR, pays OutLayer fees and player storage)
 # and one account per dealer (0.5 NEAR, it signs `reprice`); deploy + init; register the house on
 # tUSDC; mint the owner's seed and deposit it in the house; add_dealer x5, each seeded with
 # 2,000 tUSDC taken from the owner's in-contract balance (minted as the owner's LP shares).
@@ -50,7 +50,7 @@ create_account() {
 
 (cd "$ROOT/contract" && cargo near build non-reproducible-wasm)
 
-create_account "$HOUSE" '5 NEAR'
+create_account "$HOUSE" '10 NEAR'
 for dealer in "${DEALERS[@]}"; do
   read -r id _ _ _ <<<"$dealer"
   create_account "$id.$OWNER" '0.5 NEAR'

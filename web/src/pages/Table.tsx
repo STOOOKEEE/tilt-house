@@ -92,6 +92,7 @@ export function Table() {
           round={shownRound}
           txHashes={txHashes}
           vrfPubkeyHex={houseConfig.data?.vrf_pubkey_hex ?? null}
+          relayerAccount={config.relayerAccount}
           refundAfterSecs={houseConfig.data?.refund_after_secs ?? DEFAULT_REFUND_AFTER_SECS}
           onRefund={
             walletId && !sending ? () => void send('refund_stuck_round', { round_id: shownRound.id }, false) : null

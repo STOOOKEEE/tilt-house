@@ -9,12 +9,14 @@ interface Props {
   /** Relayed transactions of this round (bet and blackjack moves), newest last. */
   txHashes: string[]
   vrfPubkeyHex: string | null
+  /** Signs relayed transactions, so it is the signer named in the alpha of relayed rounds. */
+  relayerAccount: string
   refundAfterSecs: number
   /** Present when the viewer may ask for a refund (anyone may, but only the player cares). */
   onRefund: (() => void) | null
 }
 
-export function RoundResult({ round, txHashes, vrfPubkeyHex, refundAfterSecs, onRefund }: Props) {
+export function RoundResult({ round, txHashes, vrfPubkeyHex, relayerAccount, refundAfterSecs, onRefund }: Props) {
   const now = useNow()
   const stuck = round.status === 'failed' || (round.status === 'waiting_vrf' && now - round.updated_at >= refundAfterSecs)
   return (
@@ -47,10 +49,16 @@ export function RoundResult({ round, txHashes, vrfPubkeyHex, refundAfterSecs, on
           <summary>verify the draw</summary>
           <p className="muted">
             Each draw is OutLayer&apos;s VRF: an Ed25519 signature over <code>alpha</code>, which names this round, step
-            and player. The random output is sha256(signature). Checked below in your browser.
+            and the account that signed the request (you, or the relayer for a gasless move). The random output is sha256(signature). Checked below in your browser.
           </p>
           {round.proofs.map((proof) => (
-            <ProofDetail key={proof.step} proof={proof} round={round} vrfPubkeyHex={vrfPubkeyHex} />
+            <ProofDetail
+              key={proof.step}
+              proof={proof}
+              round={round}
+              vrfPubkeyHex={vrfPubkeyHex}
+              relayerAccount={relayerAccount}
+            />
           ))}
         </details>
       ) : null}
@@ -139,8 +147,18 @@ function Cards({ cards }: { cards: number[] }) {
   )
 }
 
-function ProofDetail({ proof, round, vrfPubkeyHex }: { proof: VrfProof; round: RoundView; vrfPubkeyHex: string | null }) {
-  const check = vrfPubkeyHex ? checkProof(proof, vrfPubkeyHex, round.id, round.player) : null
+function ProofDetail({
+  proof,
+  round,
+  vrfPubkeyHex,
+  relayerAccount,
+}: {
+  proof: VrfProof
+  round: RoundView
+  vrfPubkeyHex: string | null
+  relayerAccount: string
+}) {
+  const check = vrfPubkeyHex ? checkProof(proof, vrfPubkeyHex, round.id, [round.player, relayerAccount]) : null
   return (
     <dl className="proof">
       <dt>step</dt>

@@ -3,6 +3,8 @@ export interface Config {
   houseContract: string
   tokenContract: string
   relayerUrl: string
+  /** Account that signs relayed transactions, hence the signer named in the VRF alpha of relayed rounds. */
+  relayerAccount: string
   rpcUrl: string
 }
 
@@ -21,6 +23,7 @@ export function readConfig(env: Env): Config {
     houseContract: required(env, 'VITE_HOUSE_CONTRACT'),
     tokenContract: required(env, 'VITE_TOKEN_CONTRACT'),
     relayerUrl: required(env, 'VITE_RELAYER_URL').replace(/\/+$/, ''),
+    relayerAccount: required(env, 'VITE_RELAYER_ACCOUNT'),
     rpcUrl: required(env, 'VITE_NEAR_RPC_URL'),
   }
 }

@@ -18,6 +18,7 @@ pnpm --filter @tilt-house/web build
 | `VITE_HOUSE_CONTRACT` | House contract account; receiver of game moves and of the browser game key. |
 | `VITE_TOKEN_CONTRACT` | Test USDC token (NEP-141), `tusdc.tilthouse.testnet`. |
 | `VITE_RELAYER_URL` | Relayer base URL (`/activate`, `/relay`, `/faucet`). |
+| `VITE_RELAYER_ACCOUNT` | Account the relayer signs with (`relayer.tilthouse.testnet`). A relayed draw's VRF alpha names this signer, not the player, so "verify the draw" accepts the player or this account. |
 | `VITE_NEAR_RPC_URL` | NEAR testnet RPC. |
 
 The app refuses to start if any of them is missing.
