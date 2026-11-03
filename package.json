@@ -1,0 +1,7 @@
+{
+  "name": "tilt-house",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.3.4",
+  "engines": { "node": ">=22" }
+}

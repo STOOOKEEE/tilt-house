@@ -1,0 +1,5 @@
+packages:
+  - relayer
+  - agents
+  - web
+  - cli-demo
