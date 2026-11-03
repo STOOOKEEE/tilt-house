@@ -1,0 +1,77 @@
+import { Account, KeyPair, KeyPairSigner, type JsonRpcProvider, type KeyPairString } from 'near-api-js'
+import type { Config } from '../config'
+import { callAction, gameKeyAction, moveAction, type GameMethod } from './delegate'
+import { activate, relay, type RelayResult } from './relay'
+
+type SessionConfig = Pick<Config, 'houseContract' | 'relayerUrl'>
+
+// The relayer refuses delegates valid for more than 600 blocks; ~2 minutes is plenty.
+const DELEGATE_TTL_BLOCKS = 120
+
+function storageKey(accountId: string, houseContract: string): string {
+  return `tilt-house:game-key:${accountId}:${houseContract}`
+}
+
+function loadGameKey(accountId: string, houseContract: string): KeyPair | null {
+  const stored = localStorage.getItem(storageKey(accountId, houseContract))
+  return stored ? KeyPair.fromString(stored as KeyPairString) : null
+}
+
+/**
+ * Makes sure this browser holds a function-call key for the house on `account`.
+ * First time: the relayer activates the account (Privy wallets are implicit accounts that do not
+ * exist until funded), then one Privy signature for the AddKey delegate, relayed gas-free.
+ * The key is stored only after the relayer accepted it, so a failed relay retries next login.
+ */
+export async function ensureGameKey(account: Account, config: SessionConfig): Promise<KeyPair> {
+  const existing = loadGameKey(account.accountId, config.houseContract)
+  if (existing) return existing
+
+  await activate(config.relayerUrl, account.accountId)
+  const gameKey = KeyPair.fromRandom('ed25519')
+  // AddKey acts on the delegate's receiver, so it targets the player's own account.
+  const { signedDelegate } = await account.createSignedMetaTransaction({
+    receiverId: account.accountId,
+    actions: [gameKeyAction(gameKey.getPublicKey(), config.houseContract)],
+    blockHeightTtl: DELEGATE_TTL_BLOCKS,
+  })
+  await relay(config.relayerUrl, signedDelegate)
+  localStorage.setItem(storageKey(account.accountId, config.houseContract), gameKey.toString())
+  return gameKey
+}
+
+/** A game move signed by the browser game key and relayed: no popup, no gas for the player. */
+export async function playMove(
+  accountId: string,
+  provider: JsonRpcProvider,
+  config: SessionConfig,
+  method: GameMethod,
+  args: object,
+): Promise<RelayResult> {
+  const gameKey = loadGameKey(accountId, config.houseContract)
+  if (!gameKey) throw new Error('No game key in this browser: log in again')
+  const account = new Account(accountId, provider, new KeyPairSigner(gameKey))
+  const { signedDelegate } = await account.createSignedMetaTransaction({
+    receiverId: config.houseContract,
+    actions: [moveAction(method, args)],
+    blockHeightTtl: DELEGATE_TTL_BLOCKS,
+  })
+  return relay(config.relayerUrl, signedDelegate)
+}
+
+/** Money moves (deposit, withdraw, invest) signed by the Privy full-access key and relayed. */
+export async function fullAccessCall(
+  account: Account,
+  config: SessionConfig,
+  receiverId: string,
+  method: string,
+  args: object,
+  deposit: bigint,
+): Promise<RelayResult> {
+  const { signedDelegate } = await account.createSignedMetaTransaction({
+    receiverId,
+    actions: [callAction(method, args, deposit)],
+    blockHeightTtl: DELEGATE_TTL_BLOCKS,
+  })
+  return relay(config.relayerUrl, signedDelegate)
+}

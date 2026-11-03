@@ -1,0 +1,96 @@
+:root {
+  --bg: #0b0b0c;
+  --panel: #141517;
+  --pink: #ec6fae;
+  --gold: #f0c26a;
+  --win: #7ccf8f;
+  --loss: #f0715f;
+  --text: #d8d8d8;
+  --muted: #7a7d82;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: var(--text);
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding: 0.75rem 1.5rem;
+  background: var(--panel);
+  border-bottom: 1px solid #222428;
+}
+
+.brand {
+  color: var(--pink);
+  font-weight: 700;
+  letter-spacing: 0.15em;
+}
+
+.topbar nav {
+  display: flex;
+  gap: 1.25rem;
+}
+
+.topbar nav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.topbar nav a.active,
+.topbar nav a:hover {
+  color: var(--text);
+}
+
+.account {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.85rem;
+}
+
+button {
+  font: inherit;
+  color: var(--bg);
+  background: var(--pink);
+  border: 0;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.page {
+  padding: 1.5rem;
+}
+
+h1 {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.money,
+.key {
+  color: var(--gold);
+}
+
+.win {
+  color: var(--win);
+}
+
+.loss {
+  color: var(--loss);
+}
+
+.fatal {
+  color: var(--loss);
+  padding: 1.5rem;
+}
