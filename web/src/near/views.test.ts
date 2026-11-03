@@ -118,11 +118,11 @@ describe('parseRound', () => {
 describe('parseHistory', () => {
   it('reads reprice and invest entries', () => {
     const entries = parseHistory([
-      { seq: 41, t: 100, kind: 'reprice', reason: 'idle', reason_text: 'x', rake_bp: 300, max_bet: '9', boost_until: 0, account_id: null, amount: null },
-      { seq: 42, t: 101, kind: 'invest', reason: null, reason_text: null, rake_bp: null, max_bet: null, boost_until: null, account_id: 'a.testnet', amount: '5' },
+      { seq: 41, t: 100, kind: 'reprice', text: 'x', reason: 'idle', reason_text: 'x', rake_bp: 300, max_bet: '9', boost_until: 0, account_id: null, amount: null },
+      { seq: 42, t: 101, kind: 'invest', text: 'in', reason: null, reason_text: null, rake_bp: null, max_bet: null, boost_until: null, account_id: 'a.testnet', amount: '5' },
     ])
     expect(entries[0]).toMatchObject({ seq: 41, kind: 'reprice', rake_bp: 300, max_bet: '9' })
-    expect(entries[1]).toMatchObject({ kind: 'invest', account_id: 'a.testnet', amount: '5', reason: null })
+    expect(entries[1]).toMatchObject({ kind: 'invest', text: 'in', account_id: 'a.testnet', amount: '5', reason: null })
     expect(() => parseHistory([{ ...entries[0], kind: 'jackpot' }])).toThrow(/kind/)
   })
 })

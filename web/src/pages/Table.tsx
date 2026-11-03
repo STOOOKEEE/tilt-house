@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { LoginPrompt } from '../components/LoginPrompt'
 import { DiceForm, RouletteForm } from '../components/GameForms'
@@ -40,6 +40,10 @@ export function Table() {
   const round = usePoll(roundId === null ? null : loadRound, TABLE_POLL_MS)
   const shownRound = round.data?.id === roundId ? round.data : null
 
+  // A failed draw blocks new bets until refunded (contract-api.md): refund it once, unprompted.
+  const refundedFailed = useRef<number | null>(null)
+  const failedId = shownRound?.status === 'failed' && shownRound.player === walletId ? shownRound.id : null
+
   const send = async (method: GameMethod, args: Record<string, unknown>, newRound: boolean) => {
     setSending(true)
     setMoveError('')
@@ -56,6 +60,12 @@ export function Table() {
       round.refresh()
     }
   }
+
+  useEffect(() => {
+    if (failedId === null || sending || refundedFailed.current === failedId) return
+    refundedFailed.current = failedId
+    void send('refund_stuck_round', { round_id: failedId }, false)
+  })
 
   if (lobby.error && !lobby.data) return <p className="loss">Could not load the table: {lobby.error}</p>
   if (!lobby.data) return <p className="muted">loading table…</p>

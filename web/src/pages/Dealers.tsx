@@ -51,7 +51,7 @@ export function Dealers() {
               <tr key={entry.seq}>
                 <td className="muted">{new Date(entry.t * 1000).toLocaleString()}</td>
                 <td className={KIND_CLASS[entry.kind]}>{describe(entry)}</td>
-                <td>{entry.reason_text ?? ''}</td>
+                <td>{entry.text}</td>
               </tr>
             ))}
           </tbody>
@@ -79,7 +79,7 @@ function describe(entry: HistoryEntry): string {
       return `${entry.kind === 'boost' ? 'boost on ·' : 'reprice ·'}${rake}${maxBet}`
     }
     case 'bust':
-      return 'bust: table closed'
+      return `bust: table closed${entry.amount === null ? '' : ` · needs ${formatUsdc(entry.amount)} tUSDC`}`
     case 'reopen':
       return 'reopened'
     case 'invest':

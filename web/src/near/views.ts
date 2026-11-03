@@ -118,6 +118,8 @@ export interface HistoryEntry {
   /** Unix seconds. */
   t: number
   kind: HistoryKind
+  /** Display line, same wording as the simulator's events. */
+  text: string
   reason: string | null
   reason_text: string | null
   rake_bp: number | null
@@ -306,6 +308,7 @@ export function parseHistory(value: unknown): HistoryEntry[] {
       seq: int(e.seq, `${path}.seq`),
       t: int(e.t, `${path}.t`),
       kind: oneOf(HISTORY_KINDS, e.kind, `${path}.kind`),
+      text: str(e.text, `${path}.text`),
       reason: optional(e.reason, (v) => str(v, `${path}.reason`)),
       reason_text: optional(e.reason_text, (v) => str(v, `${path}.reason_text`)),
       rake_bp: optional(e.rake_bp, (v) => int(v, `${path}.rake_bp`)),
