@@ -52,7 +52,7 @@ export function SessionHud({ dealer, session, demo }: { dealer: DealerView; sess
           ) : null}
         </>
       ) : (
-        <span className="muted">edge {formatBp(dealer.total_edge_bp)} · not seated</span>
+        <span className="muted">edge {formatBp(dealer.total_edge_bp)} · no session yet</span>
       )}
     </div>
   )
