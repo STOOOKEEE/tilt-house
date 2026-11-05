@@ -7,20 +7,29 @@ import { KeyType, PublicKey, SCHEMA } from "near-api-js";
  * supplies the chain facts (block height, access key) separately.
  */
 
-export const GAME_METHODS = [
-  "bet_dice",
-  "bet_roulette",
-  "bj_deal",
-  "bj_hit",
-  "bj_double",
-  "bj_stand",
-  "refund_stuck_round",
-] as const;
+// Session moves the browser game key (a function-call key) may sign: money stays inside the
+// house contract (balance ↔ session escrow), so no full-access signature is needed.
+export const GAME_METHODS = ["open_session", "close_session", "force_close", "claim_unrevealed"] as const;
 
-// Money moves on the house contract. The contract requires 1 yocto on some of
-// them, which only a full-access key can attach; the relayer also checks the
-// signing key is full access before paying for any of them.
-export const MONEY_METHODS = ["withdraw", "invest", "divest", "mt_transfer"] as const;
+// The web must know a session is open before playing it, so this one waits for execution; the
+// other session moves are answered as soon as they are included.
+const WAIT_FOR_EXECUTION = "open_session";
+
+// Money moves and owner actions on the house contract. Some require 1 yocto, which only a
+// full-access key can attach; the relayer also checks the signing key is full access before
+// paying for any of them.
+export const MONEY_METHODS = [
+  "withdraw",
+  "invest",
+  "divest",
+  "open_table",
+  "bid_for_seat",
+  "set_offer",
+  "set_autopilot",
+  "set_temperament",
+  "list_seat",
+  "buy_seat",
+] as const;
 
 export const DEPOSIT_METHOD = "ft_transfer_call";
 
@@ -204,11 +213,14 @@ function sameMethods(given: string[], expected: readonly string[]): boolean {
   return unique.size === given.length && given.length === expected.length && expected.every((m) => unique.has(m));
 }
 
-/** Only game moves on the house: no money, no key. */
+/** Only session moves on the house, none of which the web must wait for: no money, no key. */
 export function isGameOnly(delegate: DecodedDelegate, cfg: PolicyConfig): boolean {
   return (
     delegate.receiverId === cfg.house &&
-    delegate.actions.every((action) => action.functionCall !== undefined && isIn(GAME_METHODS, action.functionCall.methodName))
+    delegate.actions.every((action) => {
+      const method = action.functionCall?.methodName;
+      return method !== undefined && method !== WAIT_FOR_EXECUTION && isIn(GAME_METHODS, method);
+    })
   );
 }
 

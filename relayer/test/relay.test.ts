@@ -48,7 +48,7 @@ const ftDeposit = (receiverId: string, deposit = 1n, method = "ft_transfer_call"
 
 describe("encoding", () => {
   it("decodes to the same bytes and the same signed hash", async () => {
-    const { signed, hash } = await signDelegate([gameCall("bet_dice"), keySetup()]);
+    const { signed, hash } = await signDelegate([gameCall("close_session"), keySetup()]);
     const decoded = decodeSignedDelegate(toBase64(signed));
     expect(decoded).not.toBeNull();
     if (!decoded) return;
@@ -63,7 +63,7 @@ describe("encoding", () => {
     expect((await post({ signedDelegate: Buffer.from("garbage").toString("base64") })).body).toEqual({
       error: "invalid_encoding",
     });
-    const { signed } = await signDelegate([gameCall("bet_dice")]);
+    const { signed } = await signDelegate([gameCall("close_session")]);
     const trailing = Buffer.concat([Buffer.from(encodeSignedDelegate(signed)), Buffer.from([0])]);
     expect((await post({ signedDelegate: trailing.toString("base64") })).body).toEqual({ error: "invalid_encoding" });
   });
@@ -73,12 +73,14 @@ describe("allowed shapes", () => {
   it.each(GAME_METHODS)("relays %s from a function-call key", async (method) => {
     chain.key = { nonce: 1n, fullAccess: false };
     const res = await relay([gameCall(method)]);
-    expect(res).toEqual({ status: 200, body: { txHash: "tx1", status: "pending" } });
+    // open_session waits for execution (the web plays only an open session); the others answer at inclusion.
+    const status = method === "open_session" ? "success" : "pending";
+    expect(res).toEqual({ status: 200, body: { txHash: "tx1", status } });
     expect(chain.relayed[0]?.delegateAction.senderId).toBe(PLAYER);
   });
 
   it("relays several game calls up to 300 Tgas in total", async () => {
-    const res = await relay([gameCall("bj_hit", teraToGas(150)), gameCall("bj_stand", teraToGas(150))]);
+    const res = await relay([gameCall("close_session", teraToGas(150)), gameCall("force_close", teraToGas(150))]);
     expect(res.status).toBe(200);
   });
 
@@ -104,14 +106,19 @@ describe("allowed shapes", () => {
 });
 
 describe("when the relayer answers", () => {
-  it("answers game moves at inclusion, without waiting for the draw", async () => {
-    await relay([gameCall("bj_hit", teraToGas(100)), gameCall("bj_stand", teraToGas(100))]);
+  it("answers session moves at inclusion", async () => {
+    await relay([gameCall("close_session", teraToGas(100)), gameCall("force_close", teraToGas(100))]);
     expect(chain.waits).toEqual(["included"]);
+  });
+
+  it("waits for open_session to execute: the web plays only an open session", async () => {
+    await relay([gameCall("open_session", teraToGas(100))]);
+    expect(chain.waits).toEqual(["executed"]);
   });
 
   it.each([
     ["a money move", [gameCall("withdraw", teraToGas(100), 1n)], {}],
-    ["a game move bundled with a money move", [gameCall("bet_dice"), gameCall("divest")], {}],
+    ["a game move bundled with a money move", [gameCall("close_session"), gameCall("divest")], {}],
     ["a USDC deposit", [ftDeposit(HOUSE)], { receiverId: TOKEN }],
     ["the key setup", [keySetup()], { receiverId: PLAYER }],
   ] as const)("waits for the full execution of %s", async (_name, acts, opts) => {
@@ -128,19 +135,19 @@ describe("refusals (review focus #5)", () => {
     expect(chain.relayed).toHaveLength(0);
   };
 
-  it("another receiver", () => refused([gameCall("bet_dice")], "wrong_receiver", { receiverId: "evil.testnet" }));
+  it("another receiver", () => refused([gameCall("close_session")], "wrong_receiver", { receiverId: "evil.testnet" }));
   it("a method outside the allow-list", () => refused([gameCall("add_dealer")], "method_not_allowed"));
   it("reprice (dealer-only)", () => refused([gameCall("reprice")], "method_not_allowed"));
-  it("a deposit on a game move", () => refused([gameCall("bet_dice", teraToGas(100), 1n)], "deposit_not_allowed"));
+  it("a deposit on a game move", () => refused([gameCall("close_session", teraToGas(100), 1n)], "deposit_not_allowed"));
   it("more than 1 yocto on a money move", () =>
     refused([gameCall("withdraw", teraToGas(100), 2n)], "deposit_not_allowed"));
   it("a NEAR transfer to the house", () => refused([actions.transfer(1n)], "action_not_allowed"));
   it("a game call hidden next to a transfer", () =>
-    refused([gameCall("bet_dice"), actions.transfer(10n ** 24n)], "action_not_allowed"));
-  it("a single call above 300 Tgas", () => refused([gameCall("bet_dice", teraToGas(301))], "gas_too_high"));
+    refused([gameCall("close_session"), actions.transfer(10n ** 24n)], "action_not_allowed"));
+  it("a single call above 300 Tgas", () => refused([gameCall("close_session", teraToGas(301))], "gas_too_high"));
   it("calls above 300 Tgas in total", () =>
-    refused([gameCall("bj_hit", teraToGas(200)), gameCall("bj_stand", teraToGas(200))], "gas_too_high"));
-  it("too many actions", () => refused(Array.from({ length: 5 }, () => gameCall("bj_hit", teraToGas(10))), "too_many_actions"));
+    refused([gameCall("close_session", teraToGas(200)), gameCall("force_close", teraToGas(200))], "gas_too_high"));
+  it("too many actions", () => refused(Array.from({ length: 5 }, () => gameCall("close_session", teraToGas(10))), "too_many_actions"));
   it("no actions", () => refused([], "no_actions"));
 
   it("a full-access key setup", () =>
@@ -154,7 +161,7 @@ describe("refusals (review focus #5)", () => {
   it("a key missing a method", () =>
     refused([keySetup(undefined, GAME_METHODS.slice(1))], "wrong_key_methods", { receiverId: PLAYER }));
   it("a key with duplicated methods", () =>
-    refused([keySetup(undefined, [...GAME_METHODS.slice(1), "bet_roulette"])], "wrong_key_methods", {
+    refused([keySetup(undefined, [...GAME_METHODS.slice(1), "bet_dice"])], "wrong_key_methods", {
       receiverId: PLAYER,
     }));
   it("a key with no method restriction", () => refused([keySetup(undefined, [])], "wrong_key_methods", { receiverId: PLAYER }));
@@ -183,65 +190,65 @@ describe("refusals (review focus #5)", () => {
   });
   it("a key unknown on chain", async () => {
     chain.key = null;
-    await refused([gameCall("bet_dice")], "unknown_key");
+    await refused([gameCall("close_session")], "unknown_key");
   });
   it("a nonce already used", async () => {
     chain.key = { nonce: 10n, fullAccess: true };
-    await refused([gameCall("bet_dice")], "stale_nonce", { nonce: 10n });
+    await refused([gameCall("close_session")], "stale_nonce", { nonce: 10n });
   });
-  it("an expired delegate", () => refused([gameCall("bet_dice")], "expired", { maxBlockHeight: HEIGHT }));
+  it("an expired delegate", () => refused([gameCall("close_session")], "expired", { maxBlockHeight: HEIGHT }));
   it("a delegate valid too far ahead", () =>
-    refused([gameCall("bet_dice")], "ttl_too_long", { maxBlockHeight: HEIGHT + 601n }));
+    refused([gameCall("close_session")], "ttl_too_long", { maxBlockHeight: HEIGHT + 601n }));
 
   it("a forged signature", async () => {
-    const { signed } = await signDelegate([gameCall("bet_dice")]);
+    const { signed } = await signDelegate([gameCall("close_session")]);
     signed.delegateAction.receiverId = HOUSE;
     signed.delegateAction.nonce += 1n; // changes the signed bytes
     expect(await post({ signedDelegate: toBase64(signed) })).toEqual({ status: 403, body: { error: "bad_signature" } });
   });
   it("a signature by another key", async () => {
-    const { signed } = await signDelegate([gameCall("bet_dice")]);
-    const { signed: other } = await signDelegate([gameCall("bet_dice")]);
+    const { signed } = await signDelegate([gameCall("close_session")]);
+    const { signed: other } = await signDelegate([gameCall("close_session")]);
     signed.signature = other.signature;
     expect(await post({ signedDelegate: toBase64(signed) })).toEqual({ status: 403, body: { error: "bad_signature" } });
   });
   it("a secp256k1 signer", () =>
-    refused([gameCall("bet_dice")], "unsupported_key_type", { key: KeyPair.fromRandom("secp256k1") }));
+    refused([gameCall("close_session")], "unsupported_key_type", { key: KeyPair.fromRandom("secp256k1") }));
 });
 
 describe("rate limits", () => {
   it(`allows ${LIMITS.relayPerSender} moves per sender per minute`, async () => {
-    for (let i = 0; i < LIMITS.relayPerSender; i++) expect((await relay([gameCall("bet_dice")])).status).toBe(200);
-    expect(await relay([gameCall("bet_dice")])).toEqual({ status: 429, body: { error: "rate_limited" } });
-    expect((await relay([gameCall("bet_dice")], { senderId: "bob.testnet" })).status).toBe(200);
+    for (let i = 0; i < LIMITS.relayPerSender; i++) expect((await relay([gameCall("close_session")])).status).toBe(200);
+    expect(await relay([gameCall("close_session")])).toEqual({ status: 429, body: { error: "rate_limited" } });
+    expect((await relay([gameCall("close_session")], { senderId: "bob.testnet" })).status).toBe(200);
     clock += 60_000;
-    expect((await relay([gameCall("bet_dice")])).status).toBe(200);
+    expect((await relay([gameCall("close_session")])).status).toBe(200);
   });
 
   it("does not let forged payloads spend a sender's quota", async () => {
     chain.key = null;
-    for (let i = 0; i < LIMITS.relayPerSender + 5; i++) expect((await relay([gameCall("bet_dice")])).status).toBe(403);
+    for (let i = 0; i < LIMITS.relayPerSender + 5; i++) expect((await relay([gameCall("close_session")])).status).toBe(403);
     chain.key = { nonce: 1n, fullAccess: true };
-    expect((await relay([gameCall("bet_dice")])).status).toBe(200);
+    expect((await relay([gameCall("close_session")])).status).toBe(200);
   });
 
   it(`caps all requests at ${LIMITS.relayGlobal} per minute`, async () => {
     for (let i = 0; i < LIMITS.relayGlobal; i++) expect((await post({})).status).toBe(400);
-    expect(await relay([gameCall("bet_dice")])).toEqual({ status: 429, body: { error: "rate_limited" } });
+    expect(await relay([gameCall("close_session")])).toEqual({ status: 429, body: { error: "rate_limited" } });
     clock += 60_000;
-    expect((await relay([gameCall("bet_dice")])).status).toBe(200);
+    expect((await relay([gameCall("close_session")])).status).toBe(200);
   });
 });
 
 describe("chain errors", () => {
   it("maps RPC failures to 502", async () => {
     chain.relayError = new Error("boom");
-    expect(await relay([gameCall("bet_dice")])).toEqual({ status: 502, body: { error: "rpc_error" } });
+    expect(await relay([gameCall("close_session")])).toEqual({ status: 502, body: { error: "rpc_error" } });
   });
 
   it("maps RPC timeouts to 504", async () => {
     chain.relayError = new TransactionTimeoutError();
-    expect(await relay([gameCall("bet_dice")])).toEqual({ status: 504, body: { error: "rpc_timeout" } });
+    expect(await relay([gameCall("close_session")])).toEqual({ status: 504, body: { error: "rpc_timeout" } });
   });
 });
 
