@@ -1,10 +1,12 @@
-//! Fast-forward: simulates days of Tilt House (dealers, players, LPs) with the contract's rules
-//! and writes the timeline as JSON for the web `/sim` page.
+//! Fast-forward: simulates days of the Tilt House casino tycoon (NPC dealers, table owners, NPC
+//! gamblers, LPs, the floor's seats, rent and jackpot) with the contract's rules and writes the
+//! timeline as JSON for the web `/sim` page.
 //!
 //! Usage: `sim [--days N] [--seed S] [--out PATH]` (defaults: 7 days, seed 42, stdout).
 
+mod gamblers;
 mod lps;
-mod players;
+mod owners;
 mod world;
 
 use std::process::ExitCode;

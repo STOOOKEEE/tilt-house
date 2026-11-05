@@ -994,7 +994,11 @@ mod tests {
                 (lowest * 11_000).div_ceil(BP)
             },
             cooldown_until: 0,
-            my_min_rent: if my_rent.is_some() { MIN_RENT_PER_HOUR } else { 0 },
+            my_min_rent: if my_rent.is_some() {
+                MIN_RENT_PER_HOUR
+            } else {
+                0
+            },
         }
     }
 
@@ -1140,7 +1144,10 @@ mod tests {
         assert_eq!(wild.boost_until, NOW + MAX_BOOST_SECS);
         assert_eq!(wild.reason, Reason::Owner);
         let cheap = clamp_owner_offer(Game::Dice, &p, 0, USDC, 0, 0, NOW);
-        assert_eq!((cheap.rake_bp, cheap.max_bet, cheap.boost_until), (100, USDC, 0));
+        assert_eq!(
+            (cheap.rake_bp, cheap.max_bet, cheap.boost_until),
+            (100, USDC, 0)
+        );
         // One boost per hour.
         let again = clamp_owner_offer(Game::Dice, &p, 200, USDC, 600, NOW - 3_599, NOW);
         assert_eq!(again.boost_until, 0);

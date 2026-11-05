@@ -74,14 +74,19 @@ pub struct Seat {
 mod opt_amount_str {
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S: Serializer>(value: &Option<u128>, serializer: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(
+        value: &Option<u128>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
         match value {
             Some(amount) => serializer.collect_str(amount),
             None => serializer.serialize_none(),
         }
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u128>, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<u128>, D::Error> {
         Option::<String>::deserialize(deserializer)?
             .map(|text| text.parse().map_err(serde::de::Error::custom))
             .transpose()

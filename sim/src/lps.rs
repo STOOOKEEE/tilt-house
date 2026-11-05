@@ -10,7 +10,6 @@
 
 use core_rules::Rng;
 
-use crate::players::{between, unit};
 use crate::world::{Dealer, HOUR, PRICE_SCALE, USDC};
 
 const MOVERS: usize = 14;
@@ -51,7 +50,18 @@ pub struct Lp {
     next_check: u64,
 }
 
-fn lp(rng: &mut Rng, kind: Kind, dealers: usize) -> Lp {
+/// Uniform integer in `lo..=hi`.
+fn between(rng: &mut Rng, lo: u64, hi: u64) -> u64 {
+    lo + u64::from(rng.below((hi - lo + 1) as u32))
+}
+
+/// Uniform in [0, 1).
+fn unit(rng: &mut Rng) -> f64 {
+    const RESOLUTION: u32 = 1 << 30;
+    f64::from(rng.below(RESOLUTION)) / f64::from(RESOLUTION)
+}
+
+fn lp(rng: &mut Rng, kind: Kind) -> Lp {
     let (wallet_usdc, period, stop_loss) = match kind {
         Kind::House => (0, 2 * HOUR, HOUSE_STOP_LOSS),
         Kind::Mover => (
@@ -69,8 +79,8 @@ fn lp(rng: &mut Rng, kind: Kind, dealers: usize) -> Lp {
     Lp {
         kind,
         wallet: u128::from(wallet_usdc) * USDC,
-        shares: vec![0; dealers],
-        cost: vec![0; dealers],
+        shares: Vec::new(),
+        cost: Vec::new(),
         stop_loss,
         period,
         next_check: between(rng, 1, period),
@@ -78,14 +88,14 @@ fn lp(rng: &mut Rng, kind: Kind, dealers: usize) -> Lp {
 }
 
 /// The house first, then the other LPs.
-pub fn population(rng: &mut Rng, dealers: usize) -> Vec<Lp> {
-    let mut lps = vec![lp(rng, Kind::House, dealers)];
+pub fn population(rng: &mut Rng) -> Vec<Lp> {
+    let mut lps = vec![lp(rng, Kind::House)];
     for (kind, count) in [
         (Kind::Mover, MOVERS),
         (Kind::ProfitTaker, PROFIT_TAKERS),
         (Kind::Rescuer, RESCUERS),
     ] {
-        lps.extend((0..count).map(|_| lp(rng, kind, dealers)));
+        lps.extend((0..count).map(|_| lp(rng, kind)));
     }
     lps
 }
@@ -93,16 +103,24 @@ pub fn population(rng: &mut Rng, dealers: usize) -> Vec<Lp> {
 /// Launch: the house funds every dealer with `amount` and holds the founding shares.
 pub fn seed_house(house: &mut Lp, dealers: &mut [Dealer], amount: u128, now: u64) {
     house.wallet += amount * dealers.len() as u128;
+    house.track(dealers.len());
     for index in 0..dealers.len() {
         house.buy(dealers, index, amount, now);
     }
 }
 
 impl Lp {
+    /// Positions for every dealer (owners open new ones over time).
+    fn track(&mut self, dealers: usize) {
+        self.shares.resize(dealers, 0);
+        self.cost.resize(dealers, 0);
+    }
+
     pub fn maybe_act(&mut self, dealers: &mut [Dealer], now: u64, rng: &mut Rng) {
         if now < self.next_check {
             return;
         }
+        self.track(dealers.len());
         // A little jitter so LPs drift apart instead of all acting on the same tick.
         self.next_check = now + self.period + between(rng, 0, 600);
         let returns: Vec<Option<f64>> = dealers.iter().map(Dealer::return_24h).collect();
@@ -162,8 +180,7 @@ impl Lp {
         }
         for index in 0..dealers.len() {
             let dealer = &dealers[index];
-            if !dealer.open && dealer.buy_price() <= RESCUE_MAX_PRICE && self.wallet >= MIN_INVEST
-            {
+            if !dealer.open && dealer.buy_price() <= RESCUE_MAX_PRICE && self.wallet >= MIN_INVEST {
                 self.buy(dealers, index, self.wallet / 2, now);
             }
         }

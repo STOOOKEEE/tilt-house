@@ -120,7 +120,10 @@ mod tests {
     #[test]
     fn listing_needs_a_seat_and_a_price() {
         let mut floor = Floor::launch(&["ada"], NOW);
-        assert_eq!(floor.list_seat("bo", Some(USDC)), Err(FloorError::NotSeated));
+        assert_eq!(
+            floor.list_seat("bo", Some(USDC)),
+            Err(FloorError::NotSeated)
+        );
         assert_eq!(floor.list_seat("ada", Some(0)), Err(FloorError::BadPrice));
         floor.list_seat("ada", Some(5 * USDC)).unwrap();
         assert_eq!(floor.seat("ada").unwrap().ask, Some(5 * USDC));
@@ -160,8 +163,14 @@ mod tests {
             .bid_for_seat("bo", 2 * USDC, &mut pool(100), NOW, 0)
             .unwrap();
         let before = floor.clone();
-        assert_eq!(floor.buy_seat(0, "zed", USDC, NOW), Err(FloorError::NotListed));
-        assert_eq!(floor.buy_seat(5, "zed", USDC, NOW), Err(FloorError::NotListed));
+        assert_eq!(
+            floor.buy_seat(0, "zed", USDC, NOW),
+            Err(FloorError::NotListed)
+        );
+        assert_eq!(
+            floor.buy_seat(5, "zed", USDC, NOW),
+            Err(FloorError::NotListed)
+        );
         floor.list_seat("ada", Some(10 * USDC)).unwrap();
         let listed = floor.clone();
         assert_eq!(

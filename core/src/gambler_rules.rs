@@ -192,11 +192,11 @@ pub fn weights(persona: Persona) -> Weights {
 /// Per-minute chance (parts per million) that a gambler off the floor walks in at peak time.
 fn peak_arrival_ppm(persona: Persona) -> u32 {
     match persona {
-        Persona::BargainHunter => 25_000,
-        Persona::Regular => 30_000,
-        Persona::Whale => 8_000,
-        Persona::ThrillSeeker => 20_000,
-        Persona::Tourist => 15_000,
+        Persona::BargainHunter => 50_000,
+        Persona::Regular => 60_000,
+        Persona::Whale => 15_000,
+        Persona::ThrillSeeker => 40_000,
+        Persona::Tourist => 30_000,
     }
 }
 
@@ -285,11 +285,9 @@ impl Memory {
     /// more for a result as large as the lock. A full memory forgets the mildest table.
     pub fn remember(&mut self, dealer_id: &str, net: i128, lock: u128) {
         let old = i32::from(self.loyalty(dealer_id));
-        let size = if lock == 0 {
-            0
-        } else {
-            (net.unsigned_abs().min(lock) * LOYALTY_SCALE as u128 / lock) as i32
-        };
+        let size = (net.unsigned_abs().min(lock) * LOYALTY_SCALE as u128)
+            .checked_div(lock)
+            .map_or(0, |size| size as i32);
         let delta = match net.signum() {
             1 => LOYALTY_STEP + size,
             -1 => -(LOYALTY_STEP + size),
@@ -345,11 +343,9 @@ enum Part {
 /// The score parts of one table for a gambler wanting to stake `stake`.
 pub fn parts(table: &TableView, stake: u128, loyalty: i16, jackpot: u128) -> Parts {
     let edge = table.edge_bp.clamp(EDGE_FLOOR_BP, EDGE_CEILING_BP);
-    let fit = if stake == 0 {
-        100
-    } else {
-        (table.max_bet.min(stake) * 100 / stake) as i32
-    };
+    let fit = (table.max_bet.min(stake) * 100)
+        .checked_div(stake)
+        .map_or(100, |fit| fit as i32);
     let traffic = SEAT_TRAFFIC_BP
         .get(table.seat)
         .map_or(0, |bp| i32::from(*bp) * 100 / i32::from(SEAT_TRAFFIC_BP[0]));
@@ -366,7 +362,12 @@ pub fn parts(table: &TableView, stake: u128, loyalty: i16, jackpot: u128) -> Par
 /// A table's score: the persona-weighted parts plus `noise`.
 pub fn score(persona: Persona, parts: &Parts, noise: i32) -> i32 {
     let w = weights(persona);
-    parts.weighted(&w).iter().map(|(_, points)| points).sum::<i32>() + noise
+    parts
+        .weighted(&w)
+        .iter()
+        .map(|(_, points)| points)
+        .sum::<i32>()
+        + noise
 }
 
 /// Why a gambler did what it did.
@@ -469,7 +470,14 @@ pub fn choose_table(
         };
     }
     let runner_up = scored.get(1).map(|&(i, _, p)| (&tables[i], p));
-    let (reason, text) = explain(persona, stake, jackpot, &tables[best], &best_parts, runner_up);
+    let (reason, text) = explain(
+        persona,
+        stake,
+        jackpot,
+        &tables[best],
+        &best_parts,
+        runner_up,
+    );
     Decision {
         table: Some(best),
         reason,
@@ -840,7 +848,12 @@ mod tests {
         };
         let (night, evening) = (count(4), count(21));
         assert!(night * 4 < evening, "{night} vs {evening}");
-        assert!(!arrives(Persona::Regular, SESSION_MIN_BET - 1, 21 * 3_600, &mut rng(9)));
+        assert!(!arrives(
+            Persona::Regular,
+            SESSION_MIN_BET - 1,
+            21 * 3_600,
+            &mut rng(9)
+        ));
     }
 
     #[test]
