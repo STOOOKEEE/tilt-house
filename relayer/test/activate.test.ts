@@ -15,10 +15,12 @@ beforeEach(() => {
 
 const implicit = (n: number) => n.toString(16).padStart(64, "0");
 
-async function activate(accountId: unknown, ip = "10.0.0.1") {
+async function activate(accountId: unknown, ip = "10.0.0.1", forwardedFor?: string) {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (forwardedFor !== undefined) headers["x-forwarded-for"] = forwardedFor;
   const res = await app.request(
     "/activate",
-    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ accountId }) },
+    { method: "POST", headers, body: JSON.stringify({ accountId }) },
     { incoming: { socket: { remoteAddress: ip } } },
   );
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
@@ -66,5 +68,21 @@ describe("POST /activate", () => {
     expect(await activate(implicit(5000), "10.9.9.9")).toEqual({ status: 429, body: { error: "rate_limited" } });
     clock += 60 * 60_000;
     expect((await activate(implicit(5000), "10.9.9.9")).status).toBe(200);
+  });
+
+  it("behind the local proxy, limits the client it names last, not a forged earlier entry", async () => {
+    const viaProxy = (n: number, forwarded: string) => activate(implicit(n), "127.0.0.1", forwarded);
+    for (let i = 0; i < LIMITS.activatePerIp; i++) {
+      expect((await viaProxy(200 + i, `6.6.6.${i}, 203.0.113.7`)).status).toBe(200);
+    }
+    expect((await viaProxy(299, "1.2.3.4, 203.0.113.7")).status).toBe(429);
+    expect((await viaProxy(300, "203.0.113.8")).status).toBe(200);
+  });
+
+  it("ignores X-Forwarded-For from a non-loopback peer", async () => {
+    for (let i = 0; i < LIMITS.activatePerIp; i++) {
+      expect((await activate(implicit(400 + i), "10.0.0.9", `198.51.100.${i}`)).status).toBe(200);
+    }
+    expect((await activate(implicit(499), "10.0.0.9", "198.51.100.200")).status).toBe(429);
   });
 });

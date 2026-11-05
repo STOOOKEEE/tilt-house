@@ -77,10 +77,25 @@ async fn limit_ip<C: Chain>(
     request: Request,
     next: Next,
 ) -> Response {
-    if !http.per_ip.allow(&addr.ip()) {
+    if !http.per_ip.allow(&client_ip(addr, request.headers())) {
         return ApiError::new(StatusCode::TOO_MANY_REQUESTS, "too many requests").into_response();
     }
     next.run(request).await
+}
+
+/// The server listens on loopback; public traffic arrives through the local HTTPS proxy (Tailscale
+/// Funnel), which appends the real client to X-Forwarded-For. Only that last entry is trusted,
+/// and only from a loopback peer: earlier entries come from the client and can be forged.
+fn client_ip(peer: SocketAddr, headers: &HeaderMap) -> IpAddr {
+    if !peer.ip().is_loopback() {
+        return peer.ip();
+    }
+    headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.rsplit(',').next())
+        .and_then(|last| last.trim().parse().ok())
+        .unwrap_or(peer.ip())
 }
 
 fn bearer(headers: &HeaderMap) -> Result<&str, ApiError> {
@@ -94,9 +109,10 @@ fn bearer(headers: &HeaderMap) -> Result<&str, ApiError> {
 async fn create<C: Chain>(
     State(http): State<Arc<Http<C>>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(request): Json<CreateRequest>,
 ) -> Result<Json<CreateReply>, ApiError> {
-    if !http.creates.allow(&addr.ip()) {
+    if !http.creates.allow(&client_ip(addr, &headers)) {
         return Err(ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
             "too many new sessions",
@@ -151,4 +167,29 @@ async fn footfall<C: Chain>(
     Query(query): Query<FootfallQuery>,
 ) -> Result<Json<FootfallReply>, ApiError> {
     http.gamblers.footfall(&query.dealer_id).await.map(Json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headers(forwarded: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", forwarded.parse().unwrap());
+        headers
+    }
+
+    #[test]
+    fn trusts_only_the_proxys_entry_from_loopback() {
+        let local: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let remote: SocketAddr = "198.51.100.1:5000".parse().unwrap();
+        let forged = headers("6.6.6.6, 203.0.113.7");
+        assert_eq!(
+            client_ip(local, &forged),
+            "203.0.113.7".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(client_ip(remote, &forged), remote.ip());
+        assert_eq!(client_ip(local, &HeaderMap::new()), local.ip());
+        assert_eq!(client_ip(local, &headers("garbage")), local.ip());
+    }
 }

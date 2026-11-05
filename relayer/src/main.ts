@@ -6,6 +6,6 @@ import { loadConfig } from "./config.ts";
 const config = loadConfig(process.env);
 const app = createApp({ config, chain: nearChain(config) });
 
-serve({ fetch: app.fetch, port: config.port }, (info) => {
-  console.log(`relayer ${config.relayerAccount} for ${config.house} on :${info.port}`);
+serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
+  console.log(`relayer ${config.relayerAccount} for ${config.house} on ${config.host}:${info.port}`);
 });

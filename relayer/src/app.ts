@@ -50,12 +50,22 @@ async function jsonField(c: Context, field: string): Promise<string | null> {
   return typeof value === "string" ? value : null;
 }
 
+const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+
+/**
+ * The relayer listens on loopback only; public traffic reaches it through the local HTTPS proxy
+ * (Tailscale Funnel), which appends the real client to X-Forwarded-For. Only that last entry is
+ * trusted: earlier ones come from the client and can be forged.
+ */
 function clientIp(c: Context): string | undefined {
+  let peer: string | undefined;
   try {
-    return getConnInfo(c).remote.address;
+    peer = getConnInfo(c).remote.address;
   } catch {
     return undefined;
   }
+  const forwarded = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim();
+  return peer !== undefined && LOOPBACK.has(peer) && forwarded ? forwarded : peer;
 }
 
 export function createApp({ config, chain, now = Date.now }: AppDeps): Hono {

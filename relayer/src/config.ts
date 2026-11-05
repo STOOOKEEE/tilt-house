@@ -6,12 +6,15 @@ export interface Config {
   relayerAccount: string;
   relayerPrivateKey: string;
   rpcUrl: string;
+  /** Interface to listen on: loopback unless a deployment says otherwise. */
+  host: string;
   port: number;
   activationYocto: bigint;
 }
 
 const TESTNET_RPC = "https://test.rpc.fastnear.com";
 const DEFAULT_PORT = 8787;
+const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_ACTIVATION_NEAR = "0.02";
 export const ACCOUNT_ID = /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
 const NEAR_AMOUNT = /^\d+(\.\d{1,24})?$/;
@@ -39,6 +42,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     relayerAccount: accountId(env, "RELAYER_ACCOUNT"),
     relayerPrivateKey: required(env, "RELAYER_PRIVATE_KEY"),
     rpcUrl: env.NEAR_RPC_URL ?? TESTNET_RPC,
+    host: env.HOST ?? DEFAULT_HOST,
     port,
     activationYocto: nearToYocto(activation as `${number}`),
   };
