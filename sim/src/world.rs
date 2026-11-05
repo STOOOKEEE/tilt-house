@@ -106,7 +106,7 @@ pub struct Dealer {
 impl Dealer {
     fn new(spec: &'static DealerSpec) -> Self {
         let pool = Pool::default();
-        let offer = reprice(spec.game, &pool, &Stats::default(), &spec.traits, 0);
+        let offer = reprice(spec.game, &pool, &Stats::default(), &spec.traits, &[], 0);
         Self {
             spec,
             pool,
@@ -360,7 +360,7 @@ impl World {
         let now = self.now;
         let dealer = &mut self.dealers[index];
         let stats = dealer.stats(now);
-        let offer = reprice(dealer.game(), &dealer.pool, &stats, &dealer.spec.traits, now);
+        let offer = reprice(dealer.game(), &dealer.pool, &stats, &dealer.spec.traits, &[], now);
         let boost_starts = offer.boost_until > now && dealer.offer.boost_until <= now;
         let kind = if boost_starts {
             Some("boost")

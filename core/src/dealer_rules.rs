@@ -18,12 +18,37 @@
 //! - `caution`: how small its bets stay, and how hard it backs off when players beat it;
 //! - `promo`: how deep it cuts and how long it boosts to bring players back.
 //!
+//! ## Rivals
+//!
+//! Two rules look at the other seated tables of the same game (`RivalOffer`), and only apply
+//! when nothing above them did:
+//! - **undercut**: a rival shows a lower edge than this dealer's usual one, and this table got
+//!   less than its fair share (1 / number of tables) of the game's bets over the hour: the
+//!   dealer cuts its rake to just under that rival's;
+//! - **match boost**: a rival is boosting: the dealer boosts back, longer for promoters.
+//!
+//! ## Rent for a seat on the floor (docs/floor.md)
+//!
+//! Only seated tables take bets, and every seat costs rent. `rent_bid` decides, each time the
+//! keeper asks, what the dealer bids:
+//! - its **target rent** is a share of what it earned over the last hour (what players lost at
+//!   its table): 10 % for the greediest dealer up to 50 % for the biggest promoter, who pays
+//!   more to stay visible; never under the floor's minimum rent;
+//! - **seated and near the bottom** (its rent within 15 % of the lowest seated rent, on a full
+//!   floor, where a newcomer could outbid it): it raises toward its target to defend its seat;
+//! - **seated and safe** but paying more than 15 % above its target: it cuts its rent to the
+//!   target;
+//! - **off the floor**: it bids for an empty seat at its target, or outbids the weakest table,
+//!   if its pool can prepay two hours and the rent fits its budget (0.05 % to 0.25 % of its free
+//!   bankroll per hour, more for promoters, or its target if higher). Never during its cooldown.
+//!
 //! Times are in seconds. Amounts are USDC base units (6 decimals).
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
-use crate::{rake_bounds, worst_case_multiple, Game, Pool, BP};
+use crate::floor::{FloorView, MIN_RENT_PER_HOUR, PREPAY_HOURS};
+use crate::{base_edge_bp, rake_bounds, worst_case_multiple, Game, Pool, BP};
 
 /// Temperament traits are percentages; anything above counts as 100.
 pub const TRAIT_MAX: u8 = 100;
@@ -51,6 +76,23 @@ pub const MAX_BOOST_SECS: u64 = 15 * 60;
 /// for the most cautious one (1 %).
 pub const BOLD_RISK_BP: u128 = 500;
 pub const CAUTIOUS_RISK_BP: u128 = 100;
+
+/// Share of the hour's earnings a dealer pays as rent: the greediest (10 %) to the biggest
+/// promoter (50 %).
+pub const RENT_SHARE_MIN_BP: u128 = 1_000;
+pub const RENT_SHARE_MAX_BP: u128 = 5_000;
+
+/// A seated dealer whose rent is within 15 % of the lowest seated rent defends its seat.
+pub const DEFEND_MARGIN_BP: u128 = 1_500;
+
+/// A safe seated dealer cuts its rent only when it pays more than 15 % above its target, so
+/// rents do not jitter with every small change in earnings.
+pub const CUT_MARGIN_BP: u128 = 1_500;
+
+/// What an off-floor dealer is ready to pay per hour for a seat, as a share of its free
+/// bankroll: 0.05 % for the greediest to 0.25 % for the biggest promoter.
+pub const RENT_BUDGET_MIN_BP: u128 = 5;
+pub const RENT_BUDGET_MAX_BP: u128 = 25;
 
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize, Serialize, Deserialize,
@@ -106,6 +148,28 @@ pub struct Stats {
     /// Liquidity added minus liquidity withdrawn.
     #[serde(with = "crate::amount_str")]
     pub inflow_1h: i128,
+    /// This table's share of the bets placed at all seated tables of its game, in bp
+    /// (10 000: all of them).
+    pub game_share_bp: u16,
+}
+
+/// Another seated table of the same game, as players see it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RivalOffer {
+    /// Total edge players face: the game's own edge plus the rake in force.
+    pub edge_bp: u16,
+    /// 0: not boosting.
+    pub boost_until: u64,
+}
+
+impl RivalOffer {
+    /// A rival's offer as it stands at `now`.
+    pub fn new(game: Game, offer: &Offer, now: u64) -> Self {
+        Self {
+            edge_bp: base_edge_bp(game).saturating_add(offer.effective_rake_bp(game, now)),
+            boost_until: offer.boost_until,
+        }
+    }
 }
 
 #[derive(
@@ -147,6 +211,11 @@ pub enum Reason {
     LowBankroll,
     FreshLiquidity,
     Steady,
+    // New variants go last: the contract stores offers with borsh, which encodes the index.
+    /// A rival is cheaper and took this table's players.
+    Undercut,
+    /// A rival is boosting.
+    MatchBoost,
 }
 
 impl Reason {
@@ -160,6 +229,8 @@ impl Reason {
             Self::LowBankroll => "low_bankroll",
             Self::FreshLiquidity => "fresh_liquidity",
             Self::Steady => "steady",
+            Self::Undercut => "undercut",
+            Self::MatchBoost => "match_boost",
         }
     }
 
@@ -183,6 +254,10 @@ impl Reason {
                 "raising my max bet and cutting my edge: fresh liquidity came in".to_string()
             }
             Self::Steady => "steady: nothing to react to".to_string(),
+            Self::Undercut => {
+                "cutting my edge under a rival's: players went to the cheaper table".to_string()
+            }
+            Self::MatchBoost => "boosting: a rival is boosting, I'm matching it".to_string(),
         }
     }
 }
@@ -191,6 +266,8 @@ impl Reason {
 struct Table<'a> {
     pool: &'a Pool,
     stats: &'a Stats,
+    rivals: &'a [RivalOffer],
+    base_edge: u16,
     greed: u128,
     caution: u128,
     promo: u128,
@@ -315,28 +392,61 @@ fn winning_streak(table: &Table) -> Option<Offer> {
     })
 }
 
+/// A rival shows a lower edge than our usual one and we got less than our fair share of the
+/// game's bets: rake just under that rival's (the clamp keeps it within bounds).
+fn undercut(table: &Table) -> Option<Offer> {
+    let cheapest = table.rivals.iter().map(|rival| rival.edge_bp).min()?;
+    let tables = table.rivals.len() as u128 + 1;
+    let usual_edge = table.base_edge.saturating_add(table.usual_rake);
+    let lost_players = u128::from(table.stats.game_share_bp) * tables < BP;
+    (cheapest < usual_edge && lost_players).then(|| {
+        let rake = cheapest.saturating_sub(table.base_edge).saturating_sub(1);
+        offer(rake, table.usual_max_bet, Reason::Undercut)
+    })
+}
+
+/// A rival is boosting: boost back for up to 15 minutes, longer for bigger promoters (none
+/// without promo).
+fn match_boost(table: &Table) -> Option<Offer> {
+    let rival_boosting = table
+        .rivals
+        .iter()
+        .any(|rival| rival.boost_until > table.now);
+    let boost_secs = MAX_BOOST_SECS * table.promo as u64 / 100;
+    if !rival_boosting || boost_secs == 0 {
+        return None;
+    }
+    let mut boost = offer(table.usual_rake, table.usual_max_bet, Reason::MatchBoost);
+    boost.boost_until = table.now.saturating_add(boost_secs);
+    Some(boost)
+}
+
 /// Nothing special: the usual offer.
 fn steady(table: &Table) -> Offer {
     offer(table.usual_rake, table.usual_max_bet, Reason::Steady)
 }
 
 /// The rules in order of priority: safety first, then reacting to players, then to the room.
-const RULES: [fn(&Table) -> Option<Offer>; 6] = [
+const RULES: [fn(&Table) -> Option<Offer>; 8] = [
     low_bankroll,
     losing_streak,
     fresh_liquidity,
     idle,
     hot_table,
     winning_streak,
+    undercut,
+    match_boost,
 ];
 
 /// The dealer's new offer. Always within `rake_bounds(game)`, with a max bet the free bankroll
 /// covers at the game's worst case, and a boost ending at most 15 minutes from `now`.
+/// `rivals`: the other seated tables of the same game.
 pub fn reprice(
     game: Game,
     pool: &Pool,
     stats: &Stats,
     temperament: &Temperament,
+    rivals: &[RivalOffer],
     now: u64,
 ) -> Offer {
     let (min_rake, max_rake) = rake_bounds(game);
@@ -347,6 +457,8 @@ pub fn reprice(
     let table = Table {
         pool,
         stats,
+        rivals,
+        base_edge: base_edge_bp(game),
         greed,
         caution,
         promo,
@@ -379,6 +491,158 @@ fn clamp(game: Game, pool: &Pool, offer: Offer, now: u64) -> Offer {
     }
 }
 
+/// What the dealer does about its seat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RentAction {
+    /// Seated: keep the current rent.
+    Keep,
+    /// Seated: new, higher rent.
+    Raise(#[serde(with = "crate::amount_str")] u128),
+    /// Seated: new, lower rent.
+    Lower(#[serde(with = "crate::amount_str")] u128),
+    /// Off the floor: bid this rent for an empty seat.
+    BidEmpty(#[serde(with = "crate::amount_str")] u128),
+    /// Off the floor: bid this rent to take the weakest seat of a full floor.
+    Outbid(#[serde(with = "crate::amount_str")] u128),
+    /// Off the floor: do not bid.
+    Stay,
+}
+
+/// Why the dealer changed its rent. Reasons are from the dealer's point of view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RentReason {
+    DefendingSeat,
+    BiddingForSeat,
+    CuttingRent,
+}
+
+impl RentReason {
+    /// Stable identifier for JSON and logs.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::DefendingSeat => "defending_seat",
+            Self::BiddingForSeat => "bidding_for_seat",
+            Self::CuttingRent => "cutting_rent",
+        }
+    }
+
+    /// The line players see in the tooltip.
+    pub fn explain(&self) -> &'static str {
+        match self {
+            Self::DefendingSeat => "raising my rent: a newcomer could take my seat",
+            Self::BiddingForSeat => "bidding for a seat: I want back on the floor",
+            Self::CuttingRent => "cutting my rent: my seat is safe and costs more than I earn",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct RentDecision {
+    pub action: RentAction,
+    /// `None` for `Keep` and `Stay`.
+    pub reason: Option<RentReason>,
+}
+
+fn decide(action: RentAction, reason: RentReason) -> RentDecision {
+    RentDecision {
+        action,
+        reason: Some(reason),
+    }
+}
+
+const KEEP: RentDecision = RentDecision {
+    action: RentAction::Keep,
+    reason: None,
+};
+const STAY: RentDecision = RentDecision {
+    action: RentAction::Stay,
+    reason: None,
+};
+
+/// How much a dealer is willing to pay for visibility, 0 to 100: promoters more, greedy less.
+fn rent_appetite(temperament: &Temperament) -> u128 {
+    let [greed, promo] =
+        [temperament.greed, temperament.promo].map(|t| u128::from(t.min(TRAIT_MAX)));
+    (promo + 100 - greed) / 2
+}
+
+/// Between `min` and `max` by `appetite` percent of the way.
+fn by_appetite(min: u128, max: u128, appetite: u128) -> u128 {
+    min + (max - min) * appetite / 100
+}
+
+/// The dealer's rent decision. Every rent it bids is at least `MIN_RENT_PER_HOUR`, and an
+/// off-floor bid always leaves the pool able to prepay it.
+pub fn rent_bid(
+    pool: &Pool,
+    stats: &Stats,
+    temperament: &Temperament,
+    floor: &FloorView,
+    now: u64,
+) -> RentDecision {
+    let appetite = rent_appetite(temperament);
+    // What players lost at the table: the dealer's earnings before rent.
+    let net = stats.player_net_1h;
+    let earnings = if net < 0 { net.unsigned_abs() } else { 0 };
+    let share_bp = by_appetite(RENT_SHARE_MIN_BP, RENT_SHARE_MAX_BP, appetite);
+    let target = scale(earnings, share_bp, BP).max(MIN_RENT_PER_HOUR);
+    // The highest rent the pool can prepay.
+    let affordable = pool.free() / u128::from(PREPAY_HOURS);
+    match floor.my_rent {
+        Some(rent) => seated_rent(rent, target, affordable, floor),
+        None => {
+            let budget = scale(
+                pool.free(),
+                by_appetite(RENT_BUDGET_MIN_BP, RENT_BUDGET_MAX_BP, appetite),
+                BP,
+            );
+            off_floor_bid(target, target.max(budget).min(affordable), floor, now)
+        }
+    }
+}
+
+/// Seated: defend when near the bottom of a full floor, cut when safe and overpaying.
+fn seated_rent(rent: u128, target: u128, affordable: u128, floor: &FloorView) -> RentDecision {
+    let at_risk = floor.empty_seats == 0
+        && floor.lowest_rent.is_some_and(|lowest| {
+            rent.saturating_mul(BP) <= lowest.saturating_mul(BP + DEFEND_MARGIN_BP)
+        });
+    if at_risk {
+        let raise_to = target.min(affordable);
+        return if raise_to > rent {
+            decide(RentAction::Raise(raise_to), RentReason::DefendingSeat)
+        } else {
+            KEEP
+        };
+    }
+    if rent.saturating_mul(BP) > target.saturating_mul(BP + CUT_MARGIN_BP) {
+        return decide(RentAction::Lower(target), RentReason::CuttingRent);
+    }
+    KEEP
+}
+
+/// Off the floor: an empty seat at the target, else the weakest seat if `ceiling` reaches it.
+fn off_floor_bid(target: u128, ceiling: u128, floor: &FloorView, now: u64) -> RentDecision {
+    if now < floor.cooldown_until || ceiling < MIN_RENT_PER_HOUR {
+        return STAY;
+    }
+    if floor.empty_seats > 0 {
+        return decide(
+            RentAction::BidEmpty(target.min(ceiling)),
+            RentReason::BiddingForSeat,
+        );
+    }
+    if floor.outbid_min <= ceiling {
+        return decide(
+            RentAction::Outbid(floor.outbid_min),
+            RentReason::BiddingForSeat,
+        );
+    }
+    STAY
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,11 +673,13 @@ mod tests {
             player_net_1h: 0,
             idle_secs: 60,
             inflow_1h: 0,
+            // Alone at its game unless a test adds rivals.
+            game_share_bp: BP as u16,
         }
     }
 
     fn usual(game: Game) -> Offer {
-        reprice(game, &pool(10_000), &calm(), &BALANCED, NOW)
+        reprice(game, &pool(10_000), &calm(), &BALANCED, &[], NOW)
     }
 
     #[test]
@@ -433,7 +699,7 @@ mod tests {
             idle_secs: IDLE_AFTER_SECS,
             ..calm()
         };
-        let offer = reprice(Game::Dice, &pool(10_000), &stats, &BALANCED, NOW);
+        let offer = reprice(Game::Dice, &pool(10_000), &stats, &BALANCED, &[], NOW);
         assert_eq!(offer.reason, Reason::Idle);
         assert!(offer.rake_bp < usual(Game::Dice).rake_bp);
         assert_eq!(offer.boost_until, NOW + MAX_BOOST_SECS / 2);
@@ -448,7 +714,7 @@ mod tests {
             ..BALANCED
         };
         assert_eq!(
-            reprice(Game::Dice, &pool(10_000), &stats, &shy, NOW).boost_until,
+            reprice(Game::Dice, &pool(10_000), &stats, &shy, &[], NOW).boost_until,
             0
         );
     }
@@ -459,7 +725,7 @@ mod tests {
             bets_1h: HOT_TABLE_BETS_1H,
             ..calm()
         };
-        let offer = reprice(Game::Roulette, &pool(10_000), &stats, &BALANCED, NOW);
+        let offer = reprice(Game::Roulette, &pool(10_000), &stats, &BALANCED, &[], NOW);
         assert_eq!(offer.reason, Reason::HotTable);
         assert!(offer.rake_bp > usual(Game::Roulette).rake_bp);
     }
@@ -470,7 +736,7 @@ mod tests {
             player_net_1h: 45 * USDC as i128,
             ..calm()
         }; // 15 % of 300
-        let offer = reprice(Game::Dice, &pool(10_000), &stats, &BALANCED, NOW);
+        let offer = reprice(Game::Dice, &pool(10_000), &stats, &BALANCED, &[], NOW);
         assert_eq!(offer.reason, Reason::LosingStreak);
         assert!(offer.rake_bp > usual(Game::Dice).rake_bp);
         assert!(offer.max_bet < usual(Game::Dice).max_bet);
@@ -479,7 +745,7 @@ mod tests {
             ..calm()
         };
         assert_eq!(
-            reprice(Game::Dice, &pool(10_000), &small, &BALANCED, NOW).reason,
+            reprice(Game::Dice, &pool(10_000), &small, &BALANCED, &[], NOW).reason,
             Reason::Steady
         );
     }
@@ -490,21 +756,21 @@ mod tests {
             player_net_1h: -45 * USDC as i128,
             ..calm()
         };
-        let offer = reprice(Game::Dice, &pool(10_000), &stats, &BALANCED, NOW);
+        let offer = reprice(Game::Dice, &pool(10_000), &stats, &BALANCED, &[], NOW);
         assert_eq!(offer.reason, Reason::WinningStreak);
         assert!(offer.rake_bp < usual(Game::Dice).rake_bp);
     }
 
     #[test]
     fn low_bankroll() {
-        let offer = reprice(Game::Dice, &pool(200), &calm(), &BALANCED, NOW);
+        let offer = reprice(Game::Dice, &pool(200), &calm(), &BALANCED, &[], NOW);
         assert_eq!(offer.reason, Reason::LowBankroll);
         assert_eq!(offer.rake_bp, rake_bounds(Game::Dice).1);
         // Reserved money does not count.
         let mut busy = pool(1_000);
         busy.reserved = 800 * USDC;
         assert_eq!(
-            reprice(Game::Dice, &busy, &calm(), &BALANCED, NOW).reason,
+            reprice(Game::Dice, &busy, &calm(), &BALANCED, &[], NOW).reason,
             Reason::LowBankroll
         );
     }
@@ -515,7 +781,7 @@ mod tests {
             inflow_1h: 2_000 * USDC as i128,
             ..calm()
         };
-        let offer = reprice(Game::Blackjack, &pool(10_000), &stats, &BALANCED, NOW);
+        let offer = reprice(Game::Blackjack, &pool(10_000), &stats, &BALANCED, &[], NOW);
         assert_eq!(offer.reason, Reason::FreshLiquidity);
         assert_eq!(offer.max_bet, 2 * usual(Game::Blackjack).max_bet);
         assert!(offer.rake_bp <= usual(Game::Blackjack).rake_bp);
@@ -529,13 +795,14 @@ mod tests {
             player_net_1h: 50 * USDC as i128,
             idle_secs: 0,
             inflow_1h: 100 * USDC as i128,
+            game_share_bp: 0,
         };
         assert_eq!(
-            reprice(Game::Dice, &pool(100), &everything, &BALANCED, NOW).reason,
+            reprice(Game::Dice, &pool(100), &everything, &BALANCED, &[], NOW).reason,
             Reason::LowBankroll
         );
         assert_eq!(
-            reprice(Game::Dice, &pool(10_000), &everything, &BALANCED, NOW).reason,
+            reprice(Game::Dice, &pool(10_000), &everything, &BALANCED, &[], NOW).reason,
             Reason::LosingStreak
         );
     }
@@ -553,8 +820,8 @@ mod tests {
             promo: 100,
         };
         assert_eq!(
-            reprice(Game::Dice, &pool(10_000), &calm(), &wild, NOW),
-            reprice(Game::Dice, &pool(10_000), &calm(), &max, NOW)
+            reprice(Game::Dice, &pool(10_000), &calm(), &wild, &[], NOW),
+            reprice(Game::Dice, &pool(10_000), &calm(), &max, &[], NOW)
         );
     }
 
@@ -568,6 +835,8 @@ mod tests {
             Reason::LowBankroll,
             Reason::FreshLiquidity,
             Reason::Steady,
+            Reason::Undercut,
+            Reason::MatchBoost,
         ];
         for reason in all {
             assert_eq!(
@@ -580,6 +849,238 @@ mod tests {
             Reason::Idle.explain(),
             "cutting my edge: nobody has played for 20 min"
         );
+    }
+
+    #[test]
+    fn undercut() {
+        let usual = usual(Game::Roulette);
+        let rival = RivalOffer {
+            edge_bp: base_edge_bp(Game::Roulette) + 100,
+            boost_until: 0,
+        };
+        // Two tables, we took 40 % of the bets: under our fair half.
+        let stats = Stats {
+            game_share_bp: 4_000,
+            ..calm()
+        };
+        let offer = reprice(
+            Game::Roulette,
+            &pool(10_000),
+            &stats,
+            &BALANCED,
+            &[rival],
+            NOW,
+        );
+        assert_eq!(offer.reason, Reason::Undercut);
+        assert_eq!(offer.rake_bp, 99);
+        assert!(offer.rake_bp < usual.rake_bp);
+        // Fair share kept: no reaction.
+        let fair = Stats {
+            game_share_bp: 5_000,
+            ..calm()
+        };
+        assert_eq!(
+            reprice(
+                Game::Roulette,
+                &pool(10_000),
+                &fair,
+                &BALANCED,
+                &[rival],
+                NOW
+            )
+            .reason,
+            Reason::Steady
+        );
+        // A rival already at the minimum: we can only match the minimum.
+        let floor_rival = RivalOffer {
+            edge_bp: 0,
+            boost_until: 0,
+        };
+        let offer = reprice(
+            Game::Dice,
+            &pool(10_000),
+            &stats,
+            &BALANCED,
+            &[floor_rival],
+            NOW,
+        );
+        assert_eq!((offer.reason, offer.rake_bp), (Reason::Undercut, 100));
+    }
+
+    #[test]
+    fn match_boost() {
+        let rival = RivalOffer {
+            edge_bp: 495,
+            boost_until: NOW + 60,
+        };
+        let offer = reprice(Game::Dice, &pool(10_000), &calm(), &BALANCED, &[rival], NOW);
+        assert_eq!(offer.reason, Reason::MatchBoost);
+        assert_eq!(offer.boost_until, NOW + MAX_BOOST_SECS / 2);
+        let shy = Temperament {
+            promo: 0,
+            ..BALANCED
+        };
+        assert_eq!(
+            reprice(Game::Dice, &pool(10_000), &calm(), &shy, &[rival], NOW).reason,
+            Reason::Steady
+        );
+        let ended = RivalOffer {
+            boost_until: NOW,
+            ..rival
+        };
+        assert_eq!(
+            reprice(Game::Dice, &pool(10_000), &calm(), &BALANCED, &[ended], NOW).reason,
+            Reason::Steady
+        );
+    }
+
+    #[test]
+    fn rival_offer_from_an_offer() {
+        let mut offer = usual(Game::Roulette);
+        let rival = RivalOffer::new(Game::Roulette, &offer, NOW);
+        assert_eq!(rival.edge_bp, 270 + offer.rake_bp);
+        offer.boost_until = NOW + 1;
+        assert_eq!(RivalOffer::new(Game::Roulette, &offer, NOW).edge_bp, 270);
+    }
+
+    fn floor(my_rent: Option<u128>, lowest: u128, empty_seats: usize) -> FloorView {
+        FloorView {
+            my_rent,
+            lowest_rent: Some(lowest),
+            empty_seats,
+            outbid_min: if empty_seats > 0 {
+                MIN_RENT_PER_HOUR
+            } else {
+                (lowest * 11_000).div_ceil(BP)
+            },
+            cooldown_until: 0,
+        }
+    }
+
+    /// The dealer earned 100 USDC this hour.
+    fn earning() -> Stats {
+        Stats {
+            player_net_1h: -100 * USDC as i128,
+            ..calm()
+        }
+    }
+
+    #[test]
+    fn rent_target_follows_earnings_and_temperament() {
+        // Share of 100 USDC: balanced (appetite 50) 30 %, greedy (appetite 12) 14.8 %,
+        // promoter (appetite 82) 42.8 %.
+        let at_risk = floor(Some(2 * USDC), 2 * USDC, 0);
+        for (temperament, target) in [
+            (BALANCED, 30_000_000),
+            (GREEDY, 14_800_000),
+            (PROMOTER, 42_800_000),
+        ] {
+            assert_eq!(
+                rent_bid(&pool(10_000), &earning(), &temperament, &at_risk, NOW),
+                decide(RentAction::Raise(target), RentReason::DefendingSeat)
+            );
+        }
+    }
+
+    #[test]
+    fn seated_dealer_defends_cuts_or_keeps() {
+        let p = pool(10_000);
+        // Within 15 % of the lowest on a full floor, earnings allow: raise.
+        let near = floor(Some(11 * USDC), 10 * USDC, 0);
+        assert_eq!(
+            rent_bid(&p, &earning(), &BALANCED, &near, NOW).action,
+            RentAction::Raise(30 * USDC)
+        );
+        // At risk but earnings do not allow more: keep (never cut under threat).
+        assert_eq!(rent_bid(&p, &calm(), &BALANCED, &near, NOW), KEEP);
+        // Safe and overpaying: cut to the target (the minimum without earnings).
+        let safe = floor(Some(20 * USDC), 10 * USDC, 0);
+        assert_eq!(
+            rent_bid(&p, &calm(), &BALANCED, &safe, NOW),
+            decide(
+                RentAction::Lower(MIN_RENT_PER_HOUR),
+                RentReason::CuttingRent
+            )
+        );
+        // Safe, near the target: keep.
+        let fine = floor(Some(34 * USDC), 10 * USDC, 1);
+        assert_eq!(rent_bid(&p, &earning(), &BALANCED, &fine, NOW), KEEP);
+        // A raise never goes beyond what the pool can prepay.
+        assert_eq!(rent_bid(&pool(20), &earning(), &BALANCED, &near, NOW), KEEP);
+    }
+
+    #[test]
+    fn off_floor_dealer_bids() {
+        // Empty seat: bid the target.
+        assert_eq!(
+            rent_bid(
+                &pool(10_000),
+                &calm(),
+                &BALANCED,
+                &floor(None, 5 * USDC, 1),
+                NOW
+            ),
+            decide(
+                RentAction::BidEmpty(MIN_RENT_PER_HOUR),
+                RentReason::BiddingForSeat
+            )
+        );
+        // Full floor: budget is 0.15 % of 10 000 = 15 USDC/h, enough to outbid 10 × 110 %.
+        assert_eq!(
+            rent_bid(
+                &pool(10_000),
+                &calm(),
+                &BALANCED,
+                &floor(None, 10 * USDC, 0),
+                NOW
+            ),
+            decide(RentAction::Outbid(11 * USDC), RentReason::BiddingForSeat)
+        );
+        // Not enough budget.
+        assert_eq!(
+            rent_bid(
+                &pool(10_000),
+                &calm(),
+                &BALANCED,
+                &floor(None, 14 * USDC, 0),
+                NOW
+            ),
+            STAY
+        );
+        // Cannot prepay even the minimum.
+        assert_eq!(
+            rent_bid(&pool(1), &calm(), &BALANCED, &floor(None, 5 * USDC, 1), NOW),
+            STAY
+        );
+        // Cooldown.
+        let cooling = FloorView {
+            cooldown_until: NOW + 1,
+            ..floor(None, 5 * USDC, 1)
+        };
+        assert_eq!(
+            rent_bid(&pool(10_000), &calm(), &BALANCED, &cooling, NOW),
+            STAY
+        );
+    }
+
+    #[test]
+    fn rent_reason_codes() {
+        for reason in [
+            RentReason::DefendingSeat,
+            RentReason::BiddingForSeat,
+            RentReason::CuttingRent,
+        ] {
+            assert_eq!(
+                serde_json::to_string(&reason).unwrap(),
+                format!("\"{}\"", reason.code())
+            );
+            assert!(!reason.explain().is_empty());
+        }
+        let json =
+            serde_json::to_value(decide(RentAction::Outbid(USDC), RentReason::BiddingForSeat))
+                .unwrap();
+        assert_eq!(json["action"]["outbid"], "1000000");
+        assert_eq!(json["reason"], "bidding_for_seat");
     }
 
     #[test]
@@ -628,6 +1129,7 @@ mod tests {
                 player_net_1h: random_i128(&mut rng),
                 idle_secs: u64::from(rng.below(u32::MAX)) * u64::from(rng.below(3)),
                 inflow_1h: random_i128(&mut rng),
+                game_share_bp: rng.below(u32::from(u16::MAX) + 1) as u16,
             };
             let temperament = Temperament {
                 greed: rng.below(256) as u8,
@@ -635,8 +1137,15 @@ mod tests {
                 promo: rng.below(256) as u8,
             };
             let now = [0, NOW, u64::MAX - u64::from(rng.below(1_000))][rng.below(3) as usize];
+            let rivals: Vec<RivalOffer> = (0..rng.below(6))
+                .map(|_| RivalOffer {
+                    edge_bp: rng.below(u32::from(u16::MAX) + 1) as u16,
+                    boost_until: [0, now.saturating_add(u64::from(rng.below(100_000)))]
+                        [rng.below(2) as usize],
+                })
+                .collect();
 
-            let offer = reprice(game, &pool, &stats, &temperament, now);
+            let offer = reprice(game, &pool, &stats, &temperament, &rivals, now);
 
             let (min, max) = rake_bounds(game);
             assert!((min..=max).contains(&offer.rake_bp), "{offer:?}");

@@ -215,7 +215,14 @@ impl House {
             traits,
             account: dealer_account,
             pool: Pool::default(),
-            offer: core_rules::reprice(game, &Pool::default(), &Stats::default(), &traits, now),
+            offer: core_rules::reprice(
+                game,
+                &Pool::default(),
+                &Stats::default(),
+                &traits,
+                &[],
+                now,
+            ),
             repriced_at: now,
             open: false,
             buckets: [Bucket::default(); BUCKETS],
@@ -233,7 +240,8 @@ impl House {
         // Launch state, not a transition: no bust/reopen line. The offer is priced on the seeded
         // pool, like a first reprice.
         dealer.open = dealer.is_open();
-        dealer.offer = core_rules::reprice(game, &dealer.pool, &dealer.stats(now), &traits, now);
+        dealer.offer =
+            core_rules::reprice(game, &dealer.pool, &dealer.stats(now), &traits, &[], now);
         if minted > 0 {
             self.log(
                 &mut dealer,
@@ -262,6 +270,7 @@ impl House {
             &dealer.pool,
             &dealer.stats(now),
             &dealer.traits,
+            &[],
             now,
         );
         let boost_starts = offer.boost_until > now && dealer.offer.boost_until <= now;

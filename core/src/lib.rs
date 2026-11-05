@@ -1,5 +1,5 @@
 //! Tilt House rules shared by the `house` contract and the fast-forward simulator: games, rake,
-//! pool (LP) math and the dealers' pricing rules. Pure Rust, no chain dependency, so the live
+//! pool (LP) math, the dealers' pricing and rent rules, the floor (seats, rent) and the jackpot. Pure Rust, no chain dependency, so the live
 //! game and the simulation run the same code.
 //!
 //! Amounts are integer base units (`u128`); they serialize to JSON as decimal strings.
@@ -7,6 +7,8 @@
 pub mod blackjack;
 pub mod dealer_rules;
 pub mod dice;
+pub mod floor;
+pub mod jackpot;
 pub mod pool;
 pub mod rng;
 pub mod roulette;
@@ -18,8 +20,16 @@ pub use blackjack::{
     bj_deal, bj_double, bj_gross, bj_hit, bj_stand, bj_total, bj_wager, BjError, BjMove, BjState,
     BjStrategy,
 };
-pub use dealer_rules::{reprice, Offer, Reason, Stats, Temperament};
+pub use dealer_rules::{
+    rent_bid, reprice, Offer, Reason, RentAction, RentDecision, RentReason, RivalOffer, Stats,
+    Temperament,
+};
 pub use dice::{dice_gross, dice_roll, DiceBet};
+pub use floor::{
+    can_set_temperament, cooldown_until, validate_new_table, BidOutcome, EvictReason, Floor,
+    FloorError, FloorView, RentOutcome, Seat,
+};
+pub use jackpot::{draw_jackpot, jackpot_hit, JACKPOT_ODDS_UNIT, MIN_JACKPOT};
 pub use pool::{Pool, PoolError, FLOOR_SHARES_PER_UNIT, SHARES_PER_UNIT};
 pub use rng::Rng;
 pub use roulette::{roulette_gross, roulette_spin, RouletteBet};
