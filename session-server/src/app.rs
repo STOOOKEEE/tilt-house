@@ -255,7 +255,9 @@ impl<C: Chain> App<C> {
         let pool_free = dealer.pool_free * POOL_FREE_HEADROOM_PCT / 100;
         let max_win = session_max_win(request.lock, pool_free);
         // The table's max bet also shrinks as the pool reserves: same headroom.
-        let max_bet = dealer.max_bet * POOL_FREE_HEADROOM_PCT / 100;
+        // ... but never under the minimum bet: a table priced at the minimum would close.
+        let max_bet = (dealer.max_bet * POOL_FREE_HEADROOM_PCT / 100)
+            .max(SESSION_MIN_BET.min(dealer.max_bet));
         if !dealer.open || max_bet < SESSION_MIN_BET || max_win == 0 {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
