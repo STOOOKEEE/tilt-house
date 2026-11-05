@@ -17,7 +17,6 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::chain::Chain;
 use crate::keys::{random_bytes, Signer};
-use crate::limits::RateLimiter;
 use crate::session::{Phase, PlayError, RoundRequest, Session};
 use crate::store::{Event, Store};
 
@@ -26,8 +25,6 @@ pub const IDLE_CLOSE_SECS: u64 = SESSION_TIMEOUT_SECS / 2;
 /// After a ticket expires it can no longer be opened; give the chain this long to show an open
 /// sent just before expiry.
 const EXPIRY_GRACE_SECS: u64 = 60;
-/// docs/sessions.md: 20 rounds per second per session.
-const ROUNDS_PER_SEC: f64 = 20.0;
 const MAX_ID_LEN: usize = 64;
 
 type Shared = Arc<AsyncMutex<Session>>;
@@ -150,7 +147,6 @@ pub struct App<C> {
     chain: C,
     store: Store,
     sessions: Mutex<HashMap<String, Shared>>,
-    round_limiter: RateLimiter<String>,
 }
 
 impl<C: Chain> App<C> {
@@ -191,12 +187,15 @@ impl<C: Chain> App<C> {
             chain,
             store,
             sessions: Mutex::new(sessions),
-            round_limiter: RateLimiter::new(ROUNDS_PER_SEC, ROUNDS_PER_SEC),
         })
     }
 
     pub fn public_key(&self) -> String {
         self.signer.public_key()
+    }
+
+    pub fn chain(&self) -> &C {
+        &self.chain
     }
 
     fn get(&self, id: &str) -> Result<Shared, ApiError> {
@@ -295,13 +294,6 @@ impl<C: Chain> App<C> {
         let shared = self.get(id)?;
         let mut session = shared.lock().await;
         authorize(&session, token)?;
-        // After auth: the session id is public on chain, strangers must not spend its budget.
-        if !self.round_limiter.allow(&id.to_string()) {
-            return Err(ApiError::new(
-                StatusCode::TOO_MANY_REQUESTS,
-                "too many rounds",
-            ));
-        }
         if !session.opened {
             self.confirm_open(&mut session).await?;
         }

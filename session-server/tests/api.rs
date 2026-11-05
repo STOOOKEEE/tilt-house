@@ -10,13 +10,14 @@ use axum::extract::connect_info::MockConnectInfo;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use core_rules::session::{
-    state_message, verify_session, Hash32, SessionPublic, SessionState, SettleBatch,
+    state_message, verify_session, Hash32, SessionPublic, SessionState, SessionTicket, SettleBatch,
 };
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tilt_house_session_server::app::{App, CloseReply, CreateReply, RoundReply};
-use tilt_house_session_server::chain::{Chain, DealerInfo, NoChain};
+use tilt_house_session_server::chain::{Chain, DealerInfo, FloorInfo, NoChain};
+use tilt_house_session_server::gamblers::{Clock, Gamblers};
 use tilt_house_session_server::http::router;
 use tilt_house_session_server::keys::Signer;
 use tilt_house_session_server::store::Store;
@@ -42,7 +43,9 @@ fn bare<C: Chain>(dir: &Path, key: &str, chain: C) -> Router {
     let (store, events) = Store::open(dir).unwrap();
     let signer = Signer::from_near_secret(key).unwrap();
     let app = Arc::new(App::load(signer, chain, store, events).unwrap());
-    router(app)
+    // Gamblers not started: these tests drive sessions over HTTP only.
+    let gamblers = Gamblers::new(Arc::clone(&app), Clock::system(), dir, None, [0; 32]).unwrap();
+    router(app, Arc::new(gamblers))
 }
 
 /// Requests through this router come from peer `10.0.x.y`; rate limits are per IP.
@@ -119,7 +122,7 @@ fn verify_sig(public_key: &str, state: &SessionState, signature: &[u8; 64]) -> b
 #[tokio::test]
 async fn session_start_play_close_and_verify() {
     let dir = data_dir();
-    let router = serve(dir.path(), &key_text(), NoChain);
+    let router = serve(dir.path(), &key_text(), NoChain::default());
     let s = start(&router, "dice-demo", 10 * USDC).await;
     assert!(verify_sig(
         &s.server_public_key,
@@ -180,7 +183,7 @@ async fn session_start_play_close_and_verify() {
 #[tokio::test]
 async fn refuses_over_limit_bets() {
     let dir = data_dir();
-    let router = serve(dir.path(), &key_text(), NoChain);
+    let router = serve(dir.path(), &key_text(), NoChain::default());
     // Lock 1 USDC: max win 10 USDC.
     let s = start(&router, "dice-demo", USDC).await;
     assert_eq!(s.ticket.max_win, 10 * USDC);
@@ -219,7 +222,7 @@ async fn refuses_over_limit_bets() {
 #[tokio::test]
 async fn rejects_bad_tokens_bad_input_and_floods() {
     let dir = data_dir();
-    let router = serve(dir.path(), &key_text(), NoChain);
+    let router = serve(dir.path(), &key_text(), NoChain::default());
     let s = start(&router, "dice-demo", 100 * USDC).await;
     let uri = format!("/sessions/{}/rounds", s.session_id);
     let (status, _) = call(
@@ -255,7 +258,22 @@ struct NeverOpened;
 
 impl Chain for NeverOpened {
     async fn dealer(&self, dealer_id: &str) -> anyhow::Result<Option<DealerInfo>> {
-        NoChain.dealer(dealer_id).await
+        NoChain::default().dealer(dealer_id).await
+    }
+    async fn floor(&self) -> anyhow::Result<FloorInfo> {
+        NoChain::default().floor().await
+    }
+    async fn balance(&self, _: &str) -> anyhow::Result<u128> {
+        Ok(0)
+    }
+    async fn open_session(
+        &self,
+        _: &str,
+        _: Option<&str>,
+        _: &SessionTicket,
+        _: &[u8; 64],
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("opens never land")
     }
     async fn session_opened(&self, _: &str) -> anyhow::Result<bool> {
         Ok(false)
@@ -287,7 +305,7 @@ async fn restart_reloads_sessions_from_the_log() {
     let dir = data_dir();
     let key = key_text();
     let (s, view_before) = {
-        let router = serve(dir.path(), &key, NoChain);
+        let router = serve(dir.path(), &key, NoChain::default());
         let s = start(&router, "dice-demo", 10 * USDC).await;
         for nonce in 1..=5 {
             assert_eq!(
@@ -305,7 +323,7 @@ async fn restart_reloads_sessions_from_the_log() {
         .await;
         (s, view)
     };
-    let router = serve(dir.path(), &key, NoChain);
+    let router = serve(dir.path(), &key, NoChain::default());
     let (status, view_after) = call(
         &router,
         "GET",
@@ -336,7 +354,7 @@ async fn restart_reloads_sessions_from_the_log() {
 #[tokio::test]
 async fn blackjack_over_http() {
     let dir = data_dir();
-    let router = serve(dir.path(), &key_text(), NoChain);
+    let router = serve(dir.path(), &key_text(), NoChain::default());
     let s = start(&router, "blackjack-demo", 100 * USDC).await;
     let mut nonce = 1;
     // Deal until a hand waits for an action, then hit to the end.
@@ -366,7 +384,7 @@ async fn thousand_rounds_under_a_second() {
     const SESSIONS: u64 = 50;
     const ROUNDS: u64 = 20; // the per-session burst
     let dir = data_dir();
-    let app = bare(dir.path(), &key_text(), NoChain);
+    let app = bare(dir.path(), &key_text(), NoChain::default());
     // One player (IP) per session, as rate limits are per IP.
     let mut players = Vec::new();
     for i in 0..SESSIONS as usize {

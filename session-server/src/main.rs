@@ -3,18 +3,21 @@
 //! Env: `SESSION_SERVER_ADDR` (default 127.0.0.1:8790), `SESSION_DATA_DIR` (event log; default
 //! `target/session-data` with `--no-chain`), `SESSION_SERVER_PRIVATE_KEY` (`ed25519:...`, the key
 //! behind the contract's `SESSION_SERVER_PUBKEY`; a throwaway key with `--no-chain` if unset), and
-//! on chain `HOUSE_CONTRACT`, `SESSION_SERVER_ACCOUNT`, `NEAR_RPC_URL`.
+//! on chain `HOUSE_CONTRACT`, `SESSION_SERVER_ACCOUNT`, `NEAR_RPC_URL` and `GAMBLER_KEYS_DIR`
+//! (near-cli legacy keychain holding the NPC gamblers' keys, default `~/.near-credentials/testnet`;
+//! `--no-chain` gamblers need no keys).
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
 use tilt_house_session_server::app::App;
 use tilt_house_session_server::chain::{Chain, NoChain};
+use tilt_house_session_server::gamblers::{Clock, Gamblers};
 use tilt_house_session_server::http::router;
-use tilt_house_session_server::keys::Signer;
+use tilt_house_session_server::keys::{random_bytes, Signer};
 use tilt_house_session_server::near::NearChain;
 use tilt_house_session_server::store::Store;
 
@@ -47,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
             }
         };
         let dir = env("SESSION_DATA_DIR").unwrap_or_else(|| DEFAULT_NO_CHAIN_DATA_DIR.into());
-        return serve(signer, NoChain, dir.into()).await;
+        return serve(signer, NoChain::default(), dir.into(), None).await;
     }
     let key = required("SESSION_SERVER_PRIVATE_KEY")?;
     let chain = NearChain::new(
@@ -57,10 +60,25 @@ async fn main() -> anyhow::Result<()> {
         &key,
     )?;
     let signer = Signer::from_near_secret(&key)?;
-    serve(signer, chain, required("SESSION_DATA_DIR")?.into()).await
+    let keys_dir = match env("GAMBLER_KEYS_DIR") {
+        Some(dir) => PathBuf::from(dir),
+        None => PathBuf::from(required("HOME")?).join(".near-credentials/testnet"),
+    };
+    serve(
+        signer,
+        chain,
+        required("SESSION_DATA_DIR")?.into(),
+        Some(&keys_dir),
+    )
+    .await
 }
 
-async fn serve<C: Chain>(signer: Signer, chain: C, data_dir: PathBuf) -> anyhow::Result<()> {
+async fn serve<C: Chain>(
+    signer: Signer,
+    chain: C,
+    data_dir: PathBuf,
+    keys_dir: Option<&Path>,
+) -> anyhow::Result<()> {
     let addr: SocketAddr = env("SESSION_SERVER_ADDR")
         .unwrap_or_else(|| DEFAULT_ADDR.into())
         .parse()
@@ -72,6 +90,14 @@ async fn serve<C: Chain>(signer: Signer, chain: C, data_dir: PathBuf) -> anyhow:
         app.public_key(),
         data_dir.display()
     );
+    let gamblers = Arc::new(Gamblers::new(
+        Arc::clone(&app),
+        Clock::system(),
+        &data_dir,
+        keys_dir,
+        random_bytes()?,
+    )?);
+    gamblers.start();
     let ticker = Arc::clone(&app);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(TICK);
@@ -83,7 +109,7 @@ async fn serve<C: Chain>(signer: Signer, chain: C, data_dir: PathBuf) -> anyhow:
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(
         listener,
-        router(app).into_make_service_with_connect_info::<SocketAddr>(),
+        router(app, gamblers).into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async {
         let _ = tokio::signal::ctrl_c().await;

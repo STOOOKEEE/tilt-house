@@ -27,5 +27,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 
 [dev-dependencies]
 tempfile = "3"
+# Paused time: the gamblers test runs an hour of arrivals in a second.
+tokio = { version = "1", features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
