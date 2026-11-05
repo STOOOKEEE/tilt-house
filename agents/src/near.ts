@@ -20,46 +20,41 @@ export interface DealerView {
   bankroll: string;
   share_price_buy: string;
   share_price_sell: string;
+  npc: boolean;
+  autopilot: boolean;
 }
 
-/** A change call to the house contract, signed by `signer`. */
+/** A change call signed by `signer`, to the house contract unless `receiver` says otherwise. */
 export interface Call {
   signer: string;
   method: string;
   args: Record<string, unknown>;
+  receiver?: string;
+  /** In yoctoNEAR; token transfers need exactly 1. */
+  deposit?: bigint;
 }
 
 /** Sends a call and returns the contract's JSON return value. */
 export type Send = (call: Call) => Promise<unknown>;
 
-export type RoundStatus = "waiting_vrf" | "player_turn" | "failed" | "settled" | "refunded";
-
-/** The parts of `get_player` the agents use. */
-export interface PlayerView {
-  balance: bigint;
-  openRound: number | null;
-}
-
 /** Read-only views of the house contract; faked in tests. */
 export interface House {
   lobby(): Promise<DealerView[]>;
-  player(accountId: string): Promise<PlayerView>;
-  /** Status of a round, null if the round is unknown. */
-  roundStatus(roundId: number): Promise<RoundStatus | null>;
+  /** A player's in-contract balance (0 for an unknown player). */
+  balance(accountId: string): Promise<bigint>;
 }
 
-/** Play calls need >= 150 TGas prepaid (docs/contract-api.md); send 200 like the doc advises. */
-export const PLAY_GAS = teraToGas(200);
-/** Enough for `reprice` and views-sized work. */
+/** `collect_rent` settles every seat and `ft_transfer_call` runs the house's receiver: both need room. */
+const BIG_GAS = teraToGas(200);
+/** Enough for `reprice`, `rent_bid` and a plain token transfer. */
 export const CALL_GAS = teraToGas(100);
-const PLAY_METHODS: readonly string[] = ["bet_dice", "bet_roulette", "bj_deal", "bj_hit", "bj_double", "bj_stand", "refund_stuck_round"];
+const BIG_METHODS: readonly string[] = ["collect_rent", "ft_transfer_call"];
 
 export function gasFor(method: string): bigint {
-  return PLAY_METHODS.includes(method) ? PLAY_GAS : CALL_GAS;
+  return BIG_METHODS.includes(method) ? BIG_GAS : CALL_GAS;
 }
 
 const GAMES: readonly string[] = ["dice", "roulette", "blackjack"];
-const STATUSES: readonly string[] = ["waiting_vrf", "player_turn", "failed", "settled", "refunded"];
 const DECIMAL = /^\d+$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -77,7 +72,6 @@ const isDecimal = (v: unknown): v is string => typeof v === "string" && DECIMAL.
 const isInt = (v: unknown): v is number => Number.isSafeInteger(v);
 const isBool = (v: unknown): v is boolean => typeof v === "boolean";
 const isGame = (v: unknown): v is GameKind => typeof v === "string" && GAMES.includes(v);
-const isStatus = (v: unknown): v is RoundStatus => typeof v === "string" && STATUSES.includes(v);
 
 function parseDealer(entry: unknown): DealerView {
   if (!isRecord(entry)) throw new Error("get_lobby: entry is not an object");
@@ -96,6 +90,8 @@ function parseDealer(entry: unknown): DealerView {
     bankroll: field(entry, "bankroll", isDecimal),
     share_price_buy: field(entry, "share_price_buy", isDecimal),
     share_price_sell: field(entry, "share_price_sell", isDecimal),
+    npc: field(entry, "npc", isBool),
+    autopilot: field(entry, "autopilot", isBool),
   };
 }
 
@@ -105,17 +101,9 @@ export function parseLobby(value: unknown): DealerView[] {
 }
 
 /** `get_player` always returns an object (zeros for an unknown player). */
-export function parsePlayer(value: unknown): PlayerView {
+export function parseBalance(value: unknown): bigint {
   if (!isRecord(value) || !isDecimal(value.balance)) throw new Error("get_player: invalid balance");
-  const open = value.open_round;
-  if (open !== null && !isInt(open)) throw new Error("get_player: invalid open_round");
-  return { balance: BigInt(value.balance), openRound: open };
-}
-
-export function parseRoundStatus(value: unknown): RoundStatus | null {
-  if (value === null || value === undefined) return null;
-  if (!isRecord(value) || !isStatus(value.status)) throw new Error("get_round: invalid status");
-  return value.status;
+  return BigInt(value.balance);
 }
 
 export function houseViews(provider: JsonRpcProvider, house: string): House {
@@ -125,11 +113,8 @@ export function houseViews(provider: JsonRpcProvider, house: string): House {
     async lobby() {
       return parseLobby(await view("get_lobby", {}));
     },
-    async player(accountId) {
-      return parsePlayer(await view("get_player", { account_id: accountId }));
-    },
-    async roundStatus(roundId) {
-      return parseRoundStatus(await view("get_round", { round_id: roundId }));
+    async balance(accountId) {
+      return parseBalance(await view("get_player", { account_id: accountId }));
     },
   };
 }
@@ -158,16 +143,16 @@ export function nearSend(provider: JsonRpcProvider, house: string, keysDir: stri
     }
     return account;
   };
-  return async ({ signer, method, args }) => {
+  return async ({ signer, method, args, receiver = house, deposit = 0n }) => {
     const account = await accountFor(signer);
-    return account.callFunction({ contractId: house, methodName: method, args, gas: gasFor(method) });
+    return account.callFunction({ contractId: receiver, methodName: method, args, gas: gasFor(method), deposit });
   };
 }
 
 /** Prints each call as one JSON line and sends nothing. */
 export function dryRunSend(house: string, print: (line: string) => void): Send {
-  return async ({ signer, method, args }) => {
-    print(JSON.stringify({ dry_run: true, signer, receiver: house, method, args }));
+  return async ({ signer, method, args, receiver = house }) => {
+    print(JSON.stringify({ dry_run: true, signer, receiver, method, args }));
     return undefined;
   };
 }

@@ -4,16 +4,19 @@ import { join } from "node:path";
 export interface Config {
   house: string;
   rpcUrl: string;
+  token: string;
+  /** The contract's configured keeper: signs `collect_rent`, `reprice`, `rent_bid` and pays salaries. */
+  keeper: string;
   accountSuffix: string;
-  dealerKeysDir: string;
-  botKeysDir: string;
+  /** near-cli credentials of the keeper and of the gamblers (who deposit their own salary). */
+  keysDir: string;
   keeperIntervalMs: number;
-  loyalDealer: string | undefined;
   dryRun: boolean;
 }
 
 const TESTNET_RPC = "https://test.rpc.fastnear.com";
 const DEFAULT_SUFFIX = "tilthouse.testnet";
+const DEFAULT_TOKEN = "tusdc.tilthouse.testnet";
 const DEFAULT_INTERVAL_MS = 60_000;
 const ACCOUNT_ID = /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
 
@@ -35,11 +38,11 @@ export function loadConfig(env: NodeJS.ProcessEnv, argv: readonly string[]): Con
   return {
     house: accountId(env.HOUSE_CONTRACT, "HOUSE_CONTRACT"),
     rpcUrl: env.NEAR_RPC_URL ?? TESTNET_RPC,
+    token: accountId(env.TOKEN_CONTRACT ?? DEFAULT_TOKEN, "TOKEN_CONTRACT"),
+    keeper: accountId(env.KEEPER_ACCOUNT ?? DEFAULT_SUFFIX, "KEEPER_ACCOUNT"),
     accountSuffix: accountId(env.ACCOUNT_SUFFIX ?? DEFAULT_SUFFIX, "ACCOUNT_SUFFIX"),
-    dealerKeysDir: env.DEALER_KEYS_DIR ?? defaultKeys,
-    botKeysDir: env.BOT_KEYS_DIR ?? defaultKeys,
+    keysDir: env.KEYS_DIR ?? defaultKeys,
     keeperIntervalMs: interval(env.KEEPER_INTERVAL_MS),
-    loyalDealer: env.BOT_LOYAL_DEALER || undefined,
     dryRun: argv.includes("--dry-run"),
   };
 }

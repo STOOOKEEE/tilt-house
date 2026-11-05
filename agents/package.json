@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "keeper": "node --env-file-if-exists=.env src/keeper.ts",
-    "bots": "node --env-file-if-exists=.env src/bots.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

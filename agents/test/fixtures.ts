@@ -1,4 +1,4 @@
-import type { DealerView, House, RoundStatus } from "../src/near.ts";
+import type { DealerView, House } from "../src/near.ts";
 
 export function dealer(over: Partial<DealerView> & Pick<DealerView, "id" | "game">): DealerView {
   return {
@@ -14,6 +14,8 @@ export function dealer(over: Partial<DealerView> & Pick<DealerView, "id" | "game
     bankroll: "1000000000",
     share_price_buy: "1000000",
     share_price_sell: "1000000",
+    npc: true,
+    autopilot: true,
     ...over,
   };
 }
@@ -22,15 +24,14 @@ export const LOBBY: DealerView[] = [
   dealer({ id: "ace", game: "blackjack" }),
   dealer({ id: "dora", game: "dice", total_edge_bp: 300 }),
   dealer({ id: "dina", game: "dice", total_edge_bp: 150, open: false }),
-  dealer({ id: "dex", game: "dice", total_edge_bp: 180 }),
+  dealer({ id: "dex", game: "dice", total_edge_bp: 180, npc: false, autopilot: false }),
   dealer({ id: "rita", game: "roulette", max_bet: "20000000" }),
   dealer({ id: "rex", game: "roulette", max_bet: "90000000" }),
 ];
 
-export function fakeHouse(lobby: DealerView[], balance = 10_000_000n, statuses: RoundStatus[] = [], openRound: number | null = null): House {
+export function fakeHouse(lobby: DealerView[], balances: Record<string, bigint> = {}): House {
   return {
     lobby: async () => lobby,
-    player: async () => ({ balance, openRound }),
-    roundStatus: async () => statuses.shift() ?? "settled",
+    balance: async (accountId) => balances[accountId] ?? 0n,
   };
 }
