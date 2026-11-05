@@ -1,5 +1,6 @@
-// One dealer's table: room, felt, the dealer rig and the game props, playing rounds step by step
-// as planned by the director. Steps run strictly in order (a draw is never skipped); when rounds
+// One dealer's table seen from the player's seat: room, felt, the dealer rig, the game props and
+// the dealer's display board, playing rounds step by step as planned by the director. The felt is
+// the input: clicks on it are reported in felt coordinates, the page decides what they mean. Steps run strictly in order (a draw is never skipped); when rounds
 // queue up the clock runs faster instead.
 import * as THREE from 'three'
 import { formatUsdc } from '../../format'
@@ -7,10 +8,12 @@ import type { Game, RoundView, RouletteBet } from '../../near/views'
 import { createCharacter } from '../characters'
 import { dealerLook } from '../looks'
 import { disposeObject, mountRenderer, type MountedRenderer } from '../renderer'
-import type { CharacterRig, Mood, TableSceneApi } from '../types'
+import type { CharacterRig, FeltAction, FeltCell, Mood, SlipStack, TableSceneApi } from '../types'
+import { createBoard, type BoardInfo } from './board'
 import { BLACKJACK_BET, Cards, paintBlackjackFelt } from './cards'
 import { Dice, paintDiceFelt } from './dice'
 import { endsDrawing, planRound, type Step } from './director'
+import { betCell, chipColor, DICE_BET_SPOT } from './felt'
 import {
   Animator,
   arcTo,
@@ -26,9 +29,11 @@ import {
   FELT_Y,
   hourglass,
   TABLE_D,
+  TABLE_W,
   textSprite,
+  valueStack,
 } from './props'
-import { betCell, paintRouletteFelt, Roulette } from './roulette'
+import { paintRouletteFelt, Roulette } from './roulette'
 
 export interface TableSceneOptions {
   dealerId: string
@@ -36,6 +41,8 @@ export interface TableSceneOptions {
   game: Game
   /** Called when a round's first step plays, so the page can label whose round is on the felt. */
   onRound?: (round: RoundView) => void
+  /** The pointer on the felt, in felt coordinates. */
+  onFelt?: (u: number, v: number, action: FeltAction) => void
 }
 
 /** The dealer sits this far behind the felt's back edge, its hands resting over the felt. */
@@ -46,8 +53,21 @@ const MAX_TIME_SCALE = 4
 const RESULT_HOLD_S = 1.4
 /** The answer after a drawing loop: the long throw already played while the VRF drew. */
 const FAST_RESULT_SPEED = 2.5
-const DRAWING_TEXT = 'drawing on NEAR…'
-const DICE_BET = { u: 0.5, v: 0.66 }
+const DRAWING_TEXT = 'shuffling…'
+/** The player's eyes: seated at the felt's near edge, looking down at it and across at the dealer. */
+const EYE = new THREE.Vector3(0, 2.45, TABLE_D / 2 + 2.0)
+const LOOK_AT = new THREE.Vector3(0, 1.0, -0.75)
+/** The whole felt width must stay in view, a little margin on each side. */
+const FRAME_HALF_W = TABLE_W / 2 + 0.15
+const SEAT_FOV = 50
+/** From the seat the dealer is close: a smaller bubble keeps the board and the felt in view. */
+const SEAT_BUBBLE_SCALE = 0.55
+/** Where the board stands: behind the felt, to the dealer's left (the player's right). */
+const BOARD_AT = new THREE.Vector3(1.75, 1.9, -TABLE_D / 2 - 0.8)
+/** A press held this long (ms) takes a chip off, like a right-click. */
+const LONG_PRESS_MS = 500
+/** A press that moves farther than this (px) is a drag, not a click. */
+const CLICK_SLOP = 8
 
 type Props =
   | { game: 'blackjack'; cards: Cards }
@@ -74,6 +94,11 @@ class TableScene implements TableSceneApi {
   /** The roulette bet of the round on the felt: where its chips go. */
   private rouletteBet: RouletteBet | null = null
   private stake: THREE.Group[] = []
+  /** The player's unplayed chips; hidden while a round plays (its own stake animates instead). */
+  private readonly slip = new THREE.Group()
+  private readonly glow: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
+  private readonly board = createBoard()
+  private readonly detachPointer: () => void
   private queue: Step[] = []
   private lastQueued: RoundView | null = null
   private running = false
@@ -88,19 +113,28 @@ class TableScene implements TableSceneApi {
     this.options = options
     this.mounted = mountRenderer(host)
     const { scene, camera } = this.mounted
-    camera.position.set(0, 2.05, 3.3)
-    camera.lookAt(0, 1.4, -0.8)
+    camera.fov = SEAT_FOV
     buildLights(scene)
     const look = dealerLook(options.dealerId)
     scene.add(buildRoom(options.dealerName, look.accent))
     this.table = buildTable(look.accent)
     scene.add(this.table.object)
-    this.rig = createCharacter(look, options.dealerName)
+    this.rig = createCharacter(look, options.dealerName, { bubbleScale: SEAT_BUBBLE_SCALE })
     this.rig.object.position.set(0, 0, DEALER_Z)
     scene.add(this.rig.object)
     this.hourglass.position.copy(feltPoint(0.7, 0.22, 0.75))
     this.drawingLabel.sprite.position.copy(feltPoint(0.5, 0.3, 0.6))
     scene.add(this.hourglass, this.curtain, this.drawingLabel.sprite)
+    this.glow = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ color: '#ffe08a', transparent: true, opacity: 0.4, depthWrite: false }),
+    )
+    this.glow.rotation.x = -Math.PI / 2
+    this.glow.visible = false
+    this.board.object.position.copy(BOARD_AT)
+    this.board.object.rotation.y = Math.atan2(EYE.x - BOARD_AT.x, EYE.z - BOARD_AT.z)
+    scene.add(this.slip, this.glow, this.board.object)
+    this.detachPointer = this.attachPointer()
     this.setGame(options.game)
     this.unsubscribe = this.mounted.onFrame((dt, elapsed) => this.frame(dt, elapsed))
   }
@@ -133,6 +167,7 @@ class TableScene implements TableSceneApi {
     if (this.disposed || this.drawing) return
     this.setGame(game)
     this.drawing = true
+    this.slip.visible = false
     this.drawingLabel.set(DRAWING_TEXT)
     this.hourglass.visible = false
     const props = this.props
@@ -174,9 +209,37 @@ class TableScene implements TableSceneApi {
     })
   }
 
+  setSlip(stacks: readonly SlipStack[]): void {
+    for (const child of [...this.slip.children]) {
+      child.removeFromParent()
+      disposeObject(child)
+    }
+    for (const s of stacks) {
+      const stack = valueStack(s.chips, chipColor)
+      stack.position.copy(feltPoint(s.u, s.v, 0.002))
+      this.slip.add(stack)
+    }
+  }
+
+  highlight(cell: FeltCell | null): void {
+    this.glow.visible = cell !== null
+    if (!cell) return
+    this.glow.position.copy(feltPoint(cell.u + cell.w / 2, cell.v + cell.h / 2, 0.004))
+    this.glow.scale.set(cell.w * TABLE_W, cell.h * TABLE_D, 1)
+  }
+
+  previewDiceBet(bet: { chance_bp: number; over: boolean } | null): void {
+    if (this.props?.game === 'dice' && bet) this.props.dice.setBet(bet)
+  }
+
+  setBoard(info: BoardInfo): void {
+    this.board.set(info)
+  }
+
   dispose(): void {
     this.disposed = true
     this.queue = []
+    this.detachPointer()
     this.unsubscribe()
     this.anim.finishAll()
     this.rig.dispose()
@@ -186,6 +249,7 @@ class TableScene implements TableSceneApi {
   // ---- frame loop -----------------------------------------------------------------------------
 
   private frame(dt: number, elapsed: number): void {
+    this.frameCamera(elapsed)
     this.anim.update(dt)
     this.rig.update(dt)
     const props = this.props
@@ -197,6 +261,81 @@ class TableScene implements TableSceneApi {
       this.hourglass.rotation.y = Math.floor(elapsed * 3) * (Math.PI / 4)
       this.hourglass.rotation.z = Math.floor(elapsed / 1.5) % 2 === 0 ? 0 : Math.PI
       this.hourglass.position.y = FELT_Y + 0.75 + Math.sin(elapsed * 2) * 0.04
+    }
+  }
+
+  /** Narrow screens move the eyes back (and up) so the whole felt stays in view; a slow breath of sway. */
+  private frameCamera(elapsed: number): void {
+    const camera = this.mounted.camera
+    const tanHalfH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect
+    const back = Math.max(0, FRAME_HALF_W / tanHalfH - (EYE.z - LOOK_AT.z) * 0.9)
+    camera.position.set(EYE.x + Math.sin(elapsed * 0.3) * 0.02, EYE.y + back * 0.35, EYE.z + back)
+    camera.lookAt(LOOK_AT)
+  }
+
+  // ---- pointer --------------------------------------------------------------------------------
+
+  /** Felt coordinates under a pointer event, or null off the felt. */
+  private feltAt(event: PointerEvent | MouseEvent): { u: number; v: number } | null {
+    const canvas = this.mounted.renderer.domElement
+    const rect = canvas.getBoundingClientRect()
+    const pointer = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
+    const ray = new THREE.Raycaster()
+    ray.setFromCamera(pointer, this.mounted.camera)
+    const hit = ray.intersectObject(this.table.top, false)[0]
+    if (!hit) return null
+    return { u: hit.point.x / TABLE_W + 0.5, v: hit.point.z / TABLE_D + 0.5 }
+  }
+
+  private attachPointer(): () => void {
+    const canvas = this.mounted.renderer.domElement
+    const report = (event: PointerEvent | MouseEvent, action: FeltAction): void => {
+      const at = this.feltAt(event)
+      if (at) this.options.onFelt?.(at.u, at.v, action)
+      else if (action === 'move') this.options.onFelt?.(-1, -1, 'leave')
+    }
+    let press: { x: number; y: number; timer: number; long: boolean } | null = null
+    const onDown = (event: PointerEvent): void => {
+      if (event.button !== 0) return
+      const timer = window.setTimeout(() => {
+        if (!press) return
+        press.long = true
+        report(event, 'remove')
+      }, LONG_PRESS_MS)
+      press = { x: event.clientX, y: event.clientY, timer, long: false }
+    }
+    const onUp = (event: PointerEvent): void => {
+      const p = press
+      press = null
+      if (!p) return
+      window.clearTimeout(p.timer)
+      if (!p.long && Math.hypot(event.clientX - p.x, event.clientY - p.y) <= CLICK_SLOP) report(event, 'add')
+    }
+    const onMove = (event: PointerEvent): void => {
+      if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > CLICK_SLOP) {
+        window.clearTimeout(press.timer)
+        press = null
+      }
+      report(event, 'move')
+    }
+    const onLeave = (): void => this.options.onFelt?.(-1, -1, 'leave')
+    const onMenu = (event: MouseEvent): void => {
+      event.preventDefault()
+      // A touch long press also fires contextmenu: it already took its chip off.
+      if (event instanceof PointerEvent && event.pointerType === 'touch') return
+      report(event, 'remove')
+    }
+    canvas.addEventListener('pointerdown', onDown)
+    canvas.addEventListener('pointerup', onUp)
+    canvas.addEventListener('pointermove', onMove)
+    canvas.addEventListener('pointerleave', onLeave)
+    canvas.addEventListener('contextmenu', onMenu)
+    return () => {
+      canvas.removeEventListener('pointerdown', onDown)
+      canvas.removeEventListener('pointerup', onUp)
+      canvas.removeEventListener('pointermove', onMove)
+      canvas.removeEventListener('pointerleave', onLeave)
+      canvas.removeEventListener('contextmenu', onMenu)
     }
   }
 
@@ -228,6 +367,7 @@ class TableScene implements TableSceneApi {
     }
     this.fastResult = false
     this.running = false
+    if (!this.drawing) this.slip.visible = true
   }
 
   /** `handOver`: the next step (throw, spin) lands the running cup or ball itself. */
@@ -249,7 +389,7 @@ class TableScene implements TableSceneApi {
         return this.placeBet(step.round)
       case 'think':
         this.hourglass.visible = true
-        this.rig.say('drawing… the VRF decides')
+        this.rig.say('drawing…')
         return
       case 'double':
         return this.addChips(this.stake.length > 0 ? chipCountOf(this.stake[0]) : 1, 0.26)
@@ -309,7 +449,7 @@ class TableScene implements TableSceneApi {
       const cell = betCell(this.rouletteBet)
       return feltPoint(cell.u + cell.w / 2, cell.v + cell.h / 2, 0.002)
     }
-    return feltPoint(DICE_BET.u, DICE_BET.v, 0.002)
+    return feltPoint(DICE_BET_SPOT.u, DICE_BET_SPOT.v, 0.002)
   }
 
   private async deal(to: 'player' | 'dealer', index: number, rank: number | null): Promise<void> {

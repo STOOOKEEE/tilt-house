@@ -195,6 +195,8 @@ function hangingLamp(): THREE.Mesh {
 
 export interface FeltTable {
   object: THREE.Group
+  /** The felt surface, for pointer picking. */
+  top: THREE.Mesh
   /** Repaints the felt print (game layout) with `draw` on top of the plain felt. */
   paint(draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void): void
 }
@@ -225,6 +227,7 @@ export function buildTable(accent: string): FeltTable {
   object.add(top, rimAndBase(accent))
   return {
     object,
+    top,
     paint(draw) {
       print = draw
       felt.redraw()
@@ -295,6 +298,20 @@ export function chipStack(count: number, seed = 0): THREE.Group {
     chip.castShadow = true
     stack.add(chip)
   }
+  return stack
+}
+
+/** A stack of the given chip values, bottom first, each in its value's colour. */
+export function valueStack(chips: readonly bigint[], color: (value: bigint) => string): THREE.Group {
+  const stack = new THREE.Group()
+  const geometry = new THREE.CylinderGeometry(CHIP_R, CHIP_R, CHIP_H, 8)
+  chips.forEach((value, i) => {
+    const chip = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ color: color(value), flatShading: true }))
+    chip.position.y = CHIP_H / 2 + i * CHIP_H
+    chip.rotation.y = (i % 2) * (Math.PI / 8)
+    chip.castShadow = true
+    stack.add(chip)
+  })
   return stack
 }
 

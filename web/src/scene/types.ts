@@ -4,6 +4,7 @@
 //   - table/*: the props (cards, roulette wheel, dice) and the director that plays rounds.
 import type * as THREE from 'three'
 import type { Game, RoundView } from '../near/views'
+import type { BoardInfo } from './table/board'
 
 /** A dealer's mood, from its pool and offer: drives face, posture and idle loop. */
 export type Mood = 'happy' | 'neutral' | 'nervous' | 'broke'
@@ -66,5 +67,32 @@ export interface TableSceneApi {
   say(text: string | null): void
   /** Table closed (bust): curtain down, dealer slumps. */
   setOpen(open: boolean): void
+  /** Chips the player has placed and not played yet; hidden while a round plays. */
+  setSlip(stacks: readonly SlipStack[]): void
+  /** Lights a felt cell under the pointer (null: none). */
+  highlight(cell: FeltCell | null): void
+  /** The dice bar shows this bet before it is played. */
+  previewDiceBet(bet: { chance_bp: number; over: boolean } | null): void
+  /** The dealer's display board. */
+  setBoard(info: BoardInfo): void
   dispose(): void
 }
+
+/** A felt rectangle in felt coordinates (u right, v toward the player, 0..1). */
+export interface FeltCell {
+  u: number
+  v: number
+  w: number
+  h: number
+}
+
+export interface SlipStack {
+  /** Felt point of the stack. */
+  u: number
+  v: number
+  /** Chip values, bottom first. */
+  chips: readonly bigint[]
+}
+
+/** What the pointer did on the felt: hover, place a chip (click), take one off (right-click, long press). */
+export type FeltAction = 'move' | 'add' | 'remove' | 'leave'

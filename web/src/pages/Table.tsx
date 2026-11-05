@@ -1,35 +1,51 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+// A seat at one table, full screen: the player sits at the felt facing the dealer, places chips by
+// clicking the felt, and plays with the TILT button. Everything else floats over the 3D view.
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
-import { LoginPrompt } from '../components/LoginPrompt'
-import { DiceForm, RouletteForm } from '../components/GameForms'
-import { formatBp, formatCountdown, formatUsdc, parseUsdc } from '../format'
-import { cardLabel, handTotal, reopenNeeds } from '../house'
-import { roundWager, type BjSession, type CompactRound } from '../near/session-client'
+import { formatUsdc } from '../format'
+import { diceWinPayout } from '../house'
+import { useDemoSession } from '../near/useDemoSession'
 import { useNear } from '../near/useNear'
 import { TABLE_POLL_MS, useLobby, usePlayer } from '../near/usePoll'
-import { useSession, type SessionApi, type StoredSession } from '../near/useSession'
-import type { Bet, DealerView, RoundView } from '../near/views'
+import { useSession, type SessionApi } from '../near/useSession'
+import type { CompactRound } from '../near/session-client'
+import type { DealerView, RoundView } from '../near/views'
 import { dealerMood } from '../scene/mood'
-import { demoRound } from '../scene/table/demo'
+import {
+  addChip,
+  CHIP_VALUES,
+  diceTarget,
+  flipDiceSide,
+  rebet,
+  removeChip,
+  slipAmount,
+  slipProblem,
+  slipTotal,
+  stackChips,
+  type DiceTarget,
+  type SlipEntry,
+} from '../scene/table/felt'
 import { createTableScene } from '../scene/table/TableScene'
-import type { TableSceneApi } from '../scene/types'
+import type { FeltAction, TableSceneApi } from '../scene/types'
 import { useNow } from '../useNow'
+import { BetBar, ClosedCard, Drawer, SessionHud, SitCard, WalletHud } from './table/overlays'
+import { boardInfo, feltSpot, ownRoundView, stackPoint } from './table/seat'
 
-/** Dev `?demo=1`: one scripted snapshot every this many ms. */
-const DEMO_STEP_MS = 2_500
-/** What a session locks by default: room for a few dozen minimum bets. */
-const DEFAULT_LOCK_MIN_BETS = 50n
+const DEFAULT_DICE: DiceTarget = { chance_bp: 5_000, over: false }
 
 export function Table() {
   const { dealer: dealerId = '' } = useParams()
+  const [searchParams] = useSearchParams()
+  // Dev `?demo=1`: a local session, no login, server or chain (useDemoSession).
+  const demo = import.meta.env.DEV && searchParams.get('demo') === '1'
   const { config, provider, walletId, gameKey } = useNear()
   const lobby = useLobby(TABLE_POLL_MS)
   const player = usePlayer(TABLE_POLL_MS)
   const dealer = lobby.data?.find((d) => d.id === dealerId)
-  const session = useSession(config, provider, walletId, gameKey.state === 'ready', dealer)
-  const { session: stored, hand, last } = session
-  // Memoized: the scene replays its animation for every new round object.
-  const ownRound = useMemo(() => ownRoundView(stored, hand, last, walletId), [stored, hand, last, walletId])
+  const live = useSession(config, provider, walletId, gameKey.state === 'ready', dealer, player.data)
+  const practice = useDemoSession(dealer)
+  const session = demo ? practice : live
+  const top = useTopbarBottom()
 
   if (lobby.error && !lobby.data) return <p className="loss">Could not load the table: {lobby.error}</p>
   if (!lobby.data) return <p className="muted">loading table…</p>
@@ -38,117 +54,243 @@ export function Table() {
   // The chain is the truth: a session closed by us, by the server (idle) or force-closed no longer
   // holds the player, even if this browser still keeps it for verification.
   const openOnChain = player.data?.open_session ?? null
-  const elsewhere =
-    session.session && session.session.ticket.dealer_id !== dealer.id && openOnChain === session.session.session_id
-      ? session.session
-      : null
+  const stored = session.session
+  const elsewhere = !demo && stored && stored.ticket.dealer_id !== dealer.id && openOnChain === stored.session_id ? stored : null
+  return (
+    <div className="seat-view" style={{ top }}>
+      <Seat
+        key={dealer.id}
+        dealer={dealer}
+        session={session}
+        walletId={demo ? 'demo.testnet' : walletId}
+        wallet={demo ? null : player.data ? BigInt(player.data.balance) : null}
+        demo={demo}
+        offline={!demo && !config.sessionUrl}
+        elsewhere={elsewhere?.ticket.dealer_id ?? null}
+      />
+    </div>
+  )
+}
+
+/** The seat fills the window under the top bar; the page itself never scrolls. */
+function useTopbarBottom(): number {
+  const [top, setTop] = useState(0)
+  useLayoutEffect(() => {
+    const bar = document.querySelector('.topbar')
+    const measure = () => setTop(bar ? bar.getBoundingClientRect().bottom : 0)
+    measure()
+    const observer = new ResizeObserver(measure)
+    if (bar) observer.observe(bar)
+    const overflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      observer.disconnect()
+      document.body.style.overflow = overflow
+    }
+  }, [])
+  return top
+}
+
+interface SeatProps {
+  dealer: DealerView
+  session: SessionApi
+  walletId: string
+  /** House balance, null while unknown (or in the demo). */
+  wallet: bigint | null
+  demo: boolean
+  offline: boolean
+  /** The table where the player still has an open session, if not this one. */
+  elsewhere: string | null
+}
+
+function Seat({ dealer, session, walletId, wallet, demo, offline, elsewhere }: SeatProps) {
+  const s = session.session
+  const here = s !== null && s.ticket.dealer_id === dealer.id
+  const playing = here && (session.phase === 'playing' || session.phase === 'closing')
+  const closedHere = here && session.phase === 'closed'
+  const [slip, setSlip] = useState<SlipEntry[]>([])
+  const [chip, setChip] = useState<bigint>(CHIP_VALUES[0])
+  const [dice, setDice] = useState<DiceTarget>(DEFAULT_DICE)
+  const [drawer, setDrawer] = useState(false)
+  const [tilting, setTilting] = useState(false)
+
+  const ownRound = useMemo(
+    () => (here ? ownRoundView(s, session.hand, session.last, walletId) : null),
+    [here, s, session.hand, session.last, walletId],
+  )
+  const balance = s ? BigInt(s.state.balance) : 0n
+  const maxBet = s ? BigInt(s.ticket.max_bet) : BigInt(dealer.max_bet)
+  const problem = slipProblem(slip, { minBet: BigInt(dealer.min_bet), maxBet, balance })
+  const handLive = session.hand !== null && !session.hand.state.done
+  const canBet = playing && !session.busy && !tilting && session.broken === '' && session.phase === 'playing' && !handLive
+  const canTilt = canBet && problem === null
+
+  // Each spot is one round: they play one after the other, the slip stays for the next TILT.
+  const latest = useRef(session)
+  latest.current = session
+  const tilt = useCallback(async () => {
+    if (!canTilt) return
+    setTilting(true)
+    for (const entry of slip) {
+      const nonce = latest.current.session?.state.nonce
+      await latest.current.bet(entry.bet, slipAmount(entry))
+      // The next bet must be sent from the state this one produced: wait for React to commit it.
+      const moved = await committed(
+        () => latest.current.session?.state.nonce !== nonce || latest.current.hand !== null || latest.current.error !== '',
+      )
+      if (!moved || latest.current.error || latest.current.broken || latest.current.hand) break
+    }
+    setTilting(false)
+  }, [canTilt, slip])
+
+  const onFelt = (u: number, v: number, action: FeltAction, scene: TableSceneApi) => {
+    const spot = action === 'leave' ? null : feltSpot(dealer.game, u, v, dice)
+    scene.highlight(canBet && spot ? spot.cell : null)
+    if (!spot || !canBet || action === 'move' || action === 'leave') return
+    if (spot.kind === 'target') {
+      const next = diceTarget(spot.position_bp, dice.over)
+      setDice(next)
+      setSlip((current) => rebet(current, { dice: next }))
+    } else if (spot.kind === 'side') {
+      const next = flipDiceSide(dice, spot.over)
+      setDice(next)
+      setSlip((current) => rebet(current, { dice: next }))
+    } else if (action === 'add') setSlip((current) => addChip(current, spot.bet, chip))
+    else setSlip((current) => removeChip(current, spot.bet))
+  }
+
+  useKeys({
+    ' ': () => void tilt(),
+    h: () => handLive && void session.act('hit'),
+    s: () => handLive && void session.act('stand'),
+    d: () => handLive && void session.act('double'),
+  })
+
+  const center = elsewhere ? (
+    <div className="center-card">
+      <p>
+        You are seated at <Link to={`/table/${elsewhere}`}>{elsewhere}</Link>: leave that table first.
+      </p>
+    </div>
+  ) : offline ? (
+    <div className="center-card">
+      <p className="muted">Play is offline: no session server configured.</p>
+    </div>
+  ) : closedHere && s ? (
+    <ClosedCard session={session} s={s} />
+  ) : !playing ? (
+    <SitCard dealer={dealer} session={session} balance={wallet} loggedIn={walletId !== ''} demo={demo} />
+  ) : null
+
   return (
     <>
-      <TableStage dealer={dealer} ownRound={ownRound} drawing={session.busy && session.phase === 'playing'} failed={session.error !== ''} />
-      <DealerHeader dealer={dealer} />
-      {!walletId ? <LoginPrompt action="play" /> : null}
-      {elsewhere ? (
-        <p>
-          You are seated at <Link to={`/table/${elsewhere.ticket.dealer_id}`}>{elsewhere.ticket.dealer_id}</Link>: close
-          that session first.
-        </p>
-      ) : (
-        <SessionPanel dealer={dealer} session={session} balance={player.data ? BigInt(player.data.balance) : null} loggedIn={walletId !== ''} />
-      )}
-      {session.error ? <p className="loss">{session.error}</p> : null}
+      <TableStage
+        dealer={dealer}
+        ownRound={ownRound}
+        drawing={session.busy && session.phase === 'playing'}
+        failed={session.error !== ''}
+        slip={playing ? slip : []}
+        dice={dealer.game === 'dice' ? dice : null}
+        rounds={here && s ? s.rounds : []}
+        onFelt={onFelt}
+      />
+      <SessionHud dealer={dealer} session={here ? session : null} demo={demo} />
+      <WalletHud wallet={wallet} demo={demo} onRounds={() => setDrawer((open) => !open)} drawerOpen={drawer} />
+      {drawer && here && s ? <Drawer session={session} s={s} /> : null}
+      {center}
+      {session.error ? <p className="seat-toast loss">{session.error}</p> : null}
+      {session.broken ? <p className="seat-toast loss">Stopped: {session.broken}</p> : null}
+      {playing ? (
+        <BetBar
+          game={dealer.game}
+          chip={chip}
+          onChip={setChip}
+          total={slipTotal(slip)}
+          problem={canBet ? problem : null}
+          hint={dealer.game === 'dice' && s ? diceHint(dice, slip, s.ticket.rake_bp) : null}
+          canTilt={canTilt}
+          busy={session.busy || tilting}
+          onTilt={() => void tilt()}
+          onClear={() => setSlip([])}
+          hand={handLive ? session.hand : null}
+          canAct={!session.busy && session.broken === ''}
+          canDouble={handLive && session.hand !== null && session.hand.state.player.length === 2 && balance >= BigInt(session.hand.stake)}
+          onAct={(action) => void session.act(action)}
+        />
+      ) : null}
     </>
   )
 }
 
-/** The player's round on the felt: the live blackjack hand, else the last finished round. */
-function ownRoundView(s: StoredSession | null, hand: BjSession | null, last: SessionApi['last'], walletId: string): RoundView | null {
-  if (!s) return null
-  if (hand) return handView(s, hand, walletId)
-  if (last) return roundView(s, last.round, walletId, last.ordinal)
-  return null
-}
+/** Frames to wait for a state update to reach the render before giving up (about a second). */
+const COMMIT_FRAMES = 60
 
-/** Round ids for the scene: unique per session and nonce, so a new session never "continues" an old round. */
-function sceneId(s: StoredSession, nonce: number): number {
-  return (Number.parseInt(s.ticket.server_seed_hash.slice(0, 6), 16) % 10_000) * 100_000 + nonce
-}
-
-function baseView(s: StoredSession, walletId: string, nonce: number, bet: Bet, stake: string): RoundView {
-  const now = Math.floor(Date.now() / 1000)
-  return {
-    id: sceneId(s, nonce),
-    player: walletId,
-    dealer_id: s.ticket.dealer_id,
-    game: s.ticket.game,
-    bet,
-    stake,
-    wager: stake,
-    rake_bp: s.ticket.rake_bp,
-    status: 'settled',
-    step: 0,
-    created_at: now,
-    updated_at: now,
-    roll: null,
-    pocket: null,
-    bj: null,
-    payout: null,
-    proofs: [],
-    error: null,
+/** Resolves true once `done()` holds on a rendered frame, false if it never does. */
+async function committed(done: () => boolean): Promise<boolean> {
+  for (let frame = 0; frame < COMMIT_FRAMES; frame++) {
+    if (done()) return true
+    await new Promise((resolve) => requestAnimationFrame(resolve))
   }
+  return done()
 }
 
-function roundView(s: StoredSession, round: CompactRound, walletId: string, ordinal: number): RoundView {
-  const view = baseView(s, walletId, round.nonce, round.bet, round.stake)
-  const outcome = round.outcome
-  return {
-    ...view,
-    wager: roundWager(round).toString(),
-    step: round.actions.length,
-    updated_at: view.updated_at + ordinal,
-    roll: 'dice' in outcome ? outcome.dice.roll : null,
-    pocket: 'roulette' in outcome ? outcome.roulette.pocket : null,
-    bj: 'blackjack' in outcome ? outcome.blackjack : null,
-    payout: round.payout,
-  }
+function diceHint(dice: DiceTarget, slip: readonly SlipEntry[], rakeBp: number): string {
+  const edge = dice.over ? 10_000 - dice.chance_bp : dice.chance_bp
+  const stake = slip.length > 0 ? slipAmount(slip[0]) : 0n
+  const wins = `roll ${dice.over ? '≥' : '<'} ${(edge / 100).toFixed(2)} wins (${(dice.chance_bp / 100).toFixed(2)} %)`
+  return stake > 0n ? `${wins} · pays ${formatUsdc(diceWinPayout(stake, dice.chance_bp, rakeBp))}` : wins
 }
 
-function handView(s: StoredSession, hand: BjSession, walletId: string): RoundView {
-  return {
-    ...baseView(s, walletId, hand.nonce, 'blackjack', hand.stake),
-    status: 'player_turn',
-    step: hand.actions.length,
-    wager: (hand.state.doubled ? BigInt(hand.stake) * 2n : BigInt(hand.stake)).toString(),
-    bj: hand.state,
-  }
+/** Single-key shortcuts, ignored while typing in a field. */
+function useKeys(bindings: Record<string, () => void>): void {
+  const latest = useRef(bindings)
+  latest.current = bindings
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || event.metaKey || event.ctrlKey) return
+      const run = latest.current[event.key.toLowerCase()]
+      if (!run) return
+      event.preventDefault()
+      run()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 }
 
 interface StageProps {
   dealer: DealerView
-  /** The player's round at this table, null before the first one. */
   ownRound: RoundView | null
   /** A move is on its way to the session server (about 100 ms): the dealer starts the draw. */
   drawing: boolean
   failed: boolean
+  slip: readonly SlipEntry[]
+  dice: DiceTarget | null
+  rounds: readonly CompactRound[]
+  onFelt: (u: number, v: number, action: FeltAction, scene: TableSceneApi) => void
 }
 
-/** The 3D table: the player's session rounds, or a scripted demo (`?demo=1`, dev only). */
-function TableStage({ dealer, ownRound, drawing, failed }: StageProps) {
-  const [searchParams] = useSearchParams()
-  const demo = import.meta.env.DEV && searchParams.get('demo') === '1'
+/** The 3D seat: the player's session rounds, the chips on the felt, the dealer's board. */
+function TableStage({ dealer, ownRound, drawing, failed, slip, dice, rounds, onFelt }: StageProps) {
   const host = useRef<HTMLDivElement>(null)
   const [scene, setScene] = useState<TableSceneApi | null>(null)
+  // Through a ref: the scene is built once per dealer, the handler changes with every render.
+  const felt = useRef(onFelt)
+  felt.current = onFelt
 
   useEffect(() => {
     if (!host.current) return
-    const created = createTableScene(host.current, {
+    let created: TableSceneApi | null = null
+    created = createTableScene(host.current, {
       dealerId: dealer.id,
       dealerName: dealer.name,
       game: dealer.game,
-      onRound: () => undefined,
+      onFelt: (u, v, action) => created && felt.current(u, v, action, created),
     })
     setScene(created)
     return () => {
-      created.dispose()
+      created?.dispose()
       setScene(null)
     }
     // Rebuilt only for another dealer: live fields are pushed by the effects below.
@@ -162,12 +304,25 @@ function TableStage({ dealer, ownRound, drawing, failed }: StageProps) {
     scene?.setOpen(dealer.open)
   }, [scene, dealer.game, mood, dealer.reason_text, dealer.open])
 
+  const now = useNow()
+  useEffect(() => {
+    scene?.setBoard(boardInfo(dealer, rounds, now))
+  }, [scene, dealer, rounds, now])
+
   const shown = useRef<RoundView | null>(null)
   useEffect(() => {
-    if (!scene || !ownRound || demo) return
+    if (!scene || !ownRound) return
     scene.showRound(shown.current, ownRound)
     shown.current = ownRound
-  }, [scene, ownRound, demo])
+  }, [scene, ownRound])
+
+  useEffect(() => {
+    scene?.setSlip(slip.map((entry) => ({ ...stackPoint(entry.bet), chips: stackChips(slipAmount(entry)) })))
+  }, [scene, slip])
+
+  useEffect(() => {
+    scene?.previewDiceBet(dice)
+  }, [scene, dice])
 
   useEffect(() => {
     if (scene && drawing) scene.startDrawing(dealer.game)
@@ -177,272 +332,5 @@ function TableStage({ dealer, ownRound, drawing, failed }: StageProps) {
     if (scene && failed) scene.stopDrawing()
   }, [scene, failed])
 
-  useEffect(() => {
-    if (!scene || !demo) return
-    let id = 1
-    let snapshots = demoRound(dealer.game, dealer.id, id)
-    let previous: RoundView | null = null
-    const timer = window.setInterval(() => {
-      const next = snapshots.shift()
-      if (!next) {
-        id += 1
-        snapshots = demoRound(dealer.game, dealer.id, id)
-        previous = null
-        return
-      }
-      scene.showRound(previous, next)
-      previous = next
-    }, DEMO_STEP_MS)
-    return () => window.clearInterval(timer)
-  }, [scene, demo, dealer.game, dealer.id])
-
-  return (
-    <div style={{ position: 'relative', height: 'min(58vh, 540px)', marginBottom: '1rem' }}>
-      <div ref={host} style={{ position: 'absolute', inset: 0, borderRadius: 6, overflow: 'hidden' }} />
-      {demo ? (
-        <p className="muted" style={{ position: 'absolute', left: 12, top: 4, margin: 0 }}>
-          demo round (scripted)
-        </p>
-      ) : null}
-    </div>
-  )
-}
-
-function DealerHeader({ dealer }: { dealer: DealerView }) {
-  const now = useNow()
-  const boostLeft = formatCountdown(dealer.boost_until - now)
-  return (
-    <header className="table-header">
-      <h1>
-        {dealer.name} <span className="muted">· {dealer.temperament} · {dealer.game}</span>
-      </h1>
-      <p>
-        edge {formatBp(dealer.total_edge_bp)} · bets {formatUsdc(dealer.min_bet)}–{formatUsdc(dealer.max_bet)} tUSDC
-        {boostLeft ? <span className="win"> · boost {boostLeft}</span> : null}
-      </p>
-      <p className="muted">“{dealer.reason_text}”</p>
-      {dealer.open ? null : (
-        <p className="loss">
-          Table closed · needs {formatUsdc(reopenNeeds(dealer))} tUSDC to reopen.{' '}
-          <Link to={`/pools?dealer=${dealer.id}`}>Rescue it</Link>
-        </p>
-      )}
-    </header>
-  )
-}
-
-interface SessionPanelProps {
-  dealer: DealerView
-  session: SessionApi
-  /** House balance, null while unknown. */
-  balance: bigint | null
-  loggedIn: boolean
-}
-
-function SessionPanel({ dealer, session, balance, loggedIn }: SessionPanelProps) {
-  const { config } = useNear()
-  if (!config.sessionUrl) return <p className="muted">Play is offline: no session server configured.</p>
-  const s = session.session
-  switch (session.phase) {
-    case 'idle':
-    case 'starting':
-    case 'opening':
-      return <OpenSession dealer={dealer} session={session} balance={balance} loggedIn={loggedIn} />
-    case 'playing':
-    case 'closing':
-      return s ? <PlayArea dealer={dealer} session={session} s={s} /> : null
-    case 'closed':
-      // A finished session at another table: this one is free to sit at.
-      if (s && s.ticket.dealer_id !== dealer.id) {
-        return <OpenSession dealer={dealer} session={session} balance={balance} loggedIn={loggedIn} />
-      }
-      return s ? <ClosedSession session={session} s={s} /> : null
-  }
-}
-
-function OpenSession({ dealer, session, balance, loggedIn }: SessionPanelProps) {
-  const [lockText, setLockText] = useState(() => formatUsdc(BigInt(dealer.min_bet) * DEFAULT_LOCK_MIN_BETS, 0))
-  const lock = parseUsdc(lockText)
-  const problem =
-    lock === null || lock < BigInt(dealer.min_bet)
-      ? `lock at least ${formatUsdc(dealer.min_bet)} tUSDC`
-      : balance !== null && lock > balance
-        ? 'not enough balance: deposit in Pools'
-        : ''
-  const working = session.phase === 'starting' || session.phase === 'opening'
-  return (
-    <section className="play">
-      <p className="muted">
-        Sit down with an amount: it is locked on chain for the session, then every round is instant and signed by the
-        server. When you leave, the server reveals its seed and you can replay every round.
-      </p>
-      <label className="stake">
-        lock (tUSDC)
-        <input value={lockText} inputMode="decimal" onChange={(event) => setLockText(event.target.value)} />
-        {balance !== null ? <span className="muted">balance {formatUsdc(balance)}</span> : null}
-      </label>
-      {loggedIn && problem ? <p className="loss">{problem}</p> : null}
-      <button
-        type="button"
-        disabled={!loggedIn || working || session.busy || problem !== '' || !dealer.open || lock === null}
-        onClick={() => lock !== null && void session.start(lock)}
-      >
-        {session.phase === 'starting' ? 'asking the server…' : session.phase === 'opening' ? 'opening on chain…' : 'Sit down'}
-      </button>
-    </section>
-  )
-}
-
-function PlayArea({ dealer, session, s }: { dealer: DealerView; session: SessionApi; s: StoredSession }) {
-  const ticket = s.ticket
-  const [stakeText, setStakeText] = useState(() => formatUsdc(dealer.min_bet, 0))
-  const stake = parseUsdc(stakeText)
-  const balance = BigInt(s.state.balance)
-  const stakeProblem =
-    stake === null
-      ? 'Enter a stake like 0.5'
-      : stake < BigInt(dealer.min_bet)
-        ? `Minimum bet is ${formatUsdc(dealer.min_bet)}`
-        : stake > BigInt(ticket.max_bet)
-          ? `This session takes at most ${formatUsdc(ticket.max_bet)}`
-          : stake > balance
-            ? 'Not enough left in the session'
-            : ''
-  const idle = !session.busy && session.phase === 'playing' && session.broken === ''
-  const canBet = idle && stakeProblem === '' && session.hand === null
-  const bet = (b: Bet) => stake !== null && void session.bet(b, stake)
-
-  return (
-    <section className="play">
-      <p>
-        session <code>{s.session_id}</code> · balance <strong className="money">{formatUsdc(balance)}</strong> of{' '}
-        {formatUsdc(ticket.lock)} locked · rake {formatBp(ticket.rake_bp)} · round {s.state.nonce}
-      </p>
-      {session.broken ? <Broken session={session} /> : null}
-      <label className="stake">
-        stake (tUSDC)
-        <input value={stakeText} inputMode="decimal" onChange={(event) => setStakeText(event.target.value)} />
-      </label>
-      {stakeProblem && session.hand === null ? <p className="loss">{stakeProblem}</p> : null}
-      {ticket.game === 'dice' ? <DiceForm stake={stake} rakeBp={ticket.rake_bp} disabled={!canBet} onBet={bet} /> : null}
-      {ticket.game === 'roulette' ? <RouletteForm stake={stake} rakeBp={ticket.rake_bp} disabled={!canBet} onBet={bet} /> : null}
-      {ticket.game === 'blackjack' ? (
-        <BlackjackControls hand={session.hand} canDeal={canBet} canMove={idle} balance={balance} onDeal={() => bet('blackjack')} session={session} />
-      ) : null}
-      <RoundList rounds={s.rounds} />
-      <button type="button" className="ghost" disabled={session.busy || session.hand !== null} onClick={() => void session.close()}>
-        {session.phase === 'closing' ? 'closing…' : 'Leave the table (close and reveal)'}
-      </button>
-    </section>
-  )
-}
-
-function Broken({ session }: { session: SessionApi }) {
-  return (
-    <div className="loss">
-      <p>Stopped: {session.broken}. Your last valid signed state is kept in this browser.</p>
-      <button type="button" disabled={session.busy} onClick={() => void session.forceClose()}>
-        Force close with my last signed state
-      </button>{' '}
-      <span className="muted">(allowed by the contract 10 minutes after the last settle)</span>
-    </div>
-  )
-}
-
-interface BlackjackProps {
-  hand: BjSession | null
-  canDeal: boolean
-  canMove: boolean
-  balance: bigint
-  onDeal: () => void
-  session: SessionApi
-}
-
-function BlackjackControls({ hand, canDeal, canMove, balance, onDeal, session }: BlackjackProps) {
-  const myTurn = canMove && hand !== null && !hand.state.done
-  // Doubling takes another stake from the session, on the first two cards only.
-  const canDouble = myTurn && hand.state.player.length === 2 && balance >= BigInt(hand.stake) * 2n
-  return (
-    <div className="choices">
-      <button type="button" disabled={!canDeal} onClick={onDeal}>
-        Deal
-      </button>
-      <button type="button" disabled={!myTurn} onClick={() => void session.act('hit')}>
-        Hit
-      </button>
-      <button type="button" disabled={!myTurn} onClick={() => void session.act('stand')}>
-        Stand
-      </button>
-      <button type="button" disabled={!canDouble} onClick={() => void session.act('double')}>
-        Double
-      </button>
-    </div>
-  )
-}
-
-function outcomeLabel(round: CompactRound): string {
-  const o = round.outcome
-  if ('dice' in o) return `roll ${(o.dice.roll / 100).toFixed(2)}`
-  if ('roulette' in o) return `pocket ${o.roulette.pocket}`
-  const cards = (c: number[]) => `${c.map(cardLabel).join(' ')} (${handTotal(c).total})`
-  return `you ${cards(o.blackjack.player)} · dealer ${cards(o.blackjack.dealer)}`
-}
-
-/** The session's rounds, newest first: each one was checked against the server's signed state. */
-function RoundList({ rounds }: { rounds: readonly CompactRound[] }) {
-  if (rounds.length === 0) return null
-  return (
-    <table className="grid">
-      <caption className="muted">rounds (signed state checked ✓)</caption>
-      <tbody>
-        {[...rounds].reverse().slice(0, 12).map((round) => {
-          const net = BigInt(round.payout) - roundWager(round)
-          return (
-            <tr key={round.nonce}>
-              <td>#{round.nonce}</td>
-              <td>{outcomeLabel(round)}</td>
-              <td className={net > 0n ? 'win money' : net < 0n ? 'loss money' : 'money'}>
-                {net > 0n ? '+' : ''}
-                {formatUsdc(net)}
-              </td>
-            </tr>
-          )
-        })}
-      </tbody>
-    </table>
-  )
-}
-
-function ClosedSession({ session, s }: { session: SessionApi; s: StoredSession }) {
-  const result = session.verified
-  return (
-    <section className="play">
-      <p>
-        Session <code>{s.session_id}</code> closed after {s.state.nonce} rounds: {formatUsdc(s.state.balance)} tUSDC back to
-        your balance.
-      </p>
-      {s.server_seed ? (
-        <p className="muted">
-          revealed seed <code>{s.server_seed}</code>
-          <br />
-          committed hash <code>{s.ticket.server_seed_hash}</code> · your client seed <code>{s.ticket.client_seed}</code>
-        </p>
-      ) : null}
-      {session.broken ? <p className="loss">{session.broken}</p> : null}
-      <button type="button" disabled={!s.server_seed} onClick={session.verify}>
-        Verify every round
-      </button>{' '}
-      <button type="button" className="ghost" onClick={session.forget}>
-        New session
-      </button>
-      {result?.ok ? (
-        <p className="win">
-          ✓ {result.summary.rounds} rounds replayed from the seed: wagered {formatUsdc(result.summary.wagered)}, paid{' '}
-          {formatUsdc(result.summary.paid)}, final balance and hash chain match.
-        </p>
-      ) : null}
-      {result && !result.ok ? <p className="loss">✗ verification failed: {result.error}</p> : null}
-      <RoundList rounds={s.rounds} />
-    </section>
-  )
+  return <div ref={host} className="seat-stage" />
 }

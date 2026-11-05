@@ -398,8 +398,11 @@ const BLINK_S = 0.12
 const BUBBLE_Y = 2.0
 const TOP_HAT_EXTRA = 0.4
 
-/** `stool: false` for figures that sit on the room's stools instead of carrying their own (gamblers). */
-export function createCharacter(look: DealerLook, name: string, { stool = true } = {}): WalkerRig {
+/**
+ * `stool: false` for figures that sit on the room's stools instead of carrying their own (gamblers);
+ * `bubbleScale` shrinks the speech bubble for close-up views (the player's seat).
+ */
+export function createCharacter(look: DealerLook, name: string, { stool = true, bubbleScale = 1 } = {}): WalkerRig {
   const root = new THREE.Group()
   root.name = name
   if (stool) root.add(buildStool())
@@ -439,8 +442,12 @@ export function createCharacter(look: DealerLook, name: string, { stool = true }
   body.add(right.shoulder, left.shoulder)
 
   const bubble = createBubble(look.accent)
-  bubble.object.position.y = BUBBLE_Y + (look.hat === 'top_hat' ? TOP_HAT_EXTRA : 0)
-  figure.add(bubble.object)
+  // The bubble animates its own scale (pop in): the size goes on a holder.
+  const bubbleHolder = new THREE.Group()
+  bubbleHolder.position.y = BUBBLE_Y + (look.hat === 'top_hat' ? TOP_HAT_EXTRA : 0)
+  bubbleHolder.scale.setScalar(bubbleScale)
+  bubbleHolder.add(bubble.object)
+  figure.add(bubbleHolder)
 
   let time = 0
   let nextBlink = 2

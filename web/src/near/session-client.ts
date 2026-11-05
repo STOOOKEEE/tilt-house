@@ -280,6 +280,13 @@ export function roundWager(round: CompactRound): bigint {
   return 'blackjack' in round.outcome ? bjWager(round.outcome.blackjack, stake) : stake
 }
 
+/** A blackjack hand after the deal and `actions`, finished or not (`BjSession::deal` + `act`). */
+export function playHand(serverSeed: Uint8Array, clientSeed: string, nonce: number, actions: readonly BjAction[]): BlackjackHand {
+  const hand = bjDeal(new Rng(stepSeed(serverSeed, clientSeed, nonce, 0)))
+  actions.forEach((action, i) => bjAct(hand, action, new Rng(stepSeed(serverSeed, clientSeed, nonce, i + 1))))
+  return hand
+}
+
 /** `core_rules::session::replay_round`: the round the seeds produce for this bet and these moves. */
 export function replayRound(
   serverSeed: Uint8Array,
@@ -293,8 +300,7 @@ export function replayRound(
   const rng = new Rng(stepSeed(serverSeed, ticket.client_seed, nonce, 0))
   const base = { nonce, bet, stake: stake.toString(), actions: [...actions] }
   if (bet === 'blackjack') {
-    const hand = bjDeal(rng)
-    actions.forEach((action, i) => bjAct(hand, action, new Rng(stepSeed(serverSeed, ticket.client_seed, nonce, i + 1))))
+    const hand = playHand(serverSeed, ticket.client_seed, nonce, actions)
     if (!hand.done) throw new Error('the hand is not finished')
     const payout = applyRake(bjGross(hand, stake), bjWager(hand, stake), ticket.rake_bp)
     return { ...base, outcome: { blackjack: hand }, payout: payout.toString() }
@@ -583,6 +589,8 @@ export interface SessionClient {
   /** A new round (`bet` + `stake`) or the next move of a live blackjack hand (`action`). */
   play(sessionId: string, token: string, nonce: number, move: { bet: Bet; stake: bigint } | { action: BjAction }): Promise<RoundReply>
   close(sessionId: string, token: string): Promise<ClosedSession>
+  /** The revealed seed of a session the server already closed (null while it is open). */
+  revealedSeed(sessionId: string): Promise<string | null>
 }
 
 export function sessionClient(baseUrl: string): SessionClient {
@@ -611,6 +619,10 @@ export function sessionClient(baseUrl: string): SessionClient {
         body: '{}',
       })
       return parseClosed(body)
+    },
+    async revealedSeed(sessionId) {
+      const body = record(await call(`${base}/sessions/${encodeURIComponent(sessionId)}`, { method: 'GET' }), 'session')
+      return optional(body.server_seed, (v) => hex(v, 'session.server_seed', 32))
     },
   }
 }

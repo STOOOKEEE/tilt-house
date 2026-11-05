@@ -4,7 +4,7 @@
  * signed state checked before it is shown. The last valid state is kept in localStorage: it is the
  * player's proof for `force_close` if the server ever stops answering.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JsonRpcProvider } from 'near-api-js'
 import type { Config } from '../config'
 import { gameKeyCall } from './session'
@@ -25,6 +25,11 @@ import {
 } from './session-client'
 import type { Bet, DealerView } from './views'
 
+/**
+ * Polls in a row that must miss the session on chain before it counts as closed elsewhere (the
+ * server closes idle sessions): covers the poll that still predates `open_session`.
+ */
+const CLOSED_AFTER_MISSES = 3
 /** `open_session` lands in a block or two; the server answers 409 until it sees it. */
 const OPEN_RETRIES = 20
 const OPEN_RETRY_MS = 1_000
@@ -104,6 +109,8 @@ export function useSession(
   walletId: string,
   ready: boolean,
   dealer: DealerView | undefined,
+  /** The latest `get_player` poll (a new object per poll), null while unknown. */
+  chain: { open_session: string | null } | null,
 ): SessionApi {
   const [session, setSession] = useState<StoredSession | null>(null)
   const [phase, setPhase] = useState<SessionPhase>('idle')
@@ -246,6 +253,30 @@ export function useSession(
         throw e
       }
     })
+
+  // Closed without us (idle timeout, another tab): show the verify view instead of failing on the
+  // next round, with the seed the server revealed when it closed.
+  const misses = useRef(0)
+  const sessionId = session?.session_id
+  const stillPlaying = phase === 'playing' && session?.opened === true && !busy
+  useEffect(() => {
+    if (!stillPlaying || chain === null || sessionId === undefined) return
+    misses.current = chain.open_session === sessionId ? 0 : misses.current + 1
+    if (misses.current < CLOSED_AFTER_MISSES || !session) return
+    misses.current = 0
+    setPhase('closed')
+    setHand(null)
+    void client.revealedSeed(sessionId).then(
+      (seed) => {
+        if (seed === null) return
+        save({ ...session, server_seed: seed })
+        setVerified(verifySession(seed, session.ticket, session.rounds, session.state))
+      },
+      () => setError('the session was closed on chain; its seed could not be fetched yet'),
+    )
+    // Runs per chain observation; `session` is read at that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chain, stillPlaying, sessionId])
 
   const verify = () => {
     if (session?.server_seed) setVerified(verifySession(session.server_seed, session.ticket, session.rounds, session.state))

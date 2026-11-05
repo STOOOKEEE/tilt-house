@@ -3,6 +3,7 @@
 import * as THREE from 'three'
 import { diceWins } from '../../house'
 import { pixelTexture, voxelPart, type PixelTexture } from '../voxel'
+import { DICE_BAR, DICE_BET_SPOT, DICE_SIDES } from './felt'
 import { type Animator, arcTo, feltPoint, PALETTE, textSprite, type TextSprite } from './props'
 
 const DIE = 0.3
@@ -11,8 +12,7 @@ const REST = [
   { u: 0.45, v: 0.48 },
   { u: 0.55, v: 0.5 },
 ] as const
-const BAR = { u0: 0.14, u1: 0.86, v: 0.8 }
-const BAR_W = (BAR.u1 - BAR.u0) * 4.2
+const BAR_W = (DICE_BAR.u1 - DICE_BAR.u0) * 4.2
 const BAR_H = 0.3
 const SHAKE_STEP = 0.07
 /** `roll` is 0..9999: shown as 0.00-99.99. */
@@ -111,7 +111,7 @@ export class Dice {
     this.bar = pixelTexture(1024, 104, (ctx, w, h) => paintBar(ctx, w, h, this.bet), { smooth: true })
     const bar = new THREE.Mesh(new THREE.PlaneGeometry(BAR_W, BAR_H), new THREE.MeshLambertMaterial({ map: this.bar.texture, transparent: true }))
     bar.rotation.x = -Math.PI / 2
-    bar.position.copy(feltPoint((BAR.u0 + BAR.u1) / 2, BAR.v, 0.002))
+    bar.position.copy(feltPoint((DICE_BAR.u0 + DICE_BAR.u1) / 2, DICE_BAR.v, 0.002))
     this.marker = voxelPart([
       { size: [0.05, 0.12, 0.05], at: [0, 0.06, 0], color: PALETTE.gold },
       { size: [0.12, 0.05, 0.12], at: [0, 0.14, 0], color: PALETTE.gold },
@@ -219,7 +219,7 @@ export class Dice {
   }
 
   private async slideMarker(roll: number): Promise<void> {
-    const at = (fraction: number) => feltPoint(BAR.u0 + (BAR.u1 - BAR.u0) * fraction, BAR.v + 0.02, 0)
+    const at = (fraction: number) => feltPoint(DICE_BAR.u0 + (DICE_BAR.u1 - DICE_BAR.u0) * fraction, DICE_BAR.v + 0.02, 0)
     this.marker.visible = true
     this.marker.position.copy(at(0))
     const to = at(roll / (ROLL_SCALE * ROLL_SCALE))
@@ -239,12 +239,28 @@ function buildCup(): THREE.Mesh {
 /** Felt print: the dice game's rule line. */
 export function paintDiceFelt(ctx: CanvasRenderingContext2D, w: number, h: number): void {
   ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
   ctx.font = 'bold 30px "JetBrains Mono", ui-monospace, monospace'
   ctx.fillStyle = PALETTE.gold
-  ctx.fillText('DICE · ROLL 00.00 - 99.99', w / 2, h * 0.33)
+  ctx.fillText('DICE · ROLL 00.00 - 99.99', w / 2, h * 0.12)
   ctx.font = '22px "JetBrains Mono", ui-monospace, monospace'
   ctx.fillStyle = 'rgba(243,234,210,0.7)'
-  ctx.fillText('PAYS FAIR ODDS · VRF DRAWN', w / 2, h * 0.38)
+  ctx.fillText('PAYS FAIR ODDS · PROVABLY FAIR · CLICK THE BAR TO SET YOUR TARGET', w / 2, h * 0.16)
+  // The stake circle and the two side buttons the player clicks (felt.ts has the same spots).
+  ctx.strokeStyle = 'rgba(243,234,210,0.55)'
+  ctx.lineWidth = 3
+  ctx.beginPath()
+  ctx.arc(DICE_BET_SPOT.u * w, DICE_BET_SPOT.v * h, 46, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.fillText('BET', DICE_BET_SPOT.u * w, DICE_BET_SPOT.v * h + 8)
+  ctx.font = 'bold 26px "JetBrains Mono", ui-monospace, monospace'
+  for (const [label, spot] of [['◀ UNDER', DICE_SIDES.under], ['OVER ▶', DICE_SIDES.over]] as const) {
+    const bw = DICE_SIDES.halfW * 2 * w
+    const bh = DICE_SIDES.halfH * 2 * h
+    ctx.strokeRect(spot.u * w - bw / 2, spot.v * h - bh / 2, bw, bh)
+    ctx.fillStyle = PALETTE.cream
+    ctx.fillText(label, spot.u * w, spot.v * h + 9)
+  }
 }
 
 /** Scale 0-100 with the bet's winning zone in green and the rest in red. */

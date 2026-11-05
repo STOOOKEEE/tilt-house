@@ -399,3 +399,197 @@ input.number {
 .dashboard .game-form input[inputmode='decimal'] {
   width: 8rem;
 }
+
+/* ---- table seat: full-screen 3D with overlays ---------------------------------------------- */
+
+.seat-view {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  background: #0a0708;
+}
+
+.seat-stage {
+  position: absolute;
+  inset: 0;
+}
+
+.seat-stage canvas {
+  touch-action: none;
+}
+
+.hud,
+.seat-drawer,
+.center-card,
+.seat-toast {
+  position: absolute;
+  background: rgba(12, 11, 13, 0.78);
+  border: 1px solid rgba(240, 194, 106, 0.25);
+  backdrop-filter: blur(4px);
+}
+
+.hud {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.82rem;
+}
+
+.hud-tl {
+  top: 0.75rem;
+  left: 0.75rem;
+}
+
+.hud-tr {
+  top: 0.75rem;
+  right: 0.75rem;
+  align-items: flex-end;
+  /* Above the drawer: its toggle closes it. */
+  z-index: 4;
+}
+
+.seat-drawer {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(380px, 92vw);
+  padding: 6.5rem 1rem 1rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  z-index: 3;
+}
+
+.center-card {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(460px, 90vw);
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  z-index: 2;
+}
+
+.center-card h2 {
+  margin: 0;
+}
+
+.center-card .seed code {
+  word-break: break-all;
+  font-size: 0.75rem;
+}
+
+.seat-toast {
+  top: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 0.4rem 0.9rem;
+  max-width: 60vw;
+}
+
+.bet-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 1rem 1rem;
+  pointer-events: none;
+}
+
+.bet-bar > * {
+  pointer-events: auto;
+}
+
+.bet-hint {
+  margin: 0;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.8rem;
+  background: rgba(12, 11, 13, 0.6);
+  display: flex;
+  gap: 1rem;
+}
+
+.bet-row {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.chips {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.chip {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  border: 4px dashed rgba(255, 255, 255, 0.75);
+  color: #141014;
+  font-weight: 700;
+  padding: 0;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.5);
+  transition: transform 0.12s;
+}
+
+.chip.selected {
+  transform: translateY(-0.45rem);
+  outline: 3px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.tilt-button {
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: 0.25em;
+  padding: 0.7rem 2.6rem;
+  border-radius: 0.4rem;
+  box-shadow:
+    0 0 24px rgba(236, 111, 174, 0.55),
+    0 4px 0 #8a2f63;
+}
+
+.tilt-button:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 #8a2f63;
+}
+
+.on-felt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  font-size: 0.8rem;
+  min-width: 6rem;
+  background: rgba(12, 11, 13, 0.6);
+  padding: 0.3rem 0.6rem;
+}
+
+.bj-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.bj-actions button {
+  font-size: 1.15rem;
+  font-weight: 700;
+  padding: 0.6rem 1.4rem;
+  background: var(--gold);
+}
+
+.bj-actions kbd {
+  font-size: 0.7rem;
+  opacity: 0.6;
+  margin-left: 0.3rem;
+}

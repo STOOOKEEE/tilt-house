@@ -20,7 +20,6 @@ function round(overrides: Partial<RoundView>): RoundView {
     pocket: null,
     bj: null,
     payout: null,
-    proofs: [],
     error: null,
     ...overrides,
   }

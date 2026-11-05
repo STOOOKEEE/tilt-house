@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import { cardLabel, handTotal } from '../../house'
 import { disposeObject } from '../renderer'
 import { pixelTexture } from '../voxel'
+import { BLACKJACK_BET_SPOT } from './felt'
 import { type Animator, arcTo, feltPoint, PALETTE, textSprite, type TextSprite } from './props'
 
 const CARD_W = 0.34
@@ -14,7 +15,7 @@ const CARD_GAP = 0.27
 const PLAYER_ROW = { u: 0.45, v: 0.64 }
 const DEALER_ROW = { u: 0.45, v: 0.24 }
 /** Felt point of the betting circle (chips). */
-export const BLACKJACK_BET = { u: 0.5, v: 0.84 }
+export const BLACKJACK_BET = BLACKJACK_BET_SPOT
 const SUITS = ['♠', '♥', '♦', '♣'] as const
 const RED_SUITS: Record<string, true> = { '♥': true, '♦': true }
 
@@ -217,7 +218,7 @@ export function paintBlackjackFelt(ctx: CanvasRenderingContext2D, w: number, h: 
   ctx.fillText('BLACKJACK PAYS 3 TO 2', w / 2, h * 0.42)
   ctx.font = '22px "JetBrains Mono", ui-monospace, monospace'
   ctx.fillStyle = 'rgba(243,234,210,0.7)'
-  ctx.fillText('DEALER STANDS ON ALL 17s · INFINITE SHOE · VRF DRAWN', w / 2, h * 0.47)
+  ctx.fillText('DEALER STANDS ON ALL 17s · INFINITE SHOE · PROVABLY FAIR', w / 2, h * 0.47)
   ctx.beginPath()
   ctx.arc(BLACKJACK_BET.u * w, BLACKJACK_BET.v * h, 46, 0, Math.PI * 2)
   ctx.stroke()

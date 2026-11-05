@@ -2,8 +2,8 @@
 // drops into the drawn pocket, and the betting layout printed on the felt.
 import * as THREE from 'three'
 import { pocketColor } from '../../house'
-import type { RouletteBet } from '../../near/views'
 import { pixelTexture, voxelPart } from '../voxel'
+import { betCell, numberCell, OUTSIDE, type Cell } from './felt'
 import { type Animator, easeOut, feltPoint, PALETTE, textSprite, type TextSprite } from './props'
 
 /** Pockets in European wheel order, going around the rotor. */
@@ -224,21 +224,8 @@ export class Roulette {
   }
 }
 
-// ---- betting layout (felt coordinates) ----------------------------------------------------
+// ---- betting layout (felt coordinates, see felt.ts) -------------------------------------
 
-interface Cell {
-  u: number
-  v: number
-  w: number
-  h: number
-}
-
-const LAYOUT = { u0: 0.45, u1: 0.97, v0: 0.2, v1: 0.8 }
-const COLS = 14
-const ROWS = 5
-const CW = (LAYOUT.u1 - LAYOUT.u0) / COLS
-const RH = (LAYOUT.v1 - LAYOUT.v0) / ROWS
-const OUTSIDE = ['low', 'even', 'red', 'black', 'odd', 'high'] as const
 const OUTSIDE_LABEL: Record<(typeof OUTSIDE)[number], string> = {
   low: '1-18',
   even: 'EVEN',
@@ -246,24 +233,6 @@ const OUTSIDE_LABEL: Record<(typeof OUTSIDE)[number], string> = {
   black: 'BLACK',
   odd: 'ODD',
   high: '19-36',
-}
-
-/** 1..36 in 12 columns of 3 (3, 6, 9… on the top row), 0 down the left side. */
-export function numberCell(n: number): Cell {
-  if (n === 0) return { u: LAYOUT.u0, v: LAYOUT.v0, w: CW, h: RH * 3 }
-  const col = Math.floor((n - 1) / 3)
-  const row = 2 - ((n - 1) % 3)
-  return { u: LAYOUT.u0 + CW * (1 + col), v: LAYOUT.v0 + RH * row, w: CW, h: RH }
-}
-
-/** Where chips go for a bet. */
-export function betCell(bet: RouletteBet): Cell {
-  if (typeof bet === 'string') {
-    return { u: LAYOUT.u0 + CW * (1 + 2 * OUTSIDE.indexOf(bet)), v: LAYOUT.v0 + RH * 4, w: CW * 2, h: RH }
-  }
-  if ('straight' in bet) return numberCell(bet.straight)
-  if ('dozen' in bet) return { u: LAYOUT.u0 + CW * (1 + 4 * (bet.dozen - 1)), v: LAYOUT.v0 + RH * 3, w: CW * 4, h: RH }
-  return { u: LAYOUT.u0 + CW * 13, v: LAYOUT.v0 + RH * (3 - bet.column), w: CW, h: RH }
 }
 
 export function paintRouletteFelt(ctx: CanvasRenderingContext2D, w: number, h: number): void {

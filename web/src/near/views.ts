@@ -109,14 +109,6 @@ export type RouletteBet =
 /** `core_rules::Bet` serde form. */
 export type Bet = { dice: { chance_bp: number; over: boolean } } | { roulette: RouletteBet } | 'blackjack'
 
-/** One VRF draw of a round, enough to re-verify it: Ed25519(signature, alpha) under the VRF key. */
-export interface VrfProof {
-  step: number
-  alpha: string
-  signature_hex: string
-  output_hex: string
-}
-
 export interface BlackjackHand {
   player: number[]
   dealer: number[]
@@ -146,7 +138,6 @@ export interface RoundView {
   bj: BlackjackHand | null
   /** After rake; null until settled, "0" on a loss. */
   payout: string | null
-  proofs: VrfProof[]
   /** Why the last step failed, when status = failed. */
   error: string | null
 }
