@@ -25,7 +25,7 @@ const KEY_FILE = join(homedir(), ".tilt-house", "demo-key.json");
 
 const TUSDC = 1_000_000n;
 const DEPOSIT = 20n * TUSDC;
-const STAKE = 1n * TUSDC;
+const STAKE = TUSDC / 10n;
 const INVEST = 5n * TUSDC;
 const CHANCE_BP = 4900;
 const OVER = false;
@@ -36,6 +36,8 @@ const CALL_GAS = teraToGas(100);
 /** The house asks for ≥ 150 TGas on bets (OutLayer request + callback). */
 const BET_GAS = teraToGas(200);
 const POLL_MS = 2_000;
+const BET_POLL_MS = 400;
+const BET_VISIBLE_TIMEOUT_MS = 30_000;
 const SETTLE_TIMEOUT_MS = 60_000;
 const ACCOUNT_READY_TIMEOUT_MS = 30_000;
 
@@ -334,15 +336,16 @@ async function run(options: Options): Promise<void> {
     see(`game key ${gameKey.getPublicKey().toString()} added, relayer tx ${txLink(addKey)}`);
     const gamePlayer = new Account(accountId, provider, new KeyPairSigner(gameKey));
     const betAction = actions.functionCall("bet_dice", betArgs, BET_GAS, 0n);
+    const before = lastRound(await view(options.house, "get_player", { account_id: accountId }));
     const bet = await relayActions(options.relayer, gamePlayer, options.house, [betAction]);
     txs.push({ label: "dice bet (relayed)", hash: bet });
     see(`bet signed by the game key, relayer tx ${txLink(bet)}`);
     const betTx = await provider.viewTransactionStatus({ txHash: bet, accountId, waitUntil: "NONE" });
     vrfSigner = betTx.transaction.signer_id;
     see(`outer transaction signed (and gas paid) by ${vrfSigner}`);
-    // The relayer returns no call result: the new round is the player's latest one.
-    const after = await view(options.house, "get_player", { account_id: accountId });
-    roundId = isRecord(after) ? after.last_round : undefined;
+    // The relayer answers a game move once it is in a block, before the bet runs: the new round
+    // is the player's latest one as soon as it shows up.
+    roundId = await waitForNewRound(view, options.house, accountId, before);
   } else {
     const bet = await call("dice bet", options.house, "bet_dice", betArgs, 0n, BET_GAS);
     roundId = bet.result;
@@ -369,6 +372,20 @@ async function run(options: Options): Promise<void> {
 }
 
 type View = (contractId: string, method: string, args?: Record<string, unknown>) => Promise<unknown>;
+
+function lastRound(player: unknown): number | null {
+  return isRecord(player) && typeof player.last_round === "number" ? player.last_round : null;
+}
+
+async function waitForNewRound(view: View, house: string, accountId: string, before: number | null): Promise<number> {
+  const deadline = Date.now() + BET_VISIBLE_TIMEOUT_MS;
+  for (;;) {
+    const latest = lastRound(await view(house, "get_player", { account_id: accountId }));
+    if (latest !== null && latest !== before) return latest;
+    if (Date.now() > deadline) throw new Error(`bet_dice made no new round after ${BET_VISIBLE_TIMEOUT_MS / 1000} s`);
+    await sleep(BET_POLL_MS);
+  }
+}
 
 async function waitForRound(view: View, house: string, roundId: number): Promise<Round> {
   const deadline = Date.now() + SETTLE_TIMEOUT_MS;
