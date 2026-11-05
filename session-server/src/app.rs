@@ -26,6 +26,8 @@ pub const IDLE_CLOSE_SECS: u64 = SESSION_TIMEOUT_SECS / 2;
 /// sent just before expiry.
 const EXPIRY_GRACE_SECS: u64 = 60;
 const MAX_ID_LEN: usize = 64;
+/// Share of the pool's free money a ticket is sized on (see `create`).
+const POOL_FREE_HEADROOM_PCT: u128 = 80;
 
 type Shared = Arc<AsyncMutex<Session>>;
 
@@ -214,9 +216,17 @@ impl<C: Chain> App<C> {
             .unwrap_or_default()
     }
 
-    /// Persists then applies: nothing is visible that is not on disk.
+    /// Persists then applies: nothing is visible that is not written. Rounds and hands are synced
+    /// by the next session event's fsync; use `record_durable` when the player sees them.
     fn record(&self, session: &mut Session, event: Event) -> anyhow::Result<()> {
         self.store.append(&event)?;
+        session.apply(&event, &self.signer)
+    }
+
+    /// Persists, waits until on disk, then applies (which signs the new state).
+    async fn record_durable(&self, session: &mut Session, event: Event) -> anyhow::Result<()> {
+        let seq = self.store.append(&event)?;
+        self.store.durable(seq).await?;
         session.apply(&event, &self.signer)
     }
 
@@ -239,7 +249,11 @@ impl<C: Chain> App<C> {
         if !(min_rake..=max_rake).contains(&dealer.rake_bp) {
             return Err(ApiError::chain(anyhow!("dealer rake out of bounds")));
         }
-        let max_win = session_max_win(request.lock, dealer.pool_free);
+        // Sessions opened at the same table between this read and the player's open_session
+        // reserve part of the pool; size the ticket on what remains after a few of them, or the
+        // contract refuses it.
+        let pool_free = dealer.pool_free * POOL_FREE_HEADROOM_PCT / 100;
+        let max_win = session_max_win(request.lock, pool_free);
         if !dealer.open || dealer.max_bet < SESSION_MIN_BET || max_win == 0 {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
@@ -298,7 +312,8 @@ impl<C: Chain> App<C> {
             self.confirm_open(&mut session).await?;
         }
         let event = session.play(&request, now())?;
-        self.record(&mut session, event)
+        self.record_durable(&mut session, event)
+            .await
             .map_err(ApiError::internal)?;
         let reply = RoundReply {
             done: session.hand.is_none(),
@@ -466,11 +481,9 @@ impl<C: Chain> App<C> {
         }
     }
 
-    /// Periodic work (every second): log sync, due settles, closes (retried, or of idle sessions), expired tickets.
+    /// Periodic work (every second): due settles, closes (retried, or of idle sessions), expired
+    /// tickets.
     pub async fn tick(self: &Arc<Self>) {
-        if let Err(err) = self.store.sync() {
-            eprintln!("sync session log: {err:#}");
-        }
         let at = now();
         for shared in self.all() {
             let Ok(mut session) = shared.try_lock() else {

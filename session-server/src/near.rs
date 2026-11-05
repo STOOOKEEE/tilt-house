@@ -24,8 +24,10 @@ use tokio::sync::Mutex;
 
 use crate::chain::{Chain, CloseArgs, DealerInfo, FloorInfo, FloorTable};
 
-/// Settling 50 rounds hashes and stores them all: give it the per-tx maximum.
-const CALL_TGAS: u64 = 300;
+/// Settling 50 rounds hashes and stores them all: give it the per-tx maximum. The rest needs far
+/// less, and the signer must hold the full prepaid cost (an NPC gambler's wallet is 0.3 NEAR).
+const SETTLE_TGAS: u64 = 300;
+const CALL_TGAS: u64 = 100;
 
 pub struct NearChain {
     client: JsonRpcClient,
@@ -149,7 +151,11 @@ impl NearChain {
             actions: vec![Action::FunctionCall(Box::new(FunctionCallAction {
                 method_name: method.to_string(),
                 args,
-                gas: Gas::from_teragas(CALL_TGAS),
+                gas: Gas::from_teragas(if method == "settle_session" {
+                    SETTLE_TGAS
+                } else {
+                    CALL_TGAS
+                }),
                 deposit: Balance::ZERO,
             }))],
         });

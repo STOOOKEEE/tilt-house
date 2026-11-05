@@ -1,16 +1,19 @@
-//! Append-only JSONL log of session events in `SESSION_DATA_DIR/sessions.jsonl`. Every event is
-//! written before the player sees its effect, so a process crash loses nothing. Session events
-//! (seed, open, settle, close) are also synced to disk at once: a lost server seed would make the
-//! player win by forced exit. Rounds are synced by `sync` every second instead, since one fsync per
-//! round would blow the latency budget; an OS crash may lose up to a second of rounds, which the
-//! player still holds as signed states (the forced exit pays those, bounded by `lock + max_win`).
+//! Append-only JSONL log of session events in `SESSION_DATA_DIR/sessions.jsonl`. Nothing reaches
+//! the player before it is on disk: session events (seed, open, settle, close) are synced as they
+//! are written, and a round is synced (`durable`) before its state is signed. Otherwise an OS
+//! crash could lose a round the player holds signed, and the server would then settle and close
+//! at the older nonce, which makes that signed state useless on chain.
+//!
+//! Rounds use group commit: one fsync covers every round written while the previous one ran, so
+//! concurrent sessions share the cost.
 //!
 //! The file holds server seeds and bearer tokens: keep the directory private.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, bail, Context};
 use core_rules::session::{hex32, BjSession, CompactRound, Hash32, SessionTicket};
@@ -68,6 +71,13 @@ impl Event {
 
 pub struct Store {
     file: Mutex<File>,
+    /// Same file, for fsyncs run off the async threads.
+    sync_handle: Arc<File>,
+    /// Events written so far / known to be on disk (sequence numbers, 1-based).
+    written: AtomicU64,
+    synced: AtomicU64,
+    /// One fsync at a time; waiters queue here and usually find their event already covered.
+    sync_lock: tokio::sync::Mutex<()>,
 }
 
 impl Store {
@@ -86,17 +96,24 @@ impl Store {
         if good_len < text.len() {
             // Drop the torn tail so the next append does not land after it.
             file.set_len(good_len as u64)?;
-            file.sync_data()?;
         }
+        // Whatever an earlier run left in the page cache is on disk before anything is served.
+        file.sync_data()?;
         Ok((
             Self {
+                sync_handle: Arc::new(file.try_clone()?),
                 file: Mutex::new(file),
+                written: AtomicU64::new(0),
+                synced: AtomicU64::new(0),
+                sync_lock: tokio::sync::Mutex::new(()),
             },
             events,
         ))
     }
 
-    pub fn append(&self, event: &Event) -> anyhow::Result<()> {
+    /// Writes an event; returns its sequence number for `durable`. Events other than rounds and
+    /// hands are synced here already.
+    pub fn append(&self, event: &Event) -> anyhow::Result<u64> {
         let mut line = serde_json::to_vec(event)?;
         line.push(b'\n');
         let mut file = self
@@ -104,18 +121,28 @@ impl Store {
             .lock()
             .map_err(|_| anyhow!("session log lock poisoned"))?;
         file.write_all(&line)?;
+        let seq = self.written.fetch_add(1, Ordering::SeqCst) + 1;
         if !matches!(event, Event::Round { .. } | Event::Hand { .. }) {
             file.sync_data()?;
+            self.synced.fetch_max(seq, Ordering::SeqCst);
         }
-        Ok(())
+        Ok(seq)
     }
 
-    /// Flushes rounds written since the last sync to disk.
-    pub fn sync(&self) -> anyhow::Result<()> {
-        self.file
-            .lock()
-            .map_err(|_| anyhow!("session log lock poisoned"))?
-            .sync_data()?;
+    /// Returns once event `seq` is on disk.
+    pub async fn durable(&self, seq: u64) -> anyhow::Result<()> {
+        if self.synced.load(Ordering::SeqCst) >= seq {
+            return Ok(());
+        }
+        let _turn = self.sync_lock.lock().await;
+        if self.synced.load(Ordering::SeqCst) >= seq {
+            return Ok(());
+        }
+        // Everything written before this point is covered by the fsync below.
+        let target = self.written.load(Ordering::SeqCst);
+        let file = Arc::clone(&self.sync_handle);
+        tokio::task::spawn_blocking(move || file.sync_data()).await??;
+        self.synced.fetch_max(target, Ordering::SeqCst);
         Ok(())
     }
 }

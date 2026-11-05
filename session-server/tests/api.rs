@@ -244,13 +244,22 @@ async fn rejects_bad_tokens_bad_input_and_floods() {
     let huge = json!({ "pad": "x".repeat(10_000) });
     let (status, _) = call(&router, "POST", "/sessions", None, Some(huge)).await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
-    // 20 rounds per second per session.
-    let mut statuses = Vec::new();
-    for nonce in 1..=21 {
-        statuses.push(round(&router, &s, dice_round(nonce, USDC)).await.0);
+    // 20 rounds per second per session: 21 sent at once (a round waits for its fsync, so sent one
+    // by one they may span more than a second), exactly one is refused by the limiter.
+    let s = Arc::new(s);
+    let tasks: Vec<_> = (1..=21)
+        .map(|nonce| {
+            let (router, s) = (router.clone(), Arc::clone(&s));
+            tokio::spawn(async move { round(&router, &s, dice_round(nonce, USDC)).await.0 })
+        })
+        .collect();
+    let mut limited = 0;
+    for task in tasks {
+        if task.await.unwrap() == StatusCode::TOO_MANY_REQUESTS {
+            limited += 1;
+        }
     }
-    assert!(statuses[..20].iter().all(|&st| st == StatusCode::OK));
-    assert_eq!(statuses[20], StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(limited, 1);
 }
 
 /// Opens never land on this chain.
