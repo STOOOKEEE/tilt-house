@@ -92,6 +92,9 @@ export class Dice {
   private readonly marker: THREE.Mesh
   private readonly readout: TextSprite = textSprite(0.22, 7)
   private bet: DiceBet | null = null
+  /** The drawing loop: the cup shakes in the air until `throw` tips it. */
+  private shaking = false
+  private shakeStep = -1
 
   private readonly anim: Animator
 
@@ -127,14 +130,39 @@ export class Dice {
   async clear(): Promise<void> {
     this.readout.set('')
     this.marker.visible = false
+    // Already in the cup (cleared when the player clicked): the bet goes down at once.
+    if (this.dice.every((die) => !die.mesh.visible)) return
     const inCup = this.cup.position.clone().setY(this.cup.position.y + DIE / 2)
     await Promise.all(this.dice.map((die) => arcTo(this.anim, die.mesh, inCup, 0.3, 0.15)))
     for (const die of this.dice) die.mesh.visible = false
   }
 
-  /** Shakes the cup, tips it, the dice tumble out and land showing the roll, the marker slides to it. */
+  startShaking(): void {
+    this.shaking = true
+  }
+
+  stopShaking(): void {
+    this.shaking = false
+    this.cup.position.copy(feltPoint(CUP_AT.u, CUP_AT.v))
+    this.cup.rotation.z = 0
+  }
+
+  /** Every frame: the drawing loop's stepped jitter, held a little above the felt. */
+  update(elapsed: number): void {
+    if (!this.shaking) return
+    const step = Math.floor(elapsed / SHAKE_STEP)
+    if (step === this.shakeStep) return
+    this.shakeStep = step
+    this.jitter(feltPoint(CUP_AT.u, CUP_AT.v), 0.18 + Math.random() * 0.06)
+  }
+
+  /**
+   * Shakes the cup, tips it, the dice tumble out and land showing the roll, the marker slides to it.
+   * After the drawing loop the cup is shaken already, so it tips at once.
+   */
   async throw(roll: number): Promise<void> {
-    await this.shake()
+    if (this.shaking) this.stopShaking()
+    else await this.shake()
     const label = rollLabel(roll)
     const [whole, cents] = label.split('.')
     await this.anim.tween(0.18, (t) => (this.cup.rotation.x = t * 1.1))
@@ -156,14 +184,18 @@ export class Dice {
       (t) => {
         if (t < next && t < 1) return
         next = t + SHAKE_STEP / 0.7
-        const lift = Math.sin(t * Math.PI) * 0.25
-        this.cup.position.set(base.x + (Math.random() - 0.5) * 0.08, base.y + lift, base.z + (Math.random() - 0.5) * 0.06)
-        this.cup.rotation.z = (Math.random() - 0.5) * 0.4
+        this.jitter(base, Math.sin(t * Math.PI) * 0.25)
       },
       (t) => t,
     )
     this.cup.position.copy(base)
     this.cup.rotation.z = 0
+  }
+
+  /** One random pose of the shaking cup, `lift` above `base`. */
+  private jitter(base: THREE.Vector3, lift: number): void {
+    this.cup.position.set(base.x + (Math.random() - 0.5) * 0.08, base.y + lift, base.z + (Math.random() - 0.5) * 0.06)
+    this.cup.rotation.z = (Math.random() - 0.5) * 0.4
   }
 
   private async tumble(die: Die, i: number): Promise<void> {

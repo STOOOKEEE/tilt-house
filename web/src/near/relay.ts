@@ -15,7 +15,7 @@ export interface RelayResult {
   txHash: string
 }
 
-/** Posts a SignedDelegate to `${relayerUrl}/relay`. Refusals and on-chain failures throw. */
+/** Posts a SignedDelegate to `${relayerUrl}/relay`. Refusals and reported on-chain failures throw. */
 export async function relay(relayerUrl: string, signedDelegate: SignedDelegate): Promise<RelayResult> {
   const body = await postJson(`${relayerUrl}/relay`, { signedDelegate: signedDelegateToBase64(signedDelegate) })
   if (!isRecord(body) || typeof body.txHash !== 'string') {
@@ -25,7 +25,10 @@ export async function relay(relayerUrl: string, signedDelegate: SignedDelegate):
     const reason = typeof body.failure === 'string' ? body.failure : 'unknown'
     throw new RelayError(`transaction ${body.txHash} failed: ${reason}`, 'tx_failure')
   }
-  if (body.status !== 'success') throw new RelayError('relayer sent an unknown status', 'bad_reply')
+  // `pending`: a game move in a block, still running; its result shows up in the round.
+  if (body.status !== 'success' && body.status !== 'pending') {
+    throw new RelayError('relayer sent an unknown status', 'bad_reply')
+  }
   return { txHash: body.txHash }
 }
 

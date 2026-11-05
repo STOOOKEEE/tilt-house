@@ -22,6 +22,11 @@ const ROTOR_Y = 0.105
 const TRACK_Y = 0.15
 const IDLE_SPEED = 0.35
 const SPIN_SECONDS = 3.8
+/** While the draw runs: the rotor turns faster and the ball orbits the track (rad/s). */
+const RUN_ROTOR_SPEED = 1.4
+const RUN_BALL_SPEED = 9
+/** From the running loop the ball only has to slow down and drop: a short landing. */
+const LAND_SECONDS = 2
 
 const COLOR = { red: '#b3202f', black: '#17161a', green: '#178a4a' } as const
 
@@ -123,6 +128,9 @@ export class Roulette {
   private readonly readout: TextSprite = textSprite(0.2, 8)
   private readonly dolly: THREE.Mesh
   private spinning = false
+  /** The drawing loop is on; `ballAngle` is where the ball runs on the track. */
+  private running = false
+  private ballAngle = 0
 
   private readonly anim: Animator
 
@@ -147,28 +155,54 @@ export class Roulette {
   }
 
   update(dt: number): void {
-    if (!this.spinning) this.rotor.rotation.y += dt * IDLE_SPEED
+    if (this.spinning) return
+    this.rotor.rotation.y += dt * (this.running ? RUN_ROTOR_SPEED : IDLE_SPEED)
+    if (!this.running) return
+    this.ballAngle -= dt * RUN_BALL_SPEED
+    this.ball.position.set(Math.cos(this.ballAngle) * TRACK_R, TRACK_Y, -Math.sin(this.ballAngle) * TRACK_R)
   }
 
-  clear(): void {
-    this.ball.visible = false
+  /** The drawing loop: the ball leaves its pocket and runs the track until `spin` lands it. */
+  startRunning(): void {
+    this.running = true
+    this.ballAngle = this.rotor.rotation.y + Math.PI
+    this.group.add(this.ball)
+    this.ball.visible = true
     this.dolly.visible = false
     this.readout.set('')
   }
 
-  /** Spins the rotor one way and the ball the other, landing the ball in `pocket`. */
+  stopRunning(): void {
+    this.running = false
+    this.ball.visible = false
+  }
+
+  clear(): void {
+    // A ball already running for the next draw stays on the track.
+    if (!this.running) this.ball.visible = false
+    this.dolly.visible = false
+    this.readout.set('')
+  }
+
+  /**
+   * Spins the rotor one way and the ball the other, landing the ball in `pocket`. After the
+   * drawing loop the ball is running already: it only slows down and drops.
+   */
   async spin(pocket: number): Promise<void> {
+    const landing = this.running
+    this.running = false
     this.spinning = true
     this.group.add(this.ball)
     this.ball.visible = true
     const from = this.rotor.rotation.y
-    const to = from + Math.PI * 2.5
-    const ballFrom = from + Math.PI
+    const to = from + Math.PI * (landing ? 0.5 : 2.5)
+    const ballFrom = landing ? this.ballAngle : from + Math.PI
     const ballTo = to + pocketAngle(pocket)
-    // The ball runs the other way: several laps back, ending exactly on the pocket.
-    const travel = (((ballFrom - ballTo) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) + Math.PI * 8
+    // The ball runs the other way: laps back, ending exactly on the pocket.
+    const laps = Math.PI * (landing ? 2 : 8)
+    const travel = (((ballFrom - ballTo) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) + laps
     await this.anim.tween(
-      SPIN_SECONDS,
+      landing ? LAND_SECONDS : SPIN_SECONDS,
       (t) => {
         this.rotor.rotation.y = from + (to - from) * easeOut(t)
         const angle = ballFrom - travel * easeOut(t)

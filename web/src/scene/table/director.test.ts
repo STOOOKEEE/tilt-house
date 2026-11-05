@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { BlackjackHand, RoundView } from '../../near/views'
-import { continues, outcomeOf, planRound, type Step } from './director'
+import { continues, endsDrawing, outcomeOf, planRound, type Step } from './director'
 
 function round(overrides: Partial<RoundView>): RoundView {
   return {
@@ -124,6 +124,34 @@ describe('planRound: dice and roulette', () => {
   it('starts over for another round id', () => {
     const rolled = round({ ...dice, status: 'settled', roll: 10, payout: '0' })
     expect(kinds(planRound(rolled, round({ ...dice, id: 8 })))).toEqual(['clear', 'bet', 'think'])
+  })
+})
+
+describe('planRound: after the player clicked (drawing)', () => {
+  const dice = round({ dealer_id: 'ada', game: 'dice', bet: { dice: { chance_bp: 5000, over: true } } })
+  const rolled = round({ ...dice, status: 'settled', roll: 4217, payout: '0' })
+
+  it('places the bet without thinking: the drawing loop runs already', () => {
+    expect(kinds(planRound(null, dice, true))).toEqual(['clear', 'bet'])
+  })
+
+  it('plays only the result once the draw lands', () => {
+    expect(kinds(planRound(dice, rolled, true))).toEqual(['throw', 'settle'])
+    expect(kinds(planRound(null, rolled, true))).toEqual(['clear', 'bet', 'throw', 'settle'])
+  })
+
+  it('a blackjack hit only deals its card', () => {
+    const dealt = round({ status: 'player_turn', step: 1, bj: bj([10, 6], [9]) })
+    const asked = round({ ...dealt, status: 'waiting_vrf' })
+    expect(planRound(dealt, asked, true)).toEqual([])
+    expect(kinds(planRound(asked, round({ ...dealt, bj: bj([10, 6, 3], [9]) }), true))).toEqual(['deal'])
+  })
+
+  it('the first step showing the answer ends the loop', () => {
+    const steps = planRound(null, rolled)
+    expect(steps.map(endsDrawing)).toEqual([false, false, true, true])
+    expect(endsDrawing({ kind: 'think' })).toBe(false)
+    expect(endsDrawing({ kind: 'void', refunded: false })).toBe(true)
   })
 })
 

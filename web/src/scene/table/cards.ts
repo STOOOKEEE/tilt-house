@@ -96,6 +96,8 @@ export class Cards {
   private playerRanks: number[] = []
   private dealerRanks: number[] = []
   private roundId = 0
+  /** The drawing loop: a face-down card in the dealer's hand, waiting for the draw. */
+  private held: THREE.Mesh | null = null
   private readonly playerTotal: TextSprite = textSprite(0.16, 5)
   private readonly dealerTotal: TextSprite = textSprite(0.16, 5)
 
@@ -136,6 +138,29 @@ export class Cards {
       }),
     ])
     if (rank !== null) this.addRank(side, rank)
+  }
+
+  hold(): void {
+    if (this.held) return
+    this.held = cardMesh(null)
+    this.held.rotation.z = Math.PI
+    this.group.add(this.held)
+  }
+
+  /** The held card goes; the dealt one starts from the same hand, so it reads as that card. */
+  release(): void {
+    if (!this.held) return
+    this.held.removeFromParent()
+    disposeObject(this.held)
+    this.held = null
+  }
+
+  /** Every frame: the held card follows the hand and taps, like a dealer about to deal. */
+  update(hand: THREE.Vector3, elapsed: number): void {
+    if (!this.held) return
+    this.held.position.copy(hand)
+    this.held.position.y += Math.abs(Math.sin(elapsed * 6)) * 0.03
+    this.held.rotation.y = Math.sin(elapsed * 3) * 0.25
   }
 
   /** Turns the face-down dealer card, now drawn as `rank`. */

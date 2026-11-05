@@ -56,6 +56,12 @@ export interface TableSceneApi {
    *  director queues animations so draws are shown in order, then leaves the final state on the
    *  table. Rounds of other players are played the same way (spectator view). */
   showRound(previous: RoundView | null, next: RoundView): void
+  /** The player just moved: before any network reply, clear a finished round and loop the game's
+   *  draw gesture (cup shaking, ball running, card in hand) under "drawing on NEAR…". The first
+   *  step of a round that shows the draw's answer ends it and plays only the result, fast. */
+  startDrawing(game: Game): void
+  /** Ends the drawing loop with no result (the move failed or never showed up). */
+  stopDrawing(): void
   setMood(mood: Mood): void
   say(text: string | null): void
   /** Table closed (bust): curtain down, dealer slumps. */

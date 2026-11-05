@@ -4,6 +4,8 @@ import { useNear } from './useNear'
 
 /** The table page follows the round closely; other pages only need to stay roughly fresh. */
 export const TABLE_POLL_MS = 2_000
+/** While the player's own move is being drawn: the result shows within a poll of landing. */
+export const PENDING_POLL_MS = 400
 export const PAGE_POLL_MS = 5_000
 
 export interface Polled<T> {

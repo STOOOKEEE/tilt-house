@@ -28,15 +28,24 @@ export type Step =
 const HOLE_INDEX = 1
 const FIRST_DEAL = 2
 
-/** The ordered steps from `previous` (what the table shows) to `next`. Empty when nothing changed. */
-export function planRound(previous: RoundView | null, next: RoundView): Step[] {
+/**
+ * The ordered steps from `previous` (what the table shows) to `next`. Empty when nothing changed.
+ * `drawing`: the table runs its drawing loop since the player's click, so the plan has no thinking
+ * loop of its own.
+ */
+export function planRound(previous: RoundView | null, next: RoundView, drawing = false): Step[] {
   const from = previous !== null && continues(previous, next) ? previous : null
   const steps: Step[] = from === null ? [{ kind: 'clear' }, { kind: 'bet', round: next }] : []
   if (next.game === 'blackjack') steps.push(...blackjackSteps(from, next))
   if (next.roll !== null && from?.roll == null) steps.push({ kind: 'throw', roll: next.roll })
   if (next.pocket !== null && from?.pocket == null) steps.push({ kind: 'spin', pocket: next.pocket })
   steps.push(...endSteps(from, next))
-  return steps
+  return drawing ? steps.filter((step) => step.kind !== 'think') : steps
+}
+
+/** Steps that show the draw's answer: the first one ends the drawing loop. */
+export function endsDrawing(step: Step): boolean {
+  return step.kind !== 'clear' && step.kind !== 'bet' && step.kind !== 'think'
 }
 
 /** True when `next` is a later state of the round on the table, so only the difference is played. */

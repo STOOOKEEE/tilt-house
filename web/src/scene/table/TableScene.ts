@@ -10,7 +10,7 @@ import { disposeObject, mountRenderer, type MountedRenderer } from '../renderer'
 import type { CharacterRig, Mood, TableSceneApi } from '../types'
 import { BLACKJACK_BET, Cards, paintBlackjackFelt } from './cards'
 import { Dice, paintDiceFelt } from './dice'
-import { planRound, type Step } from './director'
+import { endsDrawing, planRound, type Step } from './director'
 import {
   Animator,
   arcTo,
@@ -26,6 +26,7 @@ import {
   FELT_Y,
   hourglass,
   TABLE_D,
+  textSprite,
 } from './props'
 import { betCell, paintRouletteFelt, Roulette } from './roulette'
 
@@ -43,6 +44,9 @@ const DEALER_Z = -TABLE_D / 2 - 0.35
 const BACKLOG_SPEEDUP = 0.75
 const MAX_TIME_SCALE = 4
 const RESULT_HOLD_S = 1.4
+/** The answer after a drawing loop: the long throw already played while the VRF drew. */
+const FAST_RESULT_SPEED = 2.5
+const DRAWING_TEXT = 'drawing on NEAR…'
 const DICE_BET = { u: 0.5, v: 0.66 }
 
 type Props =
@@ -61,6 +65,11 @@ class TableScene implements TableSceneApi {
   private readonly table: FeltTable
   private readonly hourglass = hourglass()
   private readonly curtain = curtain()
+  private readonly drawingLabel = textSprite(0.14, DRAWING_TEXT.length + 1)
+  /** Between the player's click and the first step showing the draw's answer. */
+  private drawing = false
+  /** The steps right after a drawing loop run fast, up to the settle. */
+  private fastResult = false
   private props: Props | null = null
   /** The roulette bet of the round on the felt: where its chips go. */
   private rouletteBet: RouletteBet | null = null
@@ -90,7 +99,8 @@ class TableScene implements TableSceneApi {
     this.rig.object.position.set(0, 0, DEALER_Z)
     scene.add(this.rig.object)
     this.hourglass.position.copy(feltPoint(0.7, 0.22, 0.75))
-    scene.add(this.hourglass, this.curtain)
+    this.drawingLabel.sprite.position.copy(feltPoint(0.5, 0.3, 0.6))
+    scene.add(this.hourglass, this.curtain, this.drawingLabel.sprite)
     this.setGame(options.game)
     this.unsubscribe = this.mounted.onFrame((dt, elapsed) => this.frame(dt, elapsed))
   }
@@ -114,9 +124,34 @@ class TableScene implements TableSceneApi {
     // Diff against what the felt will actually show: `previous` only counts if it is the last snapshot
     // queued. Otherwise (another round queued in between) the round is replayed whole.
     const shown = previous !== null && previous.id === this.lastQueued?.id ? this.lastQueued : null
-    this.queue.push(...planRound(shown, next))
+    this.queue.push(...planRound(shown, next, this.drawing))
     this.lastQueued = next
     void this.drain()
+  }
+
+  startDrawing(game: Game): void {
+    if (this.disposed || this.drawing) return
+    this.setGame(game)
+    this.drawing = true
+    this.drawingLabel.set(DRAWING_TEXT)
+    this.hourglass.visible = false
+    const props = this.props
+    if (props?.game === 'dice') props.dice.startShaking()
+    if (props?.game === 'blackjack') props.cards.hold()
+    if (props?.game === 'roulette') {
+      props.wheel.startRunning()
+      void this.rig.gesture({ kind: 'spin' })
+    }
+    // A new round: the finished one leaves the felt now, not when the bet shows up.
+    const last = this.lastQueued
+    if (last === null || last.status === 'settled' || last.status === 'refunded' || last.status === 'failed') {
+      this.queue.push({ kind: 'clear' })
+      void this.drain()
+    }
+  }
+
+  stopDrawing(): void {
+    if (this.drawing) this.endDrawing(false)
   }
 
   setMood(mood: Mood): void {
@@ -153,7 +188,10 @@ class TableScene implements TableSceneApi {
   private frame(dt: number, elapsed: number): void {
     this.anim.update(dt)
     this.rig.update(dt)
-    if (this.props?.game === 'roulette') this.props.wheel.update(dt)
+    const props = this.props
+    if (props?.game === 'roulette') props.wheel.update(dt)
+    if (props?.game === 'dice') props.dice.update(elapsed)
+    if (props?.game === 'blackjack' && this.drawing) props.cards.update(this.rig.handPosition(), elapsed)
     if (this.hourglass.visible) {
       // Quarter turns, ticking like a clock: reads as "waiting" more than a smooth spin.
       this.hourglass.rotation.y = Math.floor(elapsed * 3) * (Math.PI / 4)
@@ -169,8 +207,13 @@ class TableScene implements TableSceneApi {
     this.running = true
     while (this.queue.length > 0 && !this.disposed) {
       const step = this.queue.shift() as Step
+      if (this.drawing && endsDrawing(step)) {
+        this.endDrawing(step.kind === 'throw' || step.kind === 'spin')
+        this.fastResult = true
+      }
+      if (step.kind === 'settle' || step.kind === 'void') this.fastResult = false
       const backlog = this.queue.filter((s) => s.kind === 'clear').length
-      this.anim.timeScale = Math.min(MAX_TIME_SCALE, 1 + backlog * BACKLOG_SPEEDUP)
+      this.anim.timeScale = this.fastResult ? FAST_RESULT_SPEED : Math.min(MAX_TIME_SCALE, 1 + backlog * BACKLOG_SPEEDUP)
       if (step.kind !== 'think' && this.hourglass.visible) {
         // The draw came back: the thinking loop ends and the dealer's reason returns.
         this.hourglass.visible = false
@@ -183,7 +226,19 @@ class TableScene implements TableSceneApi {
         console.error('table step failed', step.kind, error)
       }
     }
+    this.fastResult = false
     this.running = false
+  }
+
+  /** `handOver`: the next step (throw, spin) lands the running cup or ball itself. */
+  private endDrawing(handOver: boolean): void {
+    this.drawing = false
+    this.drawingLabel.set('')
+    const props = this.props
+    if (props?.game === 'blackjack') props.cards.release()
+    if (handOver) return
+    if (props?.game === 'dice') props.dice.stopShaking()
+    if (props?.game === 'roulette') props.wheel.stopRunning()
   }
 
   private async play(step: Step): Promise<void> {
