@@ -125,7 +125,8 @@ async fn an_evening_hour_of_gamblers() {
     let count = |kind: &str| log.matches(&format!(r#""kind":"{kind}""#)).count();
     assert!(count("created") > 0);
     assert!(count("round") > count("created"));
-    assert!(count("closed") > 0);
+    // Closed on the player's side; the chain reveal runs in the background tick, not run here.
+    assert!(count("closing") > 0);
     // Loyalty is remembered on disk.
     let memories: Value =
         serde_json::from_str(&fs::read_to_string(dir.path().join("gamblers.json")).unwrap())

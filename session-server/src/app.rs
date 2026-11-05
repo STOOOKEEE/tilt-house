@@ -366,7 +366,8 @@ impl<C: Chain> App<C> {
             state: Self::signed(&session),
             hand: session.hand.clone(),
             last_round: session.rounds.last().cloned(),
-            server_seed: (session.phase == Phase::Closed).then(|| hex::encode(session.server_seed)),
+            server_seed: matches!(session.phase, Phase::Closing | Phase::Closed)
+                .then(|| hex::encode(session.server_seed)),
         })
     }
 
@@ -377,13 +378,8 @@ impl<C: Chain> App<C> {
             authorize(&session, token)?;
             self.begin_close(&mut session).map_err(ApiError::internal)?;
         }
-        self.finish_close(&shared).await.map_err(|err| {
-            eprintln!("close {id}: {err:#}");
-            ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "closing: settle or reveal pending on chain, retried automatically",
-            )
-        })?;
+        // The player leaves at once: no round can be played once closing, so the seed is safe to
+        // show now. The final settle and the reveal on chain are run by `tick` (and retried).
         let session = shared.lock().await;
         Ok(CloseReply {
             server_seed: session.server_seed,

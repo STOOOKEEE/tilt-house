@@ -176,7 +176,11 @@ async fn session_start_play_close_and_verify() {
         None,
     )
     .await;
-    assert_eq!(view["phase"], "closed");
+    // The close answers before the chain: the reveal on chain runs in the background tick.
+    assert!(
+        view["phase"] == "closing" || view["phase"] == "closed",
+        "{view}"
+    );
     assert_eq!(view["server_seed"], hex::encode(closed.server_seed));
 }
 
