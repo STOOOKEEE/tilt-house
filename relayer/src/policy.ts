@@ -204,6 +204,14 @@ function sameMethods(given: string[], expected: readonly string[]): boolean {
   return unique.size === given.length && given.length === expected.length && expected.every((m) => unique.has(m));
 }
 
+/** Only game moves on the house: no money, no key. */
+export function isGameOnly(delegate: DecodedDelegate, cfg: PolicyConfig): boolean {
+  return (
+    delegate.receiverId === cfg.house &&
+    delegate.actions.every((action) => action.functionCall !== undefined && isIn(GAME_METHODS, action.functionCall.methodName))
+  );
+}
+
 /** The delegate must still be valid and not signed for the far future. */
 export function checkExpiry(maxBlockHeight: bigint, currentHeight: bigint): Verdict {
   if (maxBlockHeight <= currentHeight) return refuse("expired");

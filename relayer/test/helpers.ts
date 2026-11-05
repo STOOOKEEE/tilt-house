@@ -8,7 +8,7 @@ import {
   type Action,
   type SignedDelegate,
 } from "near-api-js";
-import type { AccessKeyInfo, Activation, Chain, RelayOutcome } from "../src/chain.ts";
+import type { AccessKeyInfo, Activation, Chain, RelayOutcome, RelayWait } from "../src/chain.ts";
 import type { DecodedSignedDelegate } from "../src/policy.ts";
 import { GAME_METHODS } from "../src/policy.ts";
 
@@ -57,6 +57,7 @@ export class FakeChain implements Chain {
   height = HEIGHT;
   key: AccessKeyInfo | null = { nonce: 1n, fullAccess: true };
   relayed: DecodedSignedDelegate[] = [];
+  waits: RelayWait[] = [];
   activations: string[] = [];
   relayError: Error | null = null;
   activateError: Error | null = null;
@@ -71,10 +72,12 @@ export class FakeChain implements Chain {
     return this.key;
   }
 
-  async relay(signed: DecodedSignedDelegate): Promise<RelayOutcome> {
+  /** Like the RPC: "included" answers before any receipt ran, so no success or failure yet. */
+  async relay(signed: DecodedSignedDelegate, wait: RelayWait): Promise<RelayOutcome> {
     if (this.relayError) throw this.relayError;
     this.relayed.push(signed);
-    return { txHash: `tx${this.relayed.length}`, status: "success" };
+    this.waits.push(wait);
+    return { txHash: `tx${this.relayed.length}`, status: wait === "included" ? "pending" : "success" };
   }
 
   async activate(accountId: string, _near: bigint, tokens: bigint): Promise<Activation> {

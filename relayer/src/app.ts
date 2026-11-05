@@ -11,6 +11,7 @@ import {
   checkExpiry,
   checkSignature,
   decodeSignedDelegate,
+  isGameOnly,
   signerPublicKey,
   type PolicyConfig,
 } from "./policy.ts";
@@ -102,7 +103,9 @@ export function createApp({ config, chain, now = Date.now }: AppDeps): Hono {
       // Counted only once the key is proven to belong to the sender, so nobody can
       // burn another account's quota with forged payloads.
       if (!relaySender.take(delegate.senderId, now())) return fail(c, 429, "rate_limited");
-      return c.json(await chain.relay(signed));
+      // A game move's result shows up in the round the page polls: answering at inclusion saves
+      // the whole execution (VRF included). Money and key moves wait for their outcome.
+      return c.json(await chain.relay(signed, isGameOnly(delegate, config) ? "included" : "executed"));
     } catch (error) {
       if (error instanceof TransactionTimeoutError) return fail(c, 504, "rpc_timeout");
       console.error("relay failed", error);

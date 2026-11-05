@@ -4,9 +4,11 @@ import {
   KeyPair,
   KeyPairSigner,
   actions,
+  baseEncode,
   teraToGas,
   type KeyPairString,
   type SignedDelegate,
+  type Transaction,
 } from "near-api-js";
 import { AccountDoesNotExistError, AccessKeyDoesNotExistError } from "near-api-js/rpc-errors";
 import type { Config } from "./config.ts";
@@ -19,9 +21,13 @@ export interface AccessKeyInfo {
 
 export interface RelayOutcome {
   txHash: string;
-  status: "success" | "failure";
+  /** "pending": included in a block, receipts still running (game moves only). */
+  status: "success" | "failure" | "pending";
   failure?: string;
 }
+
+/** "executed" waits for every receipt; "included" answers once the transaction is in a block. */
+export type RelayWait = "executed" | "included";
 
 export interface Activation {
   funded: boolean;
@@ -34,7 +40,7 @@ export interface Activation {
 export interface Chain {
   blockHeight(): Promise<bigint>;
   accessKey(accountId: string, publicKey: string): Promise<AccessKeyInfo | null>;
-  relay(signed: DecodedSignedDelegate): Promise<RelayOutcome>;
+  relay(signed: DecodedSignedDelegate, wait: RelayWait): Promise<RelayOutcome>;
   /** Sends `near` yocto if the account holds less, registers it on the token, mints `tokens`. */
   activate(accountId: string, near: bigint, tokens: bigint): Promise<Activation>;
   /** Mints `tokens` tUSDC to the account (relayer is the token's minter). */
@@ -53,10 +59,26 @@ function failureOf(status: unknown): string | undefined {
   return JSON.stringify(status.Failure);
 }
 
+/**
+ * Remembers the hash of the transaction it signed: an INCLUDED answer carries no outcome, so the
+ * hash must come from signing. One per relay, so concurrent relays never mix hashes; on a nonce
+ * retry near-api-js signs again and the last hash is the one sent.
+ */
+class HashRecordingSigner extends KeyPairSigner {
+  txHash = "";
+
+  override async signTransaction(transaction: Transaction): ReturnType<KeyPairSigner["signTransaction"]> {
+    const signed = await super.signTransaction(transaction);
+    this.txHash = baseEncode(signed.txHash);
+    return signed;
+  }
+}
+
 export function nearChain(config: Config): Chain {
   if (!isKeyPairString(config.relayerPrivateKey)) throw new Error("RELAYER_PRIVATE_KEY must be ed25519:… or secp256k1:…");
   const provider = new JsonRpcProvider({ url: config.rpcUrl });
-  const signer = new KeyPairSigner(KeyPair.fromString(config.relayerPrivateKey));
+  const keyPair = KeyPair.fromString(config.relayerPrivateKey);
+  const signer = new KeyPairSigner(keyPair);
   const relayer = new Account(config.relayerAccount, provider, signer);
 
   async function balanceOf(accountId: string): Promise<bigint> {
@@ -124,14 +146,18 @@ export function nearChain(config: Config): Chain {
       }
     },
 
-    async relay(signed) {
+    async relay(signed, wait) {
+      const recorder = new HashRecordingSigner(keyPair);
       const outcome = await relayer.signAndSendTransaction({
         receiverId: signed.delegateAction.senderId,
         // The borsh schema decoded this value, so it re-encodes to the same bytes;
         // near-api-js only needs the fields, not the class instances.
         actions: [actions.signedDelegate(signed as unknown as SignedDelegate)],
+        waitUntil: wait === "included" ? "INCLUDED" : "EXECUTED_OPTIMISTIC",
         throwOnFailure: false,
+        signer: recorder,
       });
+      if (wait === "included") return { txHash: recorder.txHash, status: "pending" };
       const failure = [outcome.transaction_outcome, ...outcome.receipts_outcome]
         .map((o) => failureOf(o.outcome.status))
         .find((f) => f !== undefined);

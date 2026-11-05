@@ -73,7 +73,7 @@ describe("allowed shapes", () => {
   it.each(GAME_METHODS)("relays %s from a function-call key", async (method) => {
     chain.key = { nonce: 1n, fullAccess: false };
     const res = await relay([gameCall(method)]);
-    expect(res).toEqual({ status: 200, body: { txHash: "tx1", status: "success" } });
+    expect(res).toEqual({ status: 200, body: { txHash: "tx1", status: "pending" } });
     expect(chain.relayed[0]?.delegateAction.senderId).toBe(PLAYER);
   });
 
@@ -100,6 +100,24 @@ describe("allowed shapes", () => {
   it("relays a USDC deposit to the house", async () => {
     const res = await relay([ftDeposit(HOUSE)], { receiverId: TOKEN });
     expect(res.status).toBe(200);
+  });
+});
+
+describe("when the relayer answers", () => {
+  it("answers game moves at inclusion, without waiting for the draw", async () => {
+    await relay([gameCall("bj_hit", teraToGas(100)), gameCall("bj_stand", teraToGas(100))]);
+    expect(chain.waits).toEqual(["included"]);
+  });
+
+  it.each([
+    ["a money move", [gameCall("withdraw", teraToGas(100), 1n)], {}],
+    ["a game move bundled with a money move", [gameCall("bet_dice"), gameCall("divest")], {}],
+    ["a USDC deposit", [ftDeposit(HOUSE)], { receiverId: TOKEN }],
+    ["the key setup", [keySetup()], { receiverId: PLAYER }],
+  ] as const)("waits for the full execution of %s", async (_name, acts, opts) => {
+    const res = await relay([...acts], opts);
+    expect(res.body).toMatchObject({ status: "success" });
+    expect(chain.waits).toEqual(["executed"]);
   });
 });
 
