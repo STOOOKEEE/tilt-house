@@ -12,6 +12,7 @@ pub mod jackpot;
 pub mod pool;
 pub mod rng;
 pub mod roulette;
+pub mod session;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};

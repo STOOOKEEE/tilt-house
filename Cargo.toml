@@ -1,6 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["core", "sim", "token", "contract"]
+members = ["core", "sim", "token", "contract", "session-server"]
+
+# Signing and hashing run on every session round; unoptimized they eat most of the latency budget
+# in debug builds and tests.
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3
 
 [profile.release]
 codegen-units = 1

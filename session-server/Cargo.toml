@@ -1,0 +1,31 @@
+[package]
+name = "tilt-house-session-server"
+version = "0.1.0"
+edition = "2021"
+description = "Tilt House session server: plays provably fair sessions off chain and settles them on NEAR (docs/sessions.md)"
+license = "MIT"
+publish = false
+
+[dependencies]
+tilt-house-core = { path = "../core" }
+anyhow = "1"
+axum = "0.8"
+borsh = "1"
+bs58 = "0.5"
+ed25519-dalek = "2"
+getrandom = "0.2"
+hex = "0.4"
+near-crypto = "0.38"
+# rustls: no system OpenSSL needed.
+near-jsonrpc-client = { version = "0.23", default-features = false, features = ["rustls-tls"] }
+near-jsonrpc-primitives = "0.38"
+near-primitives = "0.38"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "signal"] }
+tower-http = { version = "0.6", features = ["cors"] }
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
