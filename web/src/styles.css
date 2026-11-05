@@ -387,3 +387,15 @@ input.number {
   padding: 0;
   font-size: 0.85rem;
 }
+
+/* Owner dashboard (My table): one panel per table, sub-sections titled quietly. */
+.dashboard h3 {
+  margin: 0.6rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.dashboard .game-form input[inputmode='decimal'] {
+  width: 8rem;
+}

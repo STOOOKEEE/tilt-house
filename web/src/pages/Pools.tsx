@@ -1,8 +1,9 @@
 import { useCallback, useState } from 'react'
 import { useSearchParams } from 'react-router'
+import { ActionStatus, type ActionState } from '../components/ActionStatus'
 import { LoginPrompt } from '../components/LoginPrompt'
 import { PRICE_SCALE, formatPrice, formatPriceChange, formatUsdc, parseUsdc } from '../format'
-import { EXPLORER_TX, freeBankroll, reopenNeeds } from '../house'
+import { freeBankroll, reopenNeeds } from '../house'
 import { claimFaucet } from '../near/relay'
 import { fullAccessCall } from '../near/session'
 import { useNear } from '../near/useNear'
@@ -14,8 +15,6 @@ const SHARES_PER_UNIT = 1_000_000n
 
 /** Money moves need the Privy (full-access) signature; NEAR wants 1 yocto on deposit and withdraw. */
 const ONE_YOCTO = 1n
-
-type ActionState = { state: 'idle' } | { state: 'busy'; label: string } | { state: 'done'; label: string; txHash: string } | { state: 'error'; message: string }
 
 export function Pools() {
   const lobby = useLobby()
@@ -83,26 +82,6 @@ export function Pools() {
       )}
     </>
   )
-}
-
-function ActionStatus({ action }: { action: ActionState }) {
-  switch (action.state) {
-    case 'idle':
-      return null
-    case 'busy':
-      return <p className="muted">{action.label}: confirm in the Privy window…</p>
-    case 'done':
-      return (
-        <p className="win">
-          {action.label} done ·{' '}
-          <a href={`${EXPLORER_TX}${action.txHash}`} target="_blank" rel="noreferrer">
-            view tx
-          </a>
-        </p>
-      )
-    case 'error':
-      return <p className="loss">{action.message}</p>
-  }
 }
 
 function lpTokens(shares: string | bigint): string {

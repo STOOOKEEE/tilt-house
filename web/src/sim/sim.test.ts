@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 // The vitest node-polyfill plugin stubs node:fs, so the fixture comes through Vite's ?raw import.
 import simJson from '../../public/sim.json?raw'
-import { advance, dealerSeries, eventsUpTo, parseSim, RUN_SECONDS_AT_1X } from './sim'
+import { advance, dealerSeries, eventsUpTo, parseSim, RUN_SECONDS_AT_1X, type SimEventKind } from './sim'
 
 function frame(t: number, events: unknown[] = []) {
   return {
@@ -32,9 +32,12 @@ describe('parseSim', () => {
   it('reads the checked-in week of simulation', () => {
     const sim = parseSim(JSON.parse(simJson))
     expect(sim.frames).toHaveLength(1008)
-    expect(sim.dealers.map((d) => d.id)).toEqual(['ada', 'bruno', 'chloe', 'dmitri', 'eve'])
+    // The five launch dealers first, then the tables simulated owners open during the week.
+    expect(sim.dealers.slice(0, 5).map((d) => d.id)).toEqual(['ada', 'bruno', 'chloe', 'dmitri', 'eve'])
+    expect(sim.dealers.length).toBeGreaterThan(5)
     const kinds = new Set(sim.frames.flatMap((f) => f.events.map((e) => e.kind)))
-    expect(kinds.has('bust') && kinds.has('reopen')).toBe(true)
+    const tycoon: SimEventKind[] = ['opened', 'evicted', 'jackpot']
+    expect(tycoon.every((k) => kinds.has(k))).toBe(true)
   })
 
   it('rejects malformed data', () => {

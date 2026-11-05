@@ -1,31 +1,20 @@
 import { actions, encodeSignedDelegate, type Action, type PublicKey, type SignedDelegate } from 'near-api-js'
 
-/** House methods the browser game key may call. Must match the relayer's allow-list. */
-export const GAME_METHODS = [
-  'bet_dice',
-  'bet_roulette',
-  'bj_deal',
-  'bj_hit',
-  'bj_double',
-  'bj_stand',
-  'refund_stuck_round',
-] as const
-export type GameMethod = (typeof GAME_METHODS)[number]
+/**
+ * Floor methods the browser game key may call: the session moves of docs/contract-api.md v2.
+ * Must be a subset of the relayer's allow-list.
+ */
+export const GAME_METHODS = ['open_session', 'close_session', 'force_close', 'claim_unrevealed'] as const
 
 /** 0.25 NEAR in yoctoNEAR: caps what a stolen browser key can burn in gas. */
 export const GAME_KEY_ALLOWANCE = 250_000_000_000_000_000_000_000n
 
-/** Each move requests VRF from OutLayer; the house needs ≥ 150 TGas prepaid (contract-api.md). */
+/** Prepaid gas for relayed floor calls. */
 export const MOVE_GAS = 200_000_000_000_000n
 
 /** AddKey for the browser game key: function calls to the house only, no deposits possible. */
 export function gameKeyAction(gameKey: PublicKey, houseContract: string): Action {
   return actions.addFunctionCallAccessKey(gameKey, houseContract, [...GAME_METHODS], GAME_KEY_ALLOWANCE)
-}
-
-/** One game move: a zero-deposit function call (function-call keys cannot attach deposits). */
-export function moveAction(method: GameMethod, args: object): Action {
-  return actions.functionCall(method, args, MOVE_GAS, 0n)
 }
 
 /** Generic call signed by the full-access (Privy) key; deposit in yoctoNEAR. */

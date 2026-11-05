@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { Config } from '../config'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { Jackpot } from '../components/Jackpot'
 import { formatBp, formatCountdown, formatPrice, formatPriceChange, formatUsdc } from '../format'
@@ -8,10 +9,26 @@ import { useNear } from '../near/useNear'
 import { PAGE_POLL_MS, usePoll } from '../near/usePoll'
 import type { DealerView } from '../near/views'
 import { createLobbyScene, type LobbySceneApi } from '../scene/lobby/LobbyScene'
+import {
+  diffGamblers,
+  getLiveFloor,
+  parseGamblerTimeline,
+  toCues,
+  type GamblerCue,
+  type GamblerInfo,
+  type GamblerSnapshot,
+  type GamblerTimeline,
+} from '../sim/gamblers'
 import { useNow } from '../useNow'
 
 /** Dev demo `?evict=<id>`: wait this long after the floor appears, then play the seat change. */
 const DEV_EVICT_DELAY_MS = 3_000
+/** Live gamblers move every few seconds; their walk takes longer than a poll. */
+const LIVE_GAMBLERS_POLL_MS = 2_000
+/** Demo floor: one sim frame (10 simulated minutes) every this many ms, slow enough to walk. */
+const DEMO_FRAME_MS = 6_000
+/** The demo starts at the first frame with this many gamblers on the floor, so it is lively at once. */
+const DEMO_START_CROWD = 4
 
 export function Lobby() {
   const { config } = useNear()
@@ -19,6 +36,8 @@ export function Lobby() {
   const polled = usePoll(load, PAGE_POLL_MS)
   const state = useDevEviction(polled.data)
   const seats = useMemo(() => (state ? floorSeats(state) : null), [state])
+  const seatedIds = useMemo(() => seats?.map((s) => s?.dealer.id ?? null) ?? null, [seats])
+  const gamblers = useGamblerFloor(config, seatedIds)
   return (
     <>
       <h1>Lobby</h1>
@@ -29,7 +48,8 @@ export function Lobby() {
       {polled.error ? <p className="loss">Could not load the floor: {polled.error}</p> : null}
       {state === null && !polled.error ? <p className="muted">loading tables…</p> : null}
       {state ? <Jackpot amount={state.floor.jackpot} oddsUnit={state.floor.jackpot_odds_unit} mock={state.mock} /> : null}
-      <CasinoFloor seats={seats} rentFrom={state?.floor.outbid_min ?? null} />
+      <CasinoFloor seats={seats} rentFrom={state?.floor.outbid_min ?? null} cues={gamblers.cues} />
+      <p className="muted floor-mode">{gamblers.label}</p>
       {state && seats ? <DealerList dealers={state.dealers} seats={seats} /> : null}
     </>
   )
@@ -50,7 +70,13 @@ function useDevEviction(state: FloorState | null): FloorState | null {
 }
 
 /** The 3D floor; decorative for assistive tech, the list below carries the same information. */
-function CasinoFloor({ seats, rentFrom }: { seats: (SeatedTable | null)[] | null; rentFrom: string | null }) {
+interface CasinoFloorProps {
+  seats: (SeatedTable | null)[] | null
+  rentFrom: string | null
+  cues: GamblerCues
+}
+
+function CasinoFloor({ seats, rentFrom, cues }: CasinoFloorProps) {
   const host = useRef<HTMLDivElement>(null)
   const scene = useRef<LobbySceneApi | null>(null)
   const latest = useRef({ seats, rentFrom })
@@ -78,6 +104,11 @@ function CasinoFloor({ seats, rentFrom }: { seats: (SeatedTable | null)[] | null
   useEffect(() => {
     if (seats && rentFrom !== null) scene.current?.setFloor(seats, rentFrom)
   }, [seats, rentFrom])
+
+  // Gamblers walk to tables: they wait until the floor has its tables.
+  useEffect(() => {
+    if (seats) scene.current?.cueGamblers(cues.list)
+  }, [cues, seats])
 
   return <div className="casino-floor" ref={host} aria-hidden="true" />
 }
@@ -155,4 +186,111 @@ function DealerRow({ dealer, seat }: { dealer: DealerView; seat: SeatInfo | null
       </td>
     </tr>
   )
+}
+
+// ---- NPC gamblers ---------------------------------------------------------------------------
+
+/** A fresh object per batch, so the same cues are never replayed by a re-render. */
+interface GamblerCues {
+  list: readonly GamblerCue[]
+}
+
+interface GamblerFloor {
+  cues: GamblerCues
+  label: string
+}
+
+const NO_CUES: GamblerCues = { list: [] }
+
+/**
+ * The gamblers on the floor: live from the session server's gambler runner when it answers, else
+ * the simulated week of sim.json replayed as a demo floor. Emits the steps between snapshots.
+ */
+function useGamblerFloor(config: Config, seatedIds: readonly (string | null)[] | null): GamblerFloor {
+  const [snapshot, setSnapshot] = useState<{ gamblers: GamblerSnapshot[]; info: ReadonlyMap<string, GamblerInfo> } | null>(null)
+  const [mode, setMode] = useState<'live' | 'demo' | 'none'>(config.sessionUrl ? 'live' : 'demo')
+  const [label, setLabel] = useState('')
+
+  useEffect(() => {
+    if (mode !== 'live') return
+    let stopped = false
+    const poll = async (): Promise<void> => {
+      try {
+        const gamblers = await getLiveFloor(config.sessionUrl)
+        if (!stopped) setSnapshot({ gamblers, info: new Map() })
+        if (!stopped) setLabel(`live floor · ${gamblers.length} gamblers`)
+      } catch {
+        // The runner is down or not deployed yet: the floor stays watchable with the sim.
+        if (!stopped) setMode('demo')
+      }
+    }
+    void poll()
+    const timer = window.setInterval(() => void poll(), LIVE_GAMBLERS_POLL_MS)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+    }
+  }, [mode, config.sessionUrl])
+
+  useEffect(() => {
+    if (mode !== 'demo') return
+    let timer = 0
+    let stopped = false
+    void loadTimeline().then(
+      (timeline) => {
+        if (stopped) return
+        if (!timeline) {
+          setMode('none')
+          return
+        }
+        const info = new Map(timeline.gamblers.map((g) => [g.id, g]))
+        let index = Math.max(0, timeline.frames.findIndex((f) => f.gamblers.length >= DEMO_START_CROWD))
+        const show = (): void => {
+          const frame = timeline.frames[index]
+          setSnapshot({ gamblers: frame.gamblers, info })
+          setLabel(`demo floor · simulated gamblers, day ${Math.floor(frame.t / 86_400) + 1} ${clock(frame.t)}`)
+          index = (index + 1) % timeline.frames.length
+        }
+        show()
+        timer = window.setInterval(show, DEMO_FRAME_MS)
+      },
+      () => {
+        if (!stopped) setMode('none')
+      },
+    )
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+    }
+  }, [mode])
+
+  useEffect(() => {
+    if (mode === 'none') setLabel('no gamblers on the floor: the gambler runner is offline and sim.json has none')
+  }, [mode])
+
+  // Through a ref: a floor poll alone must not replay the moves of the last snapshot.
+  const seated = useRef(seatedIds)
+  seated.current = seatedIds
+  const previous = useRef<GamblerSnapshot[]>([])
+  const [cues, setCues] = useState<GamblerCues>(NO_CUES)
+  useEffect(() => {
+    const ids = seated.current
+    // Before the tables are known, nobody can walk to one: the next snapshot starts the crowd.
+    if (!snapshot || !ids) return
+    const moves = diffGamblers(previous.current, snapshot.gamblers)
+    previous.current = snapshot.gamblers
+    setCues({ list: toCues(moves, snapshot.gamblers, snapshot.info, ids) })
+  }, [snapshot])
+  return { cues, label }
+}
+
+async function loadTimeline(): Promise<GamblerTimeline | null> {
+  const response = await fetch('/sim.json')
+  if (!response.ok) throw new Error(`sim.json: HTTP ${response.status}`)
+  return parseGamblerTimeline(await response.json())
+}
+
+function clock(t: number): string {
+  const minutes = Math.floor((t % 86_400) / 60)
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
 }

@@ -7,6 +7,8 @@ export interface Config {
   /** Account that signs relayed transactions, hence the signer named in the VRF alpha of relayed rounds. */
   relayerAccount: string
   rpcUrl: string
+  /** Session server (sessions and live gamblers). Empty: no session play, the floor shows the sim demo. */
+  sessionUrl: string
 }
 
 type Env = Record<string, string | undefined>
@@ -26,5 +28,6 @@ export function readConfig(env: Env): Config {
     relayerUrl: required(env, 'VITE_RELAYER_URL').replace(/\/+$/, ''),
     relayerAccount: required(env, 'VITE_RELAYER_ACCOUNT'),
     rpcUrl: required(env, 'VITE_NEAR_RPC_URL'),
+    sessionUrl: env.VITE_SESSION_URL?.trim().replace(/\/+$/, '') ?? '',
   }
 }

@@ -5,7 +5,7 @@ import { advance, dealerSeries, eventsUpTo, parseSim, type SimData, type SimEven
 
 const COLORS = ['#ec6fae', '#f0c26a', '#7ccf8f', '#6fb7ec', '#b58cf0']
 const SPEEDS = [0.25, 0.5, 1, 2, 4] as const
-const NOTABLE: readonly SimEventKind[] = ['bust', 'reopen', 'boost']
+const NOTABLE: readonly SimEventKind[] = ['bust', 'reopen', 'boost', 'evicted', 'seated', 'seat_sold', 'opened', 'jackpot', 'price_war']
 const EVENT_COLOR: Record<string, string> = { bust: 'var(--loss)', reopen: 'var(--win)', boost: 'var(--gold)' }
 
 /** `core_rules::base_edge_bp`: the sim reports the rake, the lobby shows base edge + rake. */

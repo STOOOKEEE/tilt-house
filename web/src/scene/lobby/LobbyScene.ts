@@ -13,6 +13,9 @@ import { mountRenderer } from '../renderer'
 import { Animator, PALETTE, easeOut } from '../table/props'
 import type { Mood } from '../types'
 import { pixelTexture, px, voxelPart } from '../voxel'
+import type { GamblerCue } from '../../sim/gamblers'
+import { createCrowd } from './gamblers'
+import { turnTo, walkTo } from './walk'
 import {
   buildDrapes,
   buildNameplate,
@@ -33,6 +36,8 @@ import {
 export interface LobbySceneApi {
   /** One entry per seat (null = for rent); `rentFrom` is the rent needed to take a seat, base units. */
   setFloor(seats: readonly (SeatedTable | null)[], rentFrom: string): void
+  /** NPC gamblers' next steps; each gambler plays its own in order. */
+  cueGamblers(cues: readonly GamblerCue[]): void
   dispose(): void
 }
 
@@ -59,7 +64,6 @@ const CLICK_SLOP = 6
 const WALK_SPEED = 2.4
 const AISLE_BEHIND = 1.2
 const EXIT_X = 13
-const TURN_S = 0.25
 /** Where the sign waits, out of frame above the seat. */
 const SIGN_UP_Y = 7
 const SIGN_DROP_S = 0.9
@@ -100,21 +104,28 @@ export function createLobbyScene(el: HTMLElement, events: LobbySceneEvents): Lob
   const anim = new Animator()
   const seats = Array.from({ length: SEAT_COUNT }, (_, i) => buildSeat(i))
   for (const seat of seats) scene.add(seat.group)
+  const crowd = createCrowd(scene, seats.map((s) => s.group), anim)
   let rentFrom = ''
   let firstFloor = true
   let hovered: Seat | null = null
   let disposed = false
 
-  /** Plays the table's game now and then; happy dealers sometimes cheer, nervous ones despair. */
+  /**
+   * Plays the table's game now and then, briskly while gamblers sit there (one of them cheers or
+   * despairs at the result); happy dealers sometimes cheer, nervous ones despair.
+   */
   const idleLoop = async (seat: Seat, occupant: Occupant): Promise<void> => {
     await anim.wait(0.5 + Math.random() * 3)
     const here = (): boolean => !disposed && seat.occupant === occupant && occupant.seated
     while (here()) {
+      const players = crowd.seatedAt(seat.index)
       if (occupant.dealer.open) await occupant.prop.play(occupant.rig, anim)
       if (!here()) break
+      const player = players[Math.floor(Math.random() * players.length)]
+      if (player) void player.gesture({ kind: Math.random() < 0.45 ? 'celebrate' : 'facepalm' })
       if (occupant.mood === 'happy' && Math.random() < 0.3) await occupant.rig.gesture({ kind: 'celebrate' })
       if (occupant.mood === 'nervous' && Math.random() < 0.3) await occupant.rig.gesture({ kind: 'facepalm' })
-      await anim.wait(2 + Math.random() * 3)
+      await anim.wait(players.length > 0 ? 0.6 + Math.random() * 1.2 : 2 + Math.random() * 3)
     }
   }
 
@@ -139,31 +150,7 @@ export function createLobbyScene(el: HTMLElement, events: LobbySceneEvents): Lob
 
   // ---- walking --------------------------------------------------------------------------------
 
-  /** Turns the figure toward `to` (in the rig's own space), then walks there. */
-  const walkTo = async (rig: WalkerRig, to: THREE.Vector3): Promise<void> => {
-    const figure = rig.figure
-    const from = figure.position.clone()
-    from.y = 0
-    const delta = new THREE.Vector3(to.x - from.x, 0, to.z - from.z)
-    const distance = delta.length()
-    if (distance < 1e-3) return
-    await turnTo(figure, Math.atan2(delta.x, delta.z))
-    rig.setWalking(true)
-    await anim.tween(distance / WALK_SPEED, (t) => {
-      figure.position.x = from.x + delta.x * t
-      figure.position.z = from.z + delta.z * t
-    }, (t) => t)
-    rig.setWalking(false)
-  }
-
-  const turnTo = (figure: THREE.Object3D, yaw: number): Promise<void> => {
-    const start = figure.rotation.y
-    // The short way round.
-    const diff = Math.atan2(Math.sin(yaw - start), Math.cos(yaw - start))
-    return anim.tween(TURN_S, (t) => {
-      figure.rotation.y = start + diff * t
-    })
-  }
+  const walk = (rig: WalkerRig, to: THREE.Vector3): Promise<void> => walkTo(anim, rig, to, WALK_SPEED)
 
   /** The aisle behind the seat and the exit beside the floor, in the rig's own space. */
   const pathOut = (seat: Seat, rig: WalkerRig): [THREE.Vector3, THREE.Vector3] => {
@@ -198,9 +185,9 @@ export function createLobbyScene(el: HTMLElement, events: LobbySceneEvents): Lob
     occupant.rig.say('lost my seat')
     const [aisle, exit] = pathOut(seat, occupant.rig)
     await Promise.all([occupant.rig.setStanding(true), popProp(occupant.prop, false)])
-    await walkTo(occupant.rig, aisle)
+    await walk(occupant.rig, aisle)
     showEmpty(seat)
-    await Promise.all([dropSign(seat, true), walkTo(occupant.rig, exit)])
+    await Promise.all([dropSign(seat, true), walk(occupant.rig, exit)])
     seat.occupant = null
     occupant.rig.dispose()
     occupant.prop.object.removeFromParent()
@@ -215,9 +202,9 @@ export function createLobbyScene(el: HTMLElement, events: LobbySceneEvents): Lob
     const [aisle, entrance] = pathOut(seat, rig)
     rig.figure.position.copy(entrance)
     await rig.setStanding(true)
-    await walkTo(rig, aisle)
-    await Promise.all([dropSign(seat, false), walkTo(rig, new THREE.Vector3(0, 0, 0))])
-    await turnTo(rig.figure, 0)
+    await walk(rig, aisle)
+    await Promise.all([dropSign(seat, false), walk(rig, new THREE.Vector3(0, 0, 0))])
+    await turnTo(anim, rig.figure, 0)
     await Promise.all([rig.setStanding(false), popProp(prop, true)])
     occupant.seated = true
     rig.say(occupant.dealer.reason_text)
@@ -272,6 +259,7 @@ export function createLobbyScene(el: HTMLElement, events: LobbySceneEvents): Lob
     anim.update(dt)
     frameCamera(elapsed)
     for (const seat of seats) updateSeat(seat, seat === hovered, dt)
+    crowd.update(dt)
   })
 
   // ---- pointer --------------------------------------------------------------------------------
@@ -332,9 +320,13 @@ export function createLobbyScene(el: HTMLElement, events: LobbySceneEvents): Lob
       })
       firstFloor = false
     },
+    cueGamblers(cues) {
+      for (const cue of cues) crowd.cue(cue)
+    },
     dispose() {
       disposed = true
       unsubscribe()
+      crowd.dispose()
       anim.finishAll()
       canvas.removeEventListener('pointermove', onMove)
       canvas.removeEventListener('pointerleave', onLeave)

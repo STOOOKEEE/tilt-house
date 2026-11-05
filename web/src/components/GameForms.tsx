@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { formatBp, formatUsdc } from '../format'
 import { DICE_MAX_CHANCE_BP, DICE_MIN_CHANCE_BP, applyRake, diceWinPayout, rouletteBetLabel, rouletteWinMultiple } from '../house'
-import type { RouletteBet } from '../near/views'
+import type { Bet, RouletteBet } from '../near/views'
 
 interface FormProps {
   stake: bigint | null
   rakeBp: number
   disabled: boolean
-  onBet: (args: Record<string, unknown>) => void
+  onBet: (bet: Bet) => void
 }
 
 export function DiceForm({ stake, rakeBp, disabled, onBet }: FormProps) {
@@ -39,7 +39,7 @@ export function DiceForm({ stake, rakeBp, disabled, onBet }: FormProps) {
           {stake ? ` · a win pays ${formatUsdc(diceWinPayout(stake, chanceBp, rakeBp))}` : ''}
         </span>
       </div>
-      <button type="button" disabled={disabled} onClick={() => onBet({ chance_bp: chanceBp, over })}>
+      <button type="button" disabled={disabled} onClick={() => onBet({ dice: { chance_bp: chanceBp, over } })}>
         Roll
       </button>
     </div>
@@ -91,7 +91,7 @@ export function RouletteForm({ stake, rakeBp, disabled, onBet }: FormProps) {
         betting {label}
         {payout ? ` · a win pays ${formatUsdc(payout)}` : ''}
       </p>
-      <button type="button" disabled={disabled} onClick={() => onBet({ bet })}>
+      <button type="button" disabled={disabled} onClick={() => onBet({ roulette: bet })}>
         Spin
       </button>
     </div>

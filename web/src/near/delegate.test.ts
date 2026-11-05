@@ -4,10 +4,8 @@ import { sha256 } from '@noble/hashes/sha256'
 import {
   GAME_KEY_ALLOWANCE,
   GAME_METHODS,
-  MOVE_GAS,
   callAction,
   gameKeyAction,
-  moveAction,
   signedDelegateToBase64,
 } from './delegate'
 
@@ -25,31 +23,14 @@ describe('gameKeyAction', () => {
     if (!permission) throw new Error('expected a function-call permission, not full access')
     expect(addKey.accessKey.permission.fullAccess).toBeUndefined()
     expect(permission.receiverId).toBe(HOUSE)
-    expect(permission.methodNames).toEqual([
-      'bet_dice',
-      'bet_roulette',
-      'bj_deal',
-      'bj_hit',
-      'bj_double',
-      'bj_stand',
-      'refund_stuck_round',
-    ])
+    expect(permission.methodNames).toEqual(['open_session', 'close_session', 'force_close', 'claim_unrevealed'])
     expect(permission.allowance).toBe(250_000_000_000_000_000_000_000n)
     expect(GAME_KEY_ALLOWANCE).toBe(250_000_000_000_000_000_000_000n)
   })
 })
 
-describe('moveAction', () => {
-  it('is a zero-deposit call with JSON args', () => {
-    const call = moveAction('bet_dice', { amount: '1000000', target: 50 }).functionCall
-    if (!call) throw new Error('expected a FunctionCall action')
-    expect(call.methodName).toBe('bet_dice')
-    expect(call.deposit).toBe(0n)
-    expect(call.gas).toBe(MOVE_GAS)
-    expect(JSON.parse(new TextDecoder().decode(call.args))).toEqual({ amount: '1000000', target: 50 })
-  })
-
-  it('covers exactly the allow-listed methods', () => {
+describe('GAME_METHODS', () => {
+  it('has no duplicates', () => {
     expect(new Set(GAME_METHODS).size).toBe(GAME_METHODS.length)
   })
 })

@@ -6,6 +6,7 @@ interface ImportMetaEnv {
   readonly VITE_TOKEN_CONTRACT?: string
   readonly VITE_RELAYER_URL?: string
   readonly VITE_NEAR_RPC_URL?: string
+  readonly VITE_SESSION_URL?: string
 }
 
 interface ImportMeta {

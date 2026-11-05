@@ -3,8 +3,21 @@
  * logic of its frame player. One frame = 10 simulated minutes.
  */
 
-export type SimEventKind = 'bust' | 'reopen' | 'boost' | 'reprice'
-const EVENT_KINDS: readonly SimEventKind[] = ['bust', 'reopen', 'boost', 'reprice']
+const EVENT_KINDS = [
+  'bust',
+  'reopen',
+  'boost',
+  'reprice',
+  'seated',
+  'evicted',
+  'seat_listed',
+  'seat_sold',
+  'opened',
+  'jackpot',
+  'price_war',
+  'rent',
+] as const
+export type SimEventKind = (typeof EVENT_KINDS)[number]
 
 export interface SimDealer {
   id: string

@@ -1,30 +1,37 @@
 /**
- * The floor (docs/floor.md): six seats that dealers rent, and the jackpot the rent fills.
- * Read from `get_floor` and `get_lobby`, checked at runtime like every other view.
+ * The floor (docs/floor.md, docs/tycoon.md): six seats that dealers rent, and the jackpot the rent fills.
+ * Read from `get_floor` and `get_lobby`, checked at runtime like every other view. JSON seats are
+ * 1-based (docs/contract-api.md); everything here indexes them from 0 (seat 1 = index 0).
  *
  * MOCK: until the deployed contract has `get_floor`, a floor is derived from the lobby (the first
- * five dealers seated at the minimum rent, one seat empty, jackpot 0) so the 3D floor works today.
+ * five dealers seated at their seat's minimum rent, one seat empty, jackpot 0) so the 3D floor works today.
  * `get_floor` is probed again every minute and takes over as soon as it exists.
  */
 import { formatUsdc } from '../format'
 import {
+  SEATS,
   amount,
+  bool,
   fail,
   int,
   list,
   optional,
   parseLobby,
   record,
+  seatIndex,
   str,
   viewCall,
   type DealerView,
   type ViewTarget,
 } from './views'
 
+export { SEATS }
+
 // Constants mirrored from core (docs/floor.md); the contract enforces them, the UI only guides.
-export const SEATS = 6
-/** 1 tUSDC per hour, in base units. */
+/** 1 tUSDC per hour, in base units: the minimum rent of a seat with 1× traffic. */
 export const MIN_RENT_PER_HOUR = 1_000_000n
+/** `core::seats::SEAT_TRAFFIC_BP`: seat 1 (by the entrance) sees 1.5× the passers-by, the last 0.6×. */
+export const SEAT_TRAFFIC_BP: readonly number[] = [15_000, 13_000, 11_000, 10_000, 8_000, 6_000]
 /** 200 tUSDC: the smallest seed a player can open a table with. */
 export const MIN_TABLE_SEED = 200_000_000n
 /** Taking a seat prepays this many hours of rent from the pool. */
@@ -35,13 +42,29 @@ const BP = 10_000n
 /** How long a missing `get_floor` is trusted before asking again. */
 const REPROBE_MS = 60_000
 
+/** A seat's minimum rent scales with its traffic (docs/tycoon.md, "Seats"). */
+export function seatMinRent(index: number): bigint {
+  return (MIN_RENT_PER_HOUR * BigInt(SEAT_TRAFFIC_BP[index] ?? 0)) / BP
+}
+
 export interface SeatView {
+  /** 0-based index (JSON seat number − 1). */
   seat: number
   dealer_id: string | null
-  /** Base units per hour; meaningless on an empty seat. */
+  /** Base units per hour; "0" on an empty seat. */
   rent_per_hour: string
   /** Unix seconds; 0 on an empty seat. */
   seated_at: number
+  traffic_bp: number
+  /** The lowest rent this seat accepts. */
+  min_rent: string
+  /** Who holds the seat lease (the seated dealer's controller); null on an empty seat. */
+  controller: string | null
+  rent_owed: string
+  /** Unix seconds the prepaid rent covers; 0 on an empty seat. */
+  paid_until: number
+  /** Sale price when the holder listed the seat, else null. */
+  ask: string | null
 }
 
 export interface FloorView {
@@ -56,6 +79,7 @@ export interface FloorView {
 
 /** Floor fields DealerView gains with the new contract; absent (null) on the current one. */
 export interface DealerFloorInfo {
+  npc: boolean | null
   controller: string | null
   dealer_account: string | null
   look: string | null
@@ -82,16 +106,24 @@ export interface SeatedTable {
 function parseSeat(value: unknown, index: number): SeatView {
   const path = `floor.seats[${index}]`
   const s = record(value, path)
-  const seat = int(s.seat, `${path}.seat`)
-  if (seat !== index) fail(`${path}.seat`, String(index))
+  const seat = seatIndex(s.seat, `${path}.seat`)
+  if (seat !== index) fail(`${path}.seat`, String(index + 1))
   const dealerId = optional(s.dealer_id, (v) => str(v, `${path}.dealer_id`))
-  const rent = amount(s.rent_per_hour, `${path}.rent_per_hour`)
-  if (dealerId !== null && BigInt(rent) < MIN_RENT_PER_HOUR) fail(`${path}.rent_per_hour`, 'at least the minimum rent')
+  const minRent = amount(s.min_rent, `${path}.min_rent`)
+  if (BigInt(minRent) < seatMinRent(index)) fail(`${path}.min_rent`, 'at least the seat minimum')
+  const rent = optional(s.rent_per_hour, (v) => amount(v, `${path}.rent_per_hour`)) ?? '0'
+  if (dealerId !== null && BigInt(rent) < BigInt(minRent)) fail(`${path}.rent_per_hour`, 'at least the seat minimum rent')
   return {
     seat,
     dealer_id: dealerId,
     rent_per_hour: rent,
     seated_at: optional(s.seated_at, (v) => int(v, `${path}.seated_at`)) ?? 0,
+    traffic_bp: int(s.traffic_bp, `${path}.traffic_bp`),
+    min_rent: minRent,
+    controller: optional(s.controller, (v) => str(v, `${path}.controller`)),
+    rent_owed: amount(s.rent_owed, `${path}.rent_owed`),
+    paid_until: optional(s.paid_until, (v) => int(v, `${path}.paid_until`)) ?? 0,
+    ask: optional(s.ask, (v) => amount(v, `${path}.ask`)),
   }
 }
 
@@ -102,7 +134,7 @@ export function parseFloor(value: unknown): FloorView {
   const seated = seats.flatMap((s) => (s.dealer_id === null ? [] : [s.dealer_id]))
   if (new Set(seated).size !== seated.length) fail('floor.seats', 'one seat per dealer')
   const outbidMin = amount(f.outbid_min, 'floor.outbid_min')
-  if (BigInt(outbidMin) < MIN_RENT_PER_HOUR) fail('floor.outbid_min', 'at least the minimum rent')
+  if (BigInt(outbidMin) < seatMinRent(SEATS - 1)) fail('floor.outbid_min', 'at least the minimum rent')
   return {
     seats,
     lowest_rent: optional(f.lowest_rent, (v) => amount(v, 'floor.lowest_rent')),
@@ -119,6 +151,7 @@ export function parseFloorInfo(value: unknown): Map<string, DealerFloorInfo> {
     const path = `lobby[${i}]`
     const d = record(entry, path)
     info.set(str(d.id, `${path}.id`), {
+      npc: optional(d.npc, (v) => bool(v, `${path}.npc`)),
       controller: optional(d.controller, (v) => str(v, `${path}.controller`)),
       dealer_account: optional(d.dealer_account, (v) => str(v, `${path}.dealer_account`)),
       look: optional(d.look, (v) => str(v, `${path}.look`)),
@@ -152,16 +185,19 @@ function outbidOver(lowest: bigint): bigint {
   return (lowest * OUTBID_BP + BP - 1n) / BP
 }
 
-/** Same rule as core `outbid_min`: the minimum while a seat is empty, else lowest × 110 % rounded up. */
+/** Same rule as core `outbid_min`: the cheapest empty seat's minimum, else lowest × 110 % rounded up. */
 export function outbidMin(seats: readonly SeatView[]): bigint {
+  const empty = seats.filter((s) => s.dealer_id === null).map((s) => BigInt(s.min_rent))
+  if (empty.length > 0) return empty.reduce((a, b) => (b < a ? b : a))
   const lowest = lowestRent(seats)
-  if (lowest === null || seats.some((s) => s.dealer_id === null)) return MIN_RENT_PER_HOUR
-  return outbidOver(lowest)
+  return lowest === null ? MIN_RENT_PER_HOUR : outbidOver(lowest)
 }
 
-/** NPC dealers are controlled by their own dealer account; anyone else is a player. */
+/** v2 says it outright (`npc`); before, NPC dealers were controlled by their own dealer account. */
 export function isPlayerOwned(info: DealerFloorInfo | undefined): boolean {
-  return info !== undefined && info.controller !== null && info.controller !== info.dealer_account
+  if (info === undefined) return false
+  if (info.npc !== null) return !info.npc
+  return info.controller !== null && info.controller !== info.dealer_account
 }
 
 /** One entry per seat, in seat order: the table sitting there, or null for a seat for rent. */
@@ -210,13 +246,27 @@ export function openTableProblem(input: OpenTableInput): string | null {
 
 // ---- mock ---------------------------------------------------------------------------------
 
-/** The launch floor of docs/floor.md built from the lobby: five seated at the minimum rent, one empty. */
+/**
+ * The launch floor of docs/floor.md built from the lobby: five seated at their seat's minimum
+ * rent (`launch_floor`), one empty.
+ */
 export function mockFloor(dealers: readonly DealerView[]): FloorView {
   const seats: SeatView[] = Array.from({ length: SEATS }, (_, seat) => {
     const dealer = seat < SEATS - 1 ? dealers[seat] : undefined
-    return dealer
-      ? { seat, dealer_id: dealer.id, rent_per_hour: MIN_RENT_PER_HOUR.toString(), seated_at: 0 }
-      : { seat, dealer_id: null, rent_per_hour: '0', seated_at: 0 }
+    const minRent = seatMinRent(seat).toString()
+    const empty: SeatView = {
+      seat,
+      dealer_id: null,
+      rent_per_hour: '0',
+      seated_at: 0,
+      traffic_bp: SEAT_TRAFFIC_BP[seat],
+      min_rent: minRent,
+      controller: null,
+      rent_owed: '0',
+      paid_until: 0,
+      ask: null,
+    }
+    return dealer ? { ...empty, dealer_id: dealer.id, rent_per_hour: minRent, controller: dealer.controller } : empty
   })
   return {
     seats,
@@ -229,6 +279,7 @@ export function mockFloor(dealers: readonly DealerView[]): FloorView {
 
 /** Id of the made-up table that takes the evicted dealer's seat in the dev eviction demo. */
 export const DEV_NEWCOMER_ID = 'your-table'
+const DEV_CONTROLLER = 'you.testnet'
 
 /**
  * Dev demo (`?evict=<id>`) on mock data only: a player's new table outbids `dealerId` and takes its
@@ -237,9 +288,10 @@ export const DEV_NEWCOMER_ID = 'your-table'
 export function devEvict(state: FloorState, dealerId: string): FloorState {
   const evicted = state.dealers.find((d) => d.id === dealerId)
   if (!state.mock || !evicted || !state.floor.seats.some((s) => s.dealer_id === dealerId)) return state
-  const rent = outbidOver(MIN_RENT_PER_HOUR)
   const seats = state.floor.seats.map((s) =>
-    s.dealer_id === dealerId ? { ...s, dealer_id: DEV_NEWCOMER_ID, rent_per_hour: rent.toString() } : s,
+    s.dealer_id === dealerId
+      ? { ...s, dealer_id: DEV_NEWCOMER_ID, rent_per_hour: outbidOver(BigInt(s.min_rent)).toString(), controller: DEV_CONTROLLER }
+      : s,
   )
   const newcomer: DealerView = {
     ...evicted,
@@ -248,9 +300,11 @@ export function devEvict(state: FloorState, dealerId: string): FloorState {
     temperament: 'promoter',
     reason: 'bidding_for_seat',
     reason_text: 'just opened: outbid the cheapest seat',
+    npc: false,
+    controller: DEV_CONTROLLER,
   }
   const info = new Map(state.info)
-  info.set(DEV_NEWCOMER_ID, { controller: 'you.testnet', dealer_account: null, look: 'top-hat' })
+  info.set(DEV_NEWCOMER_ID, { npc: false, controller: DEV_CONTROLLER, dealer_account: null, look: 'top-hat' })
   return {
     ...state,
     dealers: [...state.dealers, newcomer],

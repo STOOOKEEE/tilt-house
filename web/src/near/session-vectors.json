@@ -1,0 +1,367 @@
+{
+  "client_seed": "lucky-seven",
+  "rng_below_10000": [
+    7383,
+    4651,
+    2461,
+    9741,
+    2156,
+    4103,
+    6921,
+    4211
+  ],
+  "server_public_key_hex": "fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618",
+  "server_seed": "0707070707070707070707070707070707070707070707070707070707070707",
+  "sessions": [
+    {
+      "rounds": [
+        {
+          "actions": [],
+          "bet": {
+            "dice": {
+              "chance_bp": 5000,
+              "over": true
+            }
+          },
+          "nonce": 1,
+          "outcome": {
+            "dice": {
+              "roll": 6370
+            }
+          },
+          "payout": "1980000",
+          "stake": "1000000"
+        },
+        {
+          "actions": [],
+          "bet": {
+            "dice": {
+              "chance_bp": 100,
+              "over": false
+            }
+          },
+          "nonce": 2,
+          "outcome": {
+            "dice": {
+              "roll": 7727
+            }
+          },
+          "payout": "0",
+          "stake": "100000"
+        },
+        {
+          "actions": [],
+          "bet": {
+            "dice": {
+              "chance_bp": 9800,
+              "over": false
+            }
+          },
+          "nonce": 3,
+          "outcome": {
+            "dice": {
+              "roll": 397
+            }
+          },
+          "payout": "2020407",
+          "stake": "2000000"
+        }
+      ],
+      "states": [
+        {
+          "signature": "919dc911e9c49969f2ec7f400455960576ba3b8649b34c48943a9e3d095197a70125aaeab3362a4306178b262dea94d9f39ad29f5c40fe13245f0be8be71ec0f",
+          "state": {
+            "balance": "10000000",
+            "chain": "4bb06f8e4e3a7715d201d573d0aa423762e55dabd61a2c02278fa56cc6d294e0",
+            "nonce": 0,
+            "session_id": "s-0"
+          }
+        },
+        {
+          "round_borsh": "01000000000000000088130140420f000000000000000000000000000000000000e218000060361e00000000000000000000000000",
+          "signature": "dba02bc1040f5af854fe4c5a24c83607ae24143afbae2c07b53c4fa09de131d5eb3cad513d825975067b3807c2325e1ff9e1dfe571d8ad35aa98cf8388ac0508",
+          "state": {
+            "balance": "10980000",
+            "chain": "667c43a03435f1cce700bf3ceb5dd6e0fe7b450190ba9d5da4ea6833f714955f",
+            "nonce": 1,
+            "session_id": "s-0"
+          }
+        },
+        {
+          "round_borsh": "020000000000000000640000a086010000000000000000000000000000000000002f1e000000000000000000000000000000000000",
+          "signature": "eb338ec041067e06bdcac79a7db20f9f7fb85fbcf4cf3dfaa7ca9591ea8569e143fa25ace6a3d6a41424a3aca36efaa1635fbf96422d8b3fa71169988f0eec00",
+          "state": {
+            "balance": "10880000",
+            "chain": "d8a9d7f039f48b69da89cde20ea235dfdfcb788251174d77a1fb1ace717f2970",
+            "nonce": 2,
+            "session_id": "s-0"
+          }
+        },
+        {
+          "round_borsh": "03000000000000000048260080841e0000000000000000000000000000000000008d01000037d41e00000000000000000000000000",
+          "signature": "e16371e52c7f1d04568314e59496a0a51210176d50d5fb5abea6f5eb10bb4ba3cd99b0741734a27131e089fd16a3e70be55fb263085445a7cf2affeecc13cb00",
+          "state": {
+            "balance": "10900407",
+            "chain": "0a6d3a30e428cd369bd2e1c803e9bd69f351bbb0c06def4ba8281de856fc31b3",
+            "nonce": 3,
+            "session_id": "s-0"
+          }
+        }
+      ],
+      "ticket": {
+        "client_seed": "lucky-seven",
+        "dealer_id": "ada",
+        "expires_at": 1762190000,
+        "game": "dice",
+        "lock": "10000000",
+        "max_bet": "5000000",
+        "max_win": "100000000",
+        "player": "alice.testnet",
+        "rake_bp": 100,
+        "server_seed_hash": "4bb06f8e4e3a7715d201d573d0aa423762e55dabd61a2c02278fa56cc6d294e0",
+        "session_id": "s-0"
+      },
+      "ticket_message": "74696c742d686f7573652f73657373696f6e2d7469636b65742f763103000000732d300d000000616c6963652e746573746e65740300000061646100809698000000000000000000000000004bb06f8e4e3a7715d201d573d0aa423762e55dabd61a2c02278fa56cc6d294e00b0000006c75636b792d736576656e6400404b4c0000000000000000000000000000e1f505000000000000000000000000b0e2086900000000",
+      "ticket_signature": "02c2ffd54b25f032dbd949321bf0bf9e5f34bfad52187b4010f6b08ba86bc51ba937c6e04eb3a6009e7cee7801cf4f9271aca58ab0ca995e33713663fe6f9905"
+    },
+    {
+      "rounds": [
+        {
+          "actions": [],
+          "bet": {
+            "roulette": "red"
+          },
+          "nonce": 1,
+          "outcome": {
+            "roulette": {
+              "pocket": 3
+            }
+          },
+          "payout": "1980000",
+          "stake": "1000000"
+        },
+        {
+          "actions": [],
+          "bet": {
+            "roulette": {
+              "straight": 17
+            }
+          },
+          "nonce": 2,
+          "outcome": {
+            "roulette": {
+              "pocket": 19
+            }
+          },
+          "payout": "0",
+          "stake": "100000"
+        },
+        {
+          "actions": [],
+          "bet": {
+            "roulette": {
+              "dozen": 2
+            }
+          },
+          "nonce": 3,
+          "outcome": {
+            "roulette": {
+              "pocket": 34
+            }
+          },
+          "payout": "0",
+          "stake": "500000"
+        }
+      ],
+      "states": [
+        {
+          "signature": "dde8b7bc3b16faf865c59da2c3a2d38e107e426f96244a994beb4a59f3f77f7dc101e38f69fca182b4ec9a3f9ed78f286101fb4a8f5e8096b8ca1be81c83f308",
+          "state": {
+            "balance": "10000000",
+            "chain": "4bb06f8e4e3a7715d201d573d0aa423762e55dabd61a2c02278fa56cc6d294e0",
+            "nonce": 0,
+            "session_id": "s-1"
+          }
+        },
+        {
+          "round_borsh": "0100000000000000010140420f0000000000000000000000000000000000010360361e00000000000000000000000000",
+          "signature": "cee747f386aaaf12eadd0bfa97d31b12c1d403fa0463df0e88c1bfe535a7993fc589044c8fbb229afe47775d9d7f9efee094d5213d1708f3123216d8aafac209",
+          "state": {
+            "balance": "10980000",
+            "chain": "7cc8376c2745540214ea19ffca948b8aabe281c8f5fcb59c96d8dfa8d4d0410e",
+            "nonce": 1,
+            "session_id": "s-1"
+          }
+        },
+        {
+          "round_borsh": "0200000000000000010011a086010000000000000000000000000000000000011300000000000000000000000000000000",
+          "signature": "2fb23bd0fb7c1638a634072e925f4e2df9a032493b4b7441c1d4248440c0bf98f43b3423f53a116cd234210650ccf6302283c8620357e0688f9e7bc27bc06c03",
+          "state": {
+            "balance": "10880000",
+            "chain": "9c71190cc4d74bdb1178626ec708f3708dcf9ade804b62348f4fa1fa43be6e69",
+            "nonce": 2,
+            "session_id": "s-1"
+          }
+        },
+        {
+          "round_borsh": "030000000000000001070220a1070000000000000000000000000000000000012200000000000000000000000000000000",
+          "signature": "3e3404439fc8ab9324814cdbf45aedcbe615301fdcf2b20f33c120ccba9ba70b728168cdaec46aeb6fb9bfae70a436c8e9e4c48fe21819371eb63c51a00f0b09",
+          "state": {
+            "balance": "10380000",
+            "chain": "3c163bf0ef6d47ea0a59ef564819c93ccb01e27cd670b00b149be551121ae39a",
+            "nonce": 3,
+            "session_id": "s-1"
+          }
+        }
+      ],
+      "ticket": {
+        "client_seed": "lucky-seven",
+        "dealer_id": "ada",
+        "expires_at": 1762190000,
+        "game": "roulette",
+        "lock": "10000000",
+        "max_bet": "5000000",
+        "max_win": "100000000",
+        "player": "alice.testnet",
+        "rake_bp": 100,
+        "server_seed_hash": "4bb06f8e4e3a7715d201d573d0aa423762e55dabd61a2c02278fa56cc6d294e0",
+        "session_id": "s-1"
+      },
+      "ticket_message": "74696c742d686f7573652f73657373696f6e2d7469636b65742f763103000000732d310d000000616c6963652e746573746e65740300000061646101809698000000000000000000000000004bb06f8e4e3a7715d201d573d0aa423762e55dabd61a2c02278fa56cc6d294e00b0000006c75636b792d736576656e6400404b4c0000000000000000000000000000e1f505000000000000000000000000b0e2086900000000",
+      "ticket_signature": "3a62ad6acd63f0b800e685069c83ecc5cea4d46dc7b1c262053bf7994ccd7180146f43e2a48a1dccd86ce0cabf8395c1ca51169ef6e4b3660b752208661fd90e"
+    },
+    {
+      "rounds": [
+        {
+          "actions": [
+            "hit"
+          ],
+          "bet": "blackjack",
+          "nonce": 1,
+          "outcome": {
+            "blackjack": {
+              "dealer": [
+                10
+              ],
+              "done": true,
+              "doubled": false,
+              "player": [
+                9,
+                12,
+                3
+              ]
+            }
+          },
+          "payout": "0",
+          "stake": "1000000"
+        },
+        {
+          "actions": [
+            "double"
+          ],
+          "bet": "blackjack",
+          "nonce": 2,
+          "outcome": {
+            "blackjack": {
+              "dealer": [
+                12,
+                5,
+                2
+              ],
+              "done": true,
+              "doubled": true,
+              "player": [
+                10,
+                2,
+                6
+              ]
+            }
+          },
+          "payout": "3960000",
+          "stake": "1000000"
+        },
+        {
+          "actions": [
+            "hit"
+          ],
+          "bet": "blackjack",
+          "nonce": 3,
+          "outcome": {
+            "blackjack": {
+              "dealer": [
+                4
+              ],
+              "done": true,
+              "doubled": false,
+              "player": [
+                12,
+                9,
+                9
+              ]
+            }
+          },
+          "payout": "0",
+          "stake": "500000"
+        }
+      ],
+      "states": [
+        {
+          "signature": "362c0c4f335d4be7727cd1681296c0d332512b931b77c75bd536d0c62b3011b2dc2eee54e34a30ea72ed6184e9679e419918252cfd197a88077933e838f00901",
+          "state": {
+            "balance": "10000000",
+            "chain": "4bb06f8e4e3a7715d201d573d0aa423762e55dabd61a2c02278fa56cc6d294e0",
+            "nonce": 0,
+            "session_id": "s-2"
+          }
+        },
+        {
+          "round_borsh": "01000000000000000240420f0000000000000000000000000001000000000203000000090c03010000000a000100000000000000000000000000000000",
+          "signature": "b1eaf7130f48b28c58860cc765c18b8b36af22ff17b4f332cf9d6c718b39b0dcd888b294dd6c9eb9ed5d84a48be7b1942428188da12a9020cb125d1a97824408",
+          "state": {
+            "balance": "9000000",
+            "chain": "977d15ef1788ec43f17283986c79019d17873e79221b64e9cc21e7d9427b8cc6",
+            "nonce": 1,
+            "session_id": "s-2"
+          }
+        },
+        {
+          "round_borsh": "02000000000000000240420f00000000000000000000000000010000000202030000000a0206030000000c05020101c06c3c00000000000000000000000000",
+          "signature": "7c35a2fd05379b45e3bc2968c6bb447a7df80d2e6950eae78f286f5190505903b3a314d4d6db61849e035085bef074257010b3aa521965610fbe878dfa129601",
+          "state": {
+            "balance": "10960000",
+            "chain": "33b536515cf1df9539baf6ca3f1d04fd0e953ff7eec19a91f081093023f80493",
+            "nonce": 2,
+            "session_id": "s-2"
+          }
+        },
+        {
+          "round_borsh": "03000000000000000220a10700000000000000000000000000010000000002030000000c09090100000004000100000000000000000000000000000000",
+          "signature": "18e23129b08a5f595fafb19d5e524983023a7106446811a3586855f16b7e4c486984d9b3410ff114f03cc265e935f63502b94fbd60d2a7f63a77bbf6bd31a50b",
+          "state": {
+            "balance": "10460000",
+            "chain": "c2a57d2744d289b405180a3dd5c1fca2bcbd413615e76ba639d18847351da25b",
+            "nonce": 3,
+            "session_id": "s-2"
+          }
+        }
+      ],
+      "ticket": {
+        "client_seed": "lucky-seven",
+        "dealer_id": "ada",
+        "expires_at": 1762190000,
+        "game": "blackjack",
+        "lock": "10000000",
+        "max_bet": "5000000",
+        "max_win": "100000000",
+        "player": "alice.testnet",
+        "rake_bp": 100,
+        "server_seed_hash": "4bb06f8e4e3a7715d201d573d0aa423762e55dabd61a2c02278fa56cc6d294e0",
+        "session_id": "s-2"
+      },
+      "ticket_message": "74696c742d686f7573652f73657373696f6e2d7469636b65742f763103000000732d320d000000616c6963652e746573746e65740300000061646102809698000000000000000000000000004bb06f8e4e3a7715d201d573d0aa423762e55dabd61a2c02278fa56cc6d294e00b0000006c75636b792d736576656e6400404b4c0000000000000000000000000000e1f505000000000000000000000000b0e2086900000000",
+      "ticket_signature": "69db787549a7898991fa39aff9d681bedb020e7c4fa6ab5e32c2999bfb063c3f9c0a6488eb910dc848a39dc2cb1dffa1df5abe1d3dab58f54efd76aa1d8f540f"
+    }
+  ],
+  "step_seed_1_0": "8bd7dbdef4533cb7fc4371a475046078aa8b5c478b93b59692b0962b2aff9ace",
+  "step_seed_1_2": "c2500b5acf9242d5dd892d6743226f341c0a272056f950a3669ca1168fd45bc0"
+}

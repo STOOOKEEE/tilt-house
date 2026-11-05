@@ -32,9 +32,84 @@ const DEALER = {
   share_price_sell: '1000000',
 }
 
+/** What a v1 lobby entry (no tycoon fields) parses to for the v2 fields. */
+const NO_V2 = {
+  npc: null,
+  controller: null,
+  autopilot: null,
+  temperament_changed_at: null,
+  last_boost_at: null,
+  seat: null,
+  seat_traffic_bp: null,
+  rent_per_hour: null,
+  rent_owed: null,
+  paid_until: null,
+  ask: null,
+  cooldown_until: null,
+  offer_rake_bp: null,
+  base_edge_bp: null,
+  open_sessions: null,
+  earnings_1h: null,
+  rent_1h: null,
+  pnl_1h: null,
+  gamblers_1h: null,
+  game_share_bp: null,
+}
+
+/** docs/contract-api.md `get_lobby` v2 extras. */
+const V2 = {
+  npc: true,
+  controller: 'ada.tilthouse.testnet',
+  autopilot: true,
+  temperament_changed_at: 0,
+  last_boost_at: 0,
+  offer_rake_bp: 420,
+  base_edge_bp: 0,
+  seated: true,
+  seat: 1,
+  seat_traffic_bp: 15000,
+  rent_per_hour: '1500000',
+  rent_owed: '250',
+  paid_until: 1762190000,
+  ask: null,
+  cooldown_until: 0,
+  open_sessions: 1,
+  earnings_1h: '1200000',
+  rent_1h: '1500000',
+  pnl_1h: '-300000',
+  stats: { bets_1h: 40, volume_1h: '4000000', player_net_1h: '-1200000', idle_secs: 12, inflow_1h: '0', game_share_bp: 6000, gamblers_1h: 3 },
+}
+
 describe('parseLobby', () => {
-  it('accepts the documented dealer shape and drops fields the UI does not use', () => {
-    expect(parseLobby([{ ...DEALER, traits: { greed: 85 }, stats: {}, repriced_at: 1 }])).toEqual([DEALER])
+  it('accepts the v1 dealer shape, v2 fields null, and drops fields the UI does not use', () => {
+    expect(parseLobby([{ ...DEALER, traits: { greed: 85 }, stats: {}, repriced_at: 1 }])).toEqual([{ ...DEALER, ...NO_V2 }])
+  })
+
+  it('reads the v2 fields: 1-based seat to index, signed P&L, stats', () => {
+    const [dealer] = parseLobby([{ ...DEALER, ...V2 }])
+    expect(dealer).toMatchObject({
+      npc: true,
+      controller: 'ada.tilthouse.testnet',
+      autopilot: true,
+      seat: 0,
+      seat_traffic_bp: 15000,
+      rent_owed: '250',
+      ask: null,
+      offer_rake_bp: 420,
+      earnings_1h: '1200000',
+      pnl_1h: '-300000',
+      gamblers_1h: 3,
+      game_share_bp: 6000,
+    })
+  })
+
+  it('fails closed on a present v2 field of the wrong type', () => {
+    expect(() => parseLobby([{ ...DEALER, ...V2, seat: 0 }])).toThrow(/seat number/)
+    expect(() => parseLobby([{ ...DEALER, ...V2, seat: 7 }])).toThrow(/seat number/)
+    expect(() => parseLobby([{ ...DEALER, ...V2, pnl_1h: '-0.3' }])).toThrow(/pnl_1h/)
+    expect(() => parseLobby([{ ...DEALER, ...V2, rent_owed: '-1' }])).toThrow(/rent_owed/)
+    expect(() => parseLobby([{ ...DEALER, ...V2, npc: 'yes' }])).toThrow(/npc/)
+    expect(() => parseLobby([{ ...DEALER, ...V2, stats: { gamblers_1h: -1 } }])).toThrow(/gamblers_1h/)
   })
 
   it('fails closed on amounts sent as numbers, unknown games or missing fields', () => {
@@ -49,7 +124,7 @@ describe('parseLobby', () => {
 })
 
 describe('parsePlayer', () => {
-  it('reads balance, LP positions and the open round', () => {
+  it('reads a v1 player: balance, LP positions and the open round, no tables or sessions', () => {
     expect(
       parsePlayer({
         account_id: 'alice.testnet',
@@ -59,7 +134,32 @@ describe('parsePlayer', () => {
         last_round: 12,
         rounds: [3, 12],
       }),
-    ).toEqual({ balance: '5000000', lp: [{ dealer_id: 'ada', shares: '10', value: '9' }], open_round: null, last_round: 12 })
+    ).toEqual({
+      balance: '5000000',
+      lp: [{ dealer_id: 'ada', shares: '10', value: '9' }],
+      open_round: null,
+      last_round: 12,
+      tables: [],
+      seats: [],
+      open_session: null,
+      sessions: [],
+    })
+  })
+
+  it('reads a v2 player: tables, 1-based seats to indexes, sessions', () => {
+    expect(
+      parsePlayer({
+        account_id: 'alice.testnet',
+        balance: '5000000',
+        lp: [],
+        tables: ['alice-dice'],
+        seats: [3],
+        open_session: 's-17',
+        sessions: ['s-3', 's-9', 's-17'],
+      }),
+    ).toMatchObject({ tables: ['alice-dice'], seats: [2], open_session: 's-17', sessions: ['s-3', 's-9', 's-17'], open_round: null })
+    expect(() => parsePlayer({ balance: '0', lp: [], seats: [0] })).toThrow(/player\.seats\[0\]/)
+    expect(() => parsePlayer({ balance: '0', lp: [], tables: [1] })).toThrow(/player\.tables\[0\]/)
   })
 
   it('rejects a float balance or a missing player', () => {

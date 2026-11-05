@@ -5,9 +5,9 @@
  */
 
 export type Game = 'dice' | 'roulette' | 'blackjack'
-const GAMES: readonly Game[] = ['dice', 'roulette', 'blackjack']
+export const GAMES: readonly Game[] = ['dice', 'roulette', 'blackjack']
 
-export interface DealerView {
+export interface DealerView extends DealerTycoonView {
   id: string
   name: string
   game: Game
@@ -34,6 +34,39 @@ export interface DealerView {
   share_price_sell: string
 }
 
+/** v2 fields of `get_lobby` (docs/contract-api.md): null when the v1 contract omits them. */
+export interface DealerTycoonView {
+  /** NPC dealer (launch table) vs a player's table. */
+  npc: boolean | null
+  controller: string | null
+  autopilot: boolean | null
+  /** Unix seconds; 0 = never. */
+  temperament_changed_at: number | null
+  last_boost_at: number | null
+  /** 0-based seat index (JSON seats are 1-based); null off the floor. */
+  seat: number | null
+  seat_traffic_bp: number | null
+  rent_per_hour: string | null
+  rent_owed: string | null
+  /** Unix seconds the prepaid rent covers. */
+  paid_until: number | null
+  /** Seat sale price; null when not listed. */
+  ask: string | null
+  /** Unix seconds before the dealer may bid again after an eviction; 0 = none. */
+  cooldown_until: number | null
+  /** The rake the dealer set (`rake_bp` is the rake in force, lower during a boost). */
+  offer_rake_bp: number | null
+  base_edge_bp: number | null
+  open_sessions: number | null
+  /** Signed decimal strings: what players lost here, rent paid, and their difference, last hour. */
+  earnings_1h: string | null
+  rent_1h: string | null
+  pnl_1h: string | null
+  gamblers_1h: number | null
+  /** This table's share of its game's bets at seated tables over the hour. */
+  game_share_bp: number | null
+}
+
 export interface LpPosition {
   dealer_id: string
   shares: string
@@ -44,9 +77,18 @@ export interface LpPosition {
 export interface PlayerView {
   balance: string
   lp: LpPosition[]
+  /** v1 only (per-round betting); null on v2. */
   open_round: number | null
   /** The latest round whatever its status: how the table finds a round that settled fast. */
   last_round: number | null
+  // ---- v2: empty / null on the v1 contract ----
+  /** Dealer ids the account controls. */
+  tables: string[]
+  /** 0-based seat indexes it holds (JSON seats are 1-based). */
+  seats: number[]
+  open_session: string | null
+  /** The last session ids, oldest first. */
+  sessions: string[]
 }
 
 /** Done = `settled` or `refunded`; moves are legal only in `player_turn`. */
@@ -182,6 +224,24 @@ export function amount(value: unknown, path: string): string {
   return value
 }
 
+const SIGNED_DECIMAL = /^-?\d+$/
+
+/** Signed amounts (P&L): decimal strings with an optional `-`. */
+export function signedAmount(value: unknown, path: string): string {
+  if (typeof value !== 'string' || !SIGNED_DECIMAL.test(value)) fail(path, 'a signed decimal string')
+  return value
+}
+
+/** The floor's seats (docs/floor.md). */
+export const SEATS = 6
+
+/** JSON seats are 1-based (seat 1 by the entrance); the UI indexes them from 0. */
+export function seatIndex(value: unknown, path: string): number {
+  const seat = int(value, path)
+  if (seat < 1 || seat > SEATS) fail(path, `a seat number 1..${SEATS}`)
+  return seat - 1
+}
+
 export function optional<T>(value: unknown, read: (v: unknown) => T): T | null {
   return value === undefined || value === null ? null : read(value)
 }
@@ -214,6 +274,36 @@ export function parseDealer(value: unknown, path = 'dealer'): DealerView {
     shares: amount(d.shares, `${path}.shares`),
     share_price_buy: amount(d.share_price_buy, `${path}.share_price_buy`),
     share_price_sell: amount(d.share_price_sell, `${path}.share_price_sell`),
+    ...parseDealerV2(d, path),
+  }
+}
+
+/** v2 fields: each may be absent (v1 contract), but a present one must have the documented type. */
+function parseDealerV2(d: Json, path: string): DealerTycoonView {
+  const n = (key: string) => optional(d[key], (v) => int(v, `${path}.${key}`))
+  const signed = (key: string) => optional(d[key], (v) => signedAmount(v, `${path}.${key}`))
+  const stats = optional(d.stats, (v) => record(v, `${path}.stats`))
+  return {
+    npc: optional(d.npc, (v) => bool(v, `${path}.npc`)),
+    controller: optional(d.controller, (v) => str(v, `${path}.controller`)),
+    autopilot: optional(d.autopilot, (v) => bool(v, `${path}.autopilot`)),
+    temperament_changed_at: n('temperament_changed_at'),
+    last_boost_at: n('last_boost_at'),
+    seat: optional(d.seat, (v) => seatIndex(v, `${path}.seat`)),
+    seat_traffic_bp: n('seat_traffic_bp'),
+    rent_per_hour: optional(d.rent_per_hour, (v) => amount(v, `${path}.rent_per_hour`)),
+    rent_owed: optional(d.rent_owed, (v) => amount(v, `${path}.rent_owed`)),
+    paid_until: n('paid_until'),
+    ask: optional(d.ask, (v) => amount(v, `${path}.ask`)),
+    cooldown_until: n('cooldown_until'),
+    offer_rake_bp: n('offer_rake_bp'),
+    base_edge_bp: n('base_edge_bp'),
+    open_sessions: n('open_sessions'),
+    earnings_1h: signed('earnings_1h'),
+    rent_1h: signed('rent_1h'),
+    pnl_1h: signed('pnl_1h'),
+    gamblers_1h: stats && optional(stats.gamblers_1h, (v) => int(v, `${path}.stats.gamblers_1h`)),
+    game_share_bp: stats && optional(stats.game_share_bp, (v) => int(v, `${path}.stats.game_share_bp`)),
   }
 }
 
@@ -236,6 +326,10 @@ export function parsePlayer(value: unknown): PlayerView {
     lp,
     open_round: optional(p.open_round, (v) => int(v, 'player.open_round')),
     last_round: optional(p.last_round, (v) => int(v, 'player.last_round')),
+    tables: optional(p.tables, (v) => list(v, 'player.tables').map((t, i) => str(t, `player.tables[${i}]`))) ?? [],
+    seats: optional(p.seats, (v) => list(v, 'player.seats').map((s, i) => seatIndex(s, `player.seats[${i}]`))) ?? [],
+    open_session: optional(p.open_session, (v) => str(v, 'player.open_session')),
+    sessions: optional(p.sessions, (v) => list(v, 'player.sessions').map((s, i) => str(s, `player.sessions[${i}]`))) ?? [],
   }
 }
 
@@ -250,7 +344,7 @@ function rouletteBet(value: unknown, path: string): RouletteBet {
   fail(path, 'a roulette bet')
 }
 
-function bet(value: unknown): Bet {
+export function parseBet(value: unknown): Bet {
   if (value === 'blackjack') return 'blackjack'
   const b = record(value, 'round.bet')
   if (b.roulette !== undefined) return { roulette: rouletteBet(b.roulette, 'round.bet.roulette') }
@@ -258,7 +352,7 @@ function bet(value: unknown): Bet {
   return { dice: { chance_bp: int(dice.chance_bp, 'round.bet.dice.chance_bp'), over: bool(dice.over, 'round.bet.dice.over') } }
 }
 
-function hand(value: unknown): BlackjackHand {
+export function parseHand(value: unknown): BlackjackHand {
   const h = record(value, 'round.bj')
   const [player, dealer] = (['player', 'dealer'] as const).map((side) =>
     list(h[side], `round.bj.${side}`).map((c, i) => int(c, `round.bj.${side}[${i}]`)),
@@ -285,7 +379,7 @@ export function parseRound(value: unknown): RoundView | null {
     player: str(r.player, 'round.player'),
     dealer_id: str(r.dealer_id, 'round.dealer_id'),
     game: oneOf(GAMES, r.game, 'round.game'),
-    bet: bet(r.bet),
+    bet: parseBet(r.bet),
     stake: amount(r.stake, 'round.stake'),
     wager: amount(r.wager, 'round.wager'),
     rake_bp: int(r.rake_bp, 'round.rake_bp'),
@@ -295,7 +389,7 @@ export function parseRound(value: unknown): RoundView | null {
     updated_at: int(r.updated_at, 'round.updated_at'),
     roll: optional(r.roll, (v) => int(v, 'round.roll')),
     pocket: optional(r.pocket, (v) => int(v, 'round.pocket')),
-    bj: optional(r.bj, hand),
+    bj: optional(r.bj, parseHand),
     payout: optional(r.payout, (v) => amount(v, 'round.payout')),
     proofs: list(r.proofs, 'round.proofs').map(proof),
     error: optional(r.error, (v) => str(v, 'round.error')),

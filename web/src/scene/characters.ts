@@ -242,7 +242,7 @@ const LEG_SWING = 0.5
 const KNEE_BEND = 0.7
 const ARM_SWING = 0.45
 
-function buildStool(): THREE.Mesh {
+export function buildStool(): THREE.Mesh {
   return voxelPart([
     { size: [0.5, 0.08, 0.5], at: [0, HIP_Y - 0.12, -0.02], color: STOOL },
     { size: [0.08, HIP_Y - 0.16, 0.08], at: [0, (HIP_Y - 0.16) / 2, -0.02], color: shade(STOOL, -0.1) },
@@ -398,10 +398,11 @@ const BLINK_S = 0.12
 const BUBBLE_Y = 2.0
 const TOP_HAT_EXTRA = 0.4
 
-export function createCharacter(look: DealerLook, name: string): WalkerRig {
+/** `stool: false` for figures that sit on the room's stools instead of carrying their own (gamblers). */
+export function createCharacter(look: DealerLook, name: string, { stool = true } = {}): WalkerRig {
   const root = new THREE.Group()
   root.name = name
-  root.add(buildStool())
+  if (stool) root.add(buildStool())
   const figure = new THREE.Group()
   root.add(figure)
   const legs = [buildLeg(-0.14), buildLeg(0.14)]
