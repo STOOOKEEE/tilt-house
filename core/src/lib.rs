@@ -35,7 +35,7 @@ pub use floor::{
 pub use jackpot::{draw_jackpot, jackpot_hit, JACKPOT_ODDS_UNIT, MIN_JACKPOT};
 pub use pool::{Pool, PoolError, FLOOR_SHARES_PER_UNIT, SHARES_PER_UNIT};
 pub use rng::Rng;
-pub use roulette::{roulette_gross, roulette_spin, RouletteBet};
+pub use roulette::{roulette_gross, roulette_spin, RouletteBet, RouletteSpot, MAX_SPOTS};
 pub use seats::{seat_min_rent, SeatSale, MIN_SEAT_RENT, SEAT_TRAFFIC_BP};
 
 /// Basis points per unit.
@@ -61,22 +61,25 @@ pub enum Game {
 }
 
 /// What the player chose for a round. Blackjack has no choice at the deal.
-/// JSON: `{"dice": {"chance_bp": 5000, "over": true}}`, `{"roulette": "red"}`, `"blackjack"`.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize, Serialize, Deserialize,
-)]
+/// JSON: `{"dice": {"chance_bp": 5000, "over": true}}`, `{"roulette": "red"}`, `"blackjack"`,
+/// `{"roulette_spots": [{"bet": "red", "stake": "100000"}, …]}`.
+/// Variants are only ever appended: the borsh index of a bet is in every hashed round.
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Bet {
     Dice(DiceBet),
     Roulette(RouletteBet),
     Blackjack,
+    /// Several roulette bets settled by one spin, like chips spread on a real felt. The round's
+    /// stake is their total; each spot pays (and is raked) as if played alone.
+    RouletteSpots(Vec<RouletteSpot>),
 }
 
 impl Bet {
     pub fn game(&self) -> Game {
         match self {
             Self::Dice(_) => Game::Dice,
-            Self::Roulette(_) => Game::Roulette,
+            Self::Roulette(_) | Self::RouletteSpots(_) => Game::Roulette,
             Self::Blackjack => Game::Blackjack,
         }
     }
@@ -86,6 +89,7 @@ impl Bet {
             Self::Dice(bet) => bet.is_valid(),
             Self::Roulette(bet) => bet.is_valid(),
             Self::Blackjack => true,
+            Self::RouletteSpots(spots) => roulette::spots_are_valid(spots),
         }
     }
 }
@@ -166,8 +170,9 @@ pub fn worst_case_multiple(game: Game) -> u128 {
 
 /// Most the pool may have to pay for this bet (gross before rake, stake included); what it must
 /// reserve while the round is open. A blackjack hand reserves the doubled win from the deal, so
-/// doubling never needs new liquidity. A bet for another game or an invalid bet returns
-/// `u128::MAX`, which no pool can cover, so it is refused.
+/// doubling never needs new liquidity. Multi-spot spins carry their own stakes: `stake` must be
+/// their total. A bet for another game, an invalid bet or a wrong total returns `u128::MAX`,
+/// which no pool can cover, so it is refused.
 pub fn worst_case_payout(game: Game, stake: u128, bet: &Bet) -> u128 {
     if bet.game() != game || !bet.is_valid() {
         return u128::MAX;
@@ -176,6 +181,10 @@ pub fn worst_case_payout(game: Game, stake: u128, bet: &Bet) -> u128 {
         Bet::Dice(dice) => dice::dice_win_gross(stake, dice.chance_bp),
         Bet::Roulette(roulette) => roulette::roulette_win_gross(stake, roulette),
         Bet::Blackjack => stake.saturating_mul(worst_case_multiple(Game::Blackjack)),
+        Bet::RouletteSpots(spots) if roulette::spots_total(spots) == Some(stake) => {
+            roulette::spots_worst_gross(spots)
+        }
+        Bet::RouletteSpots(_) => u128::MAX,
     }
 }
 
@@ -311,5 +320,53 @@ mod tests {
             serde_json::to_string(&Game::Roulette).unwrap(),
             r#""roulette""#
         );
+        let spots: Bet = serde_json::from_str(
+            r#"{"roulette_spots":[{"bet":{"split":[7,10]},"stake":"100000"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            spots,
+            Bet::RouletteSpots(vec![RouletteSpot {
+                bet: RouletteBet::Split(7, 10),
+                stake: 100_000
+            }])
+        );
+    }
+
+    /// Rounds hashed before multi-spot spins existed must keep their bytes: variants are appended.
+    #[test]
+    fn bet_borsh_is_stable() {
+        let dice = Bet::Dice(DiceBet {
+            chance_bp: 5_000,
+            over: true,
+        });
+        assert_eq!(borsh::to_vec(&dice).unwrap(), [0, 0x88, 0x13, 1]);
+        assert_eq!(
+            borsh::to_vec(&Bet::Roulette(RouletteBet::Straight(17))).unwrap(),
+            [1, 0, 17]
+        );
+        assert_eq!(borsh::to_vec(&Bet::Blackjack).unwrap(), [2]);
+        let spots = Bet::RouletteSpots(vec![RouletteSpot {
+            bet: RouletteBet::Red,
+            stake: 100_000,
+        }]);
+        let mut expected = vec![3, 1, 0, 0, 0, 1];
+        expected.extend(100_000u128.to_le_bytes());
+        assert_eq!(borsh::to_vec(&spots).unwrap(), expected);
+    }
+
+    #[test]
+    fn spots_worst_case_is_the_best_pocket_and_needs_the_right_total() {
+        let spot = |bet, stake| RouletteSpot { bet, stake };
+        let spots = Bet::RouletteSpots(vec![
+            spot(RouletteBet::Straight(7), 10),
+            spot(RouletteBet::Split(7, 10), 10),
+            spot(RouletteBet::Black, 10),
+        ]);
+        // Pocket 7 (red) pays the number and the split: 360 + 180.
+        assert_eq!(worst_case_payout(Game::Roulette, 30, &spots), 540);
+        assert_eq!(worst_case_payout(Game::Roulette, 29, &spots), u128::MAX);
+        assert_eq!(worst_case_payout(Game::Dice, 30, &spots), u128::MAX);
+        assert!(540 <= 30 * worst_case_multiple(Game::Roulette));
     }
 }

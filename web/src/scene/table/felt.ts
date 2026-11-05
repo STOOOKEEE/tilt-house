@@ -1,6 +1,7 @@
 // What the felt means where the player clicks, and how chips stack on it. Pure (no three.js):
 // felt coordinates are u (0 left → 1 right) and v (0 dealer side → 1 player side).
 import { DICE_MAX_CHANCE_BP, DICE_MIN_CHANCE_BP } from '../../house'
+import { MAX_SPOTS } from '../../near/session-client'
 import type { Bet, RouletteBet } from '../../near/views'
 
 export interface Cell {
@@ -28,6 +29,25 @@ export function numberCell(n: number): Cell {
   return { u: LAYOUT.u0 + CW * (1 + col), v: LAYOUT.v0 + RH * row, w: CW, h: RH }
 }
 
+/**
+ * Within this share of a cell from a line of the number grid, a chip sits on the line (a split, a
+ * street on the grid's bottom edge) or on a crossing (a corner, a six line), as on a real felt.
+ */
+const LINE = 0.25
+/** The number grid's bottom edge, next to the dozens: streets and six lines sit on it. */
+const GRID_BOTTOM = 3
+
+/** Grid column (1..12) and row (0 top..2 bottom) of a number 1..36. */
+const colOf = (n: number): number => Math.floor((n - 1) / 3) + 1
+const rowOf = (n: number): number => 2 - ((n - 1) % 3)
+/** The number printed at a grid column and row. */
+const numberAt = (col: number, row: number): number => (col - 1) * 3 + (3 - row)
+
+/** A chip-sized cell centred on grid point (`col`, `row`) in cell units: a line or a crossing. */
+function onGrid(col: number, row: number): Cell {
+  return { u: LAYOUT.u0 + CW * (col - LINE), v: LAYOUT.v0 + RH * (row - LINE), w: CW * 2 * LINE, h: RH * 2 * LINE }
+}
+
 /** Where chips go for a bet. */
 export function betCell(bet: RouletteBet): Cell {
   if (typeof bet === 'string') {
@@ -35,14 +55,28 @@ export function betCell(bet: RouletteBet): Cell {
   }
   if ('straight' in bet) return numberCell(bet.straight)
   if ('dozen' in bet) return { u: LAYOUT.u0 + CW * (1 + 4 * (bet.dozen - 1)), v: LAYOUT.v0 + RH * 3, w: CW * 4, h: RH }
-  return { u: LAYOUT.u0 + CW * 13, v: LAYOUT.v0 + RH * (3 - bet.column), w: CW, h: RH }
+  if ('column' in bet) return { u: LAYOUT.u0 + CW * 13, v: LAYOUT.v0 + RH * (3 - bet.column), w: CW, h: RH }
+  if ('split' in bet) {
+    const [a, b] = bet.split
+    // On the zero's edge, between two columns, or between two rows of one column.
+    if (a === 0) return onGrid(1, rowOf(b) + 0.5)
+    if (b - a === 3) return onGrid(colOf(b), rowOf(a) + 0.5)
+    return onGrid(colOf(a) + 0.5, rowOf(a))
+  }
+  if ('street' in bet) return onGrid(colOf(bet.street) + 0.5, GRID_BOTTOM)
+  if ('corner' in bet) return onGrid(colOf(bet.corner) + 1, rowOf(bet.corner))
+  return onGrid(colOf(bet.six_line) + 1, GRID_BOTTOM)
 }
 
-/** The roulette bet printed under a felt point: the exact inverse of `betCell`. */
+/** The roulette bet under a felt point: the exact inverse of `betCell`. */
 export function rouletteBetAt(u: number, v: number): RouletteBet | null {
-  const col = Math.floor((u - LAYOUT.u0) / CW)
-  const row = Math.floor((v - LAYOUT.v0) / RH)
+  const x = (u - LAYOUT.u0) / CW
+  const y = (v - LAYOUT.v0) / RH
+  const col = Math.floor(x)
+  const row = Math.floor(y)
   if (u < LAYOUT.u0 || v < LAYOUT.v0 || col >= COLS || row >= ROWS) return null
+  const inside = insideBetAt(x, y)
+  if (inside) return inside
   if (row <= 2) {
     if (col === 0) return { straight: 0 }
     if (col === 13) return { column: 3 - row }
@@ -51,6 +85,23 @@ export function rouletteBetAt(u: number, v: number): RouletteBet | null {
   if (col === 0 || col === 13) return null
   if (row === 3) return { dozen: Math.floor((col - 1) / 4) + 1 }
   return OUTSIDE[Math.floor((col - 1) / 2)]
+}
+
+/** A point on a line or crossing of the number grid (`x`, `y` in cell units), or null. */
+function insideBetAt(x: number, y: number): RouletteBet | null {
+  const k = Math.round(x)
+  const m = Math.round(y)
+  // Vertical line k runs left of number column k (1 = the zero's edge); horizontal line m runs
+  // above grid row m (GRID_BOTTOM = the edge next to the dozens). The grid's outer edges hold no bet.
+  const onCol = Math.abs(x - k) < LINE && k >= 1 && k <= 12
+  const onRow = Math.abs(y - m) < LINE && m >= 1 && m <= GRID_BOTTOM
+  const row = Math.floor(y)
+  const col = Math.floor(x)
+  if (onCol && k === 1) return row <= 2 ? { split: [0, numberAt(1, row)] } : null
+  if (onCol && onRow) return m === GRID_BOTTOM ? { six_line: numberAt(k - 1, 2) } : { corner: numberAt(k - 1, m) }
+  if (onCol) return row <= 2 ? { split: [numberAt(k - 1, row), numberAt(k, row)] } : null
+  if (!onRow || col < 1 || col > 12) return null
+  return m === GRID_BOTTOM ? { street: numberAt(col, 2) } : { split: [numberAt(col, m), numberAt(col, m - 1)] }
 }
 
 // ---- dice and blackjack spots -------------------------------------------------------------
@@ -134,10 +185,15 @@ export interface SlipEntry {
 export function betKey(bet: Bet): string {
   if (bet === 'blackjack') return 'blackjack'
   if ('dice' in bet) return 'dice'
+  if ('roulette_spots' in bet) return 'spots'
   const r = bet.roulette
   if (typeof r === 'string') return r
   if ('straight' in r) return `straight:${r.straight}`
-  return 'dozen' in r ? `dozen:${r.dozen}` : `column:${r.column}`
+  if ('dozen' in r) return `dozen:${r.dozen}`
+  if ('column' in r) return `column:${r.column}`
+  if ('split' in r) return `split:${r.split[0]}-${r.split[1]}`
+  if ('street' in r) return `street:${r.street}`
+  return 'corner' in r ? `corner:${r.corner}` : `six_line:${r.six_line}`
 }
 
 export const slipAmount = (entry: SlipEntry): bigint => entry.chips.reduce((sum, c) => sum + c, 0n)
@@ -190,16 +246,29 @@ export interface SlipLimits {
 }
 
 /**
- * Why the slip cannot be played, or null. Each spot is one round: it must fit the table's limits;
- * together they must fit the session balance (they all play, one after the other).
+ * Why the slip cannot be played, or null. The whole slip is one round (one spin settles every
+ * roulette spot): each spot at least the minimum bet, the total within the maximum bet and the
+ * session balance. The server checks the same (`stake_is_valid`).
  */
 export function slipProblem(slip: readonly SlipEntry[], limits: SlipLimits): string | null {
   if (slip.length === 0) return 'place chips on the felt'
-  for (const entry of slip) {
-    const amount = slipAmount(entry)
-    if (amount < limits.minBet) return 'a spot is under the minimum bet'
-    if (amount > limits.maxBet) return 'a spot is over the maximum bet'
-  }
-  if (slipTotal(slip) > limits.balance) return 'more than your session balance'
+  if (slip.length > MAX_SPOTS) return `at most ${MAX_SPOTS} spots per spin`
+  if (slip.some((entry) => slipAmount(entry) < limits.minBet)) return 'a spot is under the minimum bet'
+  const total = slipTotal(slip)
+  if (total > limits.maxBet) return slip.length > 1 ? 'the spots add up to more than the maximum bet' : 'over the maximum bet'
+  if (total > limits.balance) return 'more than your session balance'
   return null
+}
+
+/** The one round a slip plays: its only bet, or every roulette spot on a single spin. */
+export function slipRound(slip: readonly SlipEntry[]): { bet: Bet; stake: bigint } | null {
+  const [first] = slip
+  if (!first) return null
+  if (slip.length === 1) return { bet: first.bet, stake: slipAmount(first) }
+  const spots = slip.flatMap((entry) =>
+    entry.bet !== 'blackjack' && 'roulette' in entry.bet ? [{ bet: entry.bet.roulette, stake: slipAmount(entry).toString() }] : [],
+  )
+  // Only roulette spreads chips over several spots; anything else is not a round.
+  if (spots.length !== slip.length) return null
+  return { bet: { roulette_spots: spots }, stake: slipTotal(slip) }
 }

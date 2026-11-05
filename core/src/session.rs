@@ -23,7 +23,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     apply_rake, bj_deal, bj_double, bj_gross, bj_hit, bj_stand, bj_wager, dice_gross, dice_roll,
-    roulette_gross, roulette_spin, worst_case_payout, Bet, BjError, BjState, Game, Rng, BP,
+    roulette, roulette_gross, roulette_spin, worst_case_payout, Bet, BjError, BjState, Game, Rng,
+    BP,
 };
 
 /// A session may win at most this many times its lock (before the pool share cap below).
@@ -193,6 +194,23 @@ impl fmt::Display for RoundError {
 
 impl std::error::Error for RoundError {}
 
+/// Whether a round may stake `stake` on `bet` at a table whose max bet is `max_bet`: the round's
+/// total within `SESSION_MIN_BET..=max_bet`; for a multi-spot spin, every spot at least
+/// `SESSION_MIN_BET` (each is raked alone, and the minimum keeps that rounding within the edge
+/// bounds) and the spots adding up to exactly `stake`.
+pub fn stake_is_valid(bet: &Bet, stake: u128, max_bet: u128) -> bool {
+    if !(SESSION_MIN_BET..=max_bet).contains(&stake) {
+        return false;
+    }
+    match bet {
+        Bet::RouletteSpots(spots) => {
+            spots.iter().all(|spot| spot.stake >= SESSION_MIN_BET)
+                && roulette::spots_total(spots) == Some(stake)
+        }
+        _ => true,
+    }
+}
+
 /// Resolves a one-step round (dice, roulette) from its round seed.
 pub fn resolve_round(
     game: Game,
@@ -205,24 +223,32 @@ pub fn resolve_round(
         return Err(RoundError::InvalidBet);
     }
     let mut rng = Rng::new(*round_seed);
-    let (outcome, gross) = match bet {
+    let (outcome, payout) = match bet {
         Bet::Dice(dice) => {
             let roll = dice_roll(&mut rng);
-            (Outcome::Dice { roll }, dice_gross(stake, dice, roll))
+            let gross = dice_gross(stake, dice, roll);
+            (Outcome::Dice { roll }, apply_rake(gross, stake, rake_bp))
         }
-        Bet::Roulette(roulette) => {
+        Bet::Roulette(single) => {
             let pocket = roulette_spin(&mut rng);
+            let gross = roulette_gross(stake, single, pocket);
             (
                 Outcome::Roulette { pocket },
-                roulette_gross(stake, roulette, pocket),
+                apply_rake(gross, stake, rake_bp),
             )
+        }
+        Bet::RouletteSpots(spots) => {
+            if roulette::spots_total(spots) != Some(stake) {
+                return Err(RoundError::InvalidBet);
+            }
+            // One draw, exactly as a single-bet spin of the same nonce would make.
+            let pocket = roulette_spin(&mut rng);
+            let payout = roulette::spots_payout(spots, pocket, rake_bp);
+            (Outcome::Roulette { pocket }, payout)
         }
         Bet::Blackjack => return Err(RoundError::MultiStep),
     };
-    Ok(RoundOutcome {
-        outcome,
-        payout: apply_rake(gross, stake, rake_bp),
-    })
+    Ok(RoundOutcome { outcome, payout })
 }
 
 /// A blackjack hand in play. Step 0 deals; each action uses the seed of the next step.
@@ -323,7 +349,7 @@ pub fn replay_round(
         let RoundOutcome { outcome, payout } = resolve_round(game, bet, stake, rake_bp, &seed)?;
         return Ok(CompactRound {
             nonce,
-            bet: *bet,
+            bet: bet.clone(),
             stake,
             actions: Vec::new(),
             outcome,
@@ -592,7 +618,7 @@ pub mod hex64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DiceBet, RouletteBet};
+    use crate::{DiceBet, RouletteBet, RouletteSpot};
 
     const SEED: Hash32 = [7; 32];
     const CLIENT: &str = "lucky-seven";
@@ -741,6 +767,146 @@ mod tests {
         )
         .unwrap();
         assert_eq!(replayed, round);
+    }
+
+    fn spots(list: &[(RouletteBet, u128)]) -> Bet {
+        Bet::RouletteSpots(
+            list.iter()
+                .map(|&(bet, stake)| RouletteSpot { bet, stake })
+                .collect(),
+        )
+    }
+
+    fn roulette_public() -> SessionPublic<'static> {
+        SessionPublic {
+            game: Game::Roulette,
+            ..public()
+        }
+    }
+
+    /// One spin for every spot, drawn like a single bet of the same nonce; the payout is what
+    /// each spot would have paid alone on that nonce.
+    #[test]
+    fn spots_spin_once_and_pay_the_sum_of_their_singles() {
+        let chips = [
+            (RouletteBet::Red, 300_000),
+            (RouletteBet::Split(7, 10), 100_000),
+            (RouletteBet::Corner(8), 200_000),
+            (RouletteBet::Dozen(1), 100_000),
+        ];
+        let bet = spots(&chips);
+        for nonce in 1..=60 {
+            let round = replay_round(&SEED, &roulette_public(), nonce, &bet, 700_000, &[]).unwrap();
+            assert_eq!(round.wager(), 700_000);
+            let mut paid = 0;
+            for (single, stake) in chips {
+                let alone = replay_round(
+                    &SEED,
+                    &roulette_public(),
+                    nonce,
+                    &Bet::Roulette(single),
+                    stake,
+                    &[],
+                )
+                .unwrap();
+                assert_eq!(alone.outcome, round.outcome);
+                paid += alone.payout;
+            }
+            assert_eq!(round.payout, paid, "nonce {nonce}");
+        }
+    }
+
+    #[test]
+    fn spots_need_their_exact_total() {
+        let bet = spots(&[(RouletteBet::Red, 100_000), (RouletteBet::Black, 100_000)]);
+        let seed = round_seed(&SEED, CLIENT, 1);
+        assert_eq!(
+            resolve_round(Game::Roulette, &bet, 199_999, RAKE, &seed),
+            Err(RoundError::InvalidBet)
+        );
+        assert!(resolve_round(Game::Roulette, &bet, 200_000, RAKE, &seed).is_ok());
+        assert_eq!(
+            resolve_round(Game::Dice, &bet, 200_000, RAKE, &seed),
+            Err(RoundError::InvalidBet)
+        );
+    }
+
+    #[test]
+    fn stake_limits_apply_per_spot_and_to_the_total() {
+        let max = 1_000_000;
+        let two = spots(&[
+            (RouletteBet::Red, 400_000),
+            (RouletteBet::Street(1), 600_000),
+        ]);
+        assert!(stake_is_valid(&two, 1_000_000, max));
+        assert!(!stake_is_valid(&two, 900_000, max), "wrong total");
+        let over = spots(&[(RouletteBet::Red, 600_000), (RouletteBet::Black, 600_000)]);
+        assert!(!stake_is_valid(&over, 1_200_000, max), "total over max bet");
+        let tiny = spots(&[(RouletteBet::Red, 99_999), (RouletteBet::Black, 200_000)]);
+        assert!(!stake_is_valid(&tiny, 299_999, max), "spot under min bet");
+        let red = Bet::Roulette(RouletteBet::Red);
+        assert!(stake_is_valid(&red, SESSION_MIN_BET, max));
+        assert!(!stake_is_valid(&red, SESSION_MIN_BET - 1, max));
+        assert!(!stake_is_valid(&red, max + 1, max));
+    }
+
+    #[test]
+    fn verify_replays_spot_rounds_and_catches_a_moved_chip() {
+        let bet = spots(&[
+            (RouletteBet::Straight(17), 100_000),
+            (RouletteBet::SixLine(13), 200_000),
+        ]);
+        let mut balance = LOCK;
+        let mut chain = server_seed_hash(&SEED);
+        let rounds: Vec<CompactRound> = (1..=20)
+            .map(|nonce| {
+                replay_round(&SEED, &roulette_public(), nonce, &bet, 300_000, &[]).unwrap()
+            })
+            .collect();
+        for round in &rounds {
+            balance = balance - round.wager() + round.payout;
+            chain = chain_step(&chain, round);
+        }
+        let batch = SettleBatch {
+            session_id: "s".into(),
+            upto_nonce: 20,
+            balance,
+            chain,
+            rounds,
+            server_sig: [0; 64],
+        };
+        let summary =
+            verify_session(&SEED, &roulette_public(), std::slice::from_ref(&batch)).unwrap();
+        assert_eq!(summary.wagered, 20 * 300_000);
+
+        let mut moved = batch;
+        moved.rounds[3].bet = spots(&[
+            (RouletteBet::Straight(18), 100_000),
+            (RouletteBet::SixLine(13), 200_000),
+        ]);
+        // If both chips lose, the moved one replays to the same payout; the chain still binds it.
+        assert!(matches!(
+            verify_session(&SEED, &roulette_public(), &[moved]),
+            Err(VerifyError::TamperedRound { nonce: 4 } | VerifyError::BrokenChain { .. })
+        ));
+    }
+
+    /// A round hashed before multi-spot spins existed keeps its exact bytes.
+    #[test]
+    fn old_round_bytes_are_unchanged() {
+        let round = CompactRound {
+            nonce: 2,
+            bet: Bet::Roulette(RouletteBet::Straight(17)),
+            stake: 100_000,
+            actions: Vec::new(),
+            outcome: Outcome::Roulette { pocket: 17 },
+            payout: 3_600_000,
+        };
+        let mut golden = vec![2, 0, 0, 0, 0, 0, 0, 0, 1, 0, 17];
+        golden.extend(100_000u128.to_le_bytes());
+        golden.extend([0, 0, 0, 0, 1, 17]);
+        golden.extend(3_600_000u128.to_le_bytes());
+        assert_eq!(borsh::to_vec(&round).unwrap(), golden);
     }
 
     #[test]

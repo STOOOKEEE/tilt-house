@@ -9,7 +9,7 @@ import { hmac } from '@noble/hashes/hmac'
 import { sha256 } from '@noble/hashes/sha256'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils'
 import { PublicKey } from 'near-api-js'
-import { applyRake, diceWins, handTotal, pocketColor } from '../house'
+import { applyRake, diceWins, handTotal, pocketColor, rouletteWinMultiple } from '../house'
 import {
   amount,
   bool,
@@ -27,6 +27,7 @@ import {
   type BlackjackHand,
   type Game,
   type RouletteBet,
+  type RouletteSpot,
 } from './views'
 
 // ---- protocol constants (core_rules::session) ---------------------------------------------
@@ -36,6 +37,8 @@ const STATE_DOMAIN = 'tilt-house/session-state/v1'
 export const MAX_CLIENT_SEED_LEN = 64
 const ROLL_RANGE = 10_000
 const POCKETS = 37
+/** `core_rules::MAX_SPOTS`: most chip stacks one spin settles. */
+export const MAX_SPOTS = 20
 const RANKS = 13
 const DEALER_STANDS_ON = 17
 
@@ -187,8 +190,34 @@ export function randomClientSeed(): string {
 
 // ---- game rules (core_rules: dice, roulette, blackjack) ------------------------------------
 
-function rouletteWins(bet: RouletteBet, pocket: number): boolean {
-  if (pocket === 0) return typeof bet !== 'string' && 'straight' in bet && bet.straight === 0
+/** `RouletteBet::is_valid`: inside bets must be adjacent cells of the layout (rows 1 2 3, 4 5 6…). */
+export function rouletteBetIsValid(bet: RouletteBet): boolean {
+  if (typeof bet === 'string') return true
+  const inRange = (n: number, lo: number, hi: number) => Number.isInteger(n) && n >= lo && n <= hi
+  if ('straight' in bet) return inRange(bet.straight, 0, 36)
+  if ('dozen' in bet) return inRange(bet.dozen, 1, 3)
+  if ('column' in bet) return inRange(bet.column, 1, 3)
+  if ('split' in bet) {
+    const [a, b] = bet.split
+    if (!inRange(a, 0, 35) || !inRange(b, a + 1, 36)) return false
+    return (a === 0 && b <= 3) || b - a === 3 || (b - a === 1 && a % 3 !== 0)
+  }
+  if ('street' in bet) return inRange(bet.street, 1, 34) && bet.street % 3 === 1
+  if ('corner' in bet) return inRange(bet.corner, 1, 32) && bet.corner % 3 !== 0
+  return inRange(bet.six_line, 1, 31) && bet.six_line % 3 === 1
+}
+
+/** `RouletteBet::wins` for a valid bet. */
+export function rouletteWins(bet: RouletteBet, pocket: number): boolean {
+  if (typeof bet !== 'string') {
+    if ('straight' in bet) return bet.straight === pocket
+    if ('split' in bet) return bet.split.includes(pocket)
+    if ('street' in bet) return pocket >= bet.street && pocket < bet.street + 3
+    if ('corner' in bet) return [0, 1, 3, 4].includes(pocket - bet.corner)
+    if ('six_line' in bet) return pocket >= bet.six_line && pocket < bet.six_line + 6
+  }
+  // The zero loses every outside bet.
+  if (pocket === 0) return false
   if (typeof bet === 'string') {
     switch (bet) {
       case 'red':
@@ -205,14 +234,20 @@ function rouletteWins(bet: RouletteBet, pocket: number): boolean {
         return pocket >= 19
     }
   }
-  if ('straight' in bet) return bet.straight === pocket
   if ('dozen' in bet) return Math.floor((pocket - 1) / 12) + 1 === bet.dozen
   return ((pocket - 1) % 3) + 1 === bet.column
 }
 
-function rouletteMultiple(bet: RouletteBet): bigint {
-  if (typeof bet === 'string') return 1n
-  return 'straight' in bet ? 35n : 2n
+/** What one spot pays on `pocket`, after rake: each spot of a spin is raked as if played alone. */
+export function spotPayout(bet: RouletteBet, stake: bigint, pocket: number, rakeBp: number): bigint {
+  const gross = rouletteWins(bet, pocket) ? stake * rouletteWinMultiple(bet) : 0n
+  return applyRake(gross, stake, rakeBp)
+}
+
+/** `spots_are_valid` + `spots_total`: the spots' total, or null when the spots are not a legal spin. */
+function spotsTotal(spots: readonly RouletteSpot[]): bigint | null {
+  if (spots.length < 1 || spots.length > MAX_SPOTS || !spots.every((s) => rouletteBetIsValid(s.bet))) return null
+  return spots.reduce((sum, s) => sum + BigInt(s.stake), 0n)
 }
 
 function draw(rng: Rng): number {
@@ -274,6 +309,12 @@ export function betGame(bet: Bet): Game {
   return 'dice' in bet ? 'dice' : 'roulette'
 }
 
+/** The chip stacks of a roulette bet: its spots, or the single bet as one spot of the whole stake. */
+export function rouletteSpots(bet: Bet, stake: string): RouletteSpot[] {
+  if (bet === 'blackjack' || 'dice' in bet) return []
+  return 'roulette_spots' in bet ? bet.roulette_spots : [{ bet: bet.roulette, stake }]
+}
+
 /** What a round puts at risk: the stake, twice it after a blackjack double. */
 export function roundWager(round: CompactRound): bigint {
   const stake = BigInt(round.stake)
@@ -312,9 +353,17 @@ export function replayRound(
     const gross = diceWins(roll, chance, over) ? (stake * BigInt(ROLL_RANGE)) / BigInt(chance) : 0n
     return { ...base, actions: [], outcome: { dice: { roll } }, payout: applyRake(gross, stake, ticket.rake_bp).toString() }
   }
+  if ('roulette_spots' in bet) {
+    if (spotsTotal(bet.roulette_spots) !== stake) throw new Error('invalid roulette spots')
+    // One draw for every spot, the same as a single bet of this nonce.
+    const pocket = rng.below(POCKETS)
+    const payout = bet.roulette_spots.reduce((sum, s) => sum + spotPayout(s.bet, BigInt(s.stake), pocket, ticket.rake_bp), 0n)
+    return { ...base, actions: [], outcome: { roulette: { pocket } }, payout: payout.toString() }
+  }
+  if (!rouletteBetIsValid(bet.roulette)) throw new Error('invalid roulette bet')
   const pocket = rng.below(POCKETS)
-  const gross = rouletteWins(bet.roulette, pocket) ? stake * (rouletteMultiple(bet.roulette) + 1n) : 0n
-  return { ...base, actions: [], outcome: { roulette: { pocket } }, payout: applyRake(gross, stake, ticket.rake_bp).toString() }
+  const payout = spotPayout(bet.roulette, stake, pocket, ticket.rake_bp)
+  return { ...base, actions: [], outcome: { roulette: { pocket } }, payout: payout.toString() }
 }
 
 // ---- borsh (only what the protocol hashes and signs) --------------------------------------
@@ -377,7 +426,8 @@ class Writer {
 
 const GAME_INDEX: Record<Game, number> = { dice: 0, roulette: 1, blackjack: 2 }
 const ACTION_INDEX: Record<BjAction, number> = { hit: 0, stand: 1, double: 2 }
-// Declaration order of `RouletteBet`: Straight(u8), Red, Black, Odd, Even, Low, High, Dozen(u8), Column(u8).
+// Declaration order of `RouletteBet`: Straight(u8), Red, Black, Odd, Even, Low, High, Dozen(u8), Column(u8),
+// Split(u8, u8), Street(u8), Corner(u8), SixLine(u8). Rust only appends, so these never move.
 const ROULETTE_UNIT_INDEX: Record<string, number> = { red: 1, black: 2, odd: 3, even: 4, low: 5, high: 6 }
 
 function writeRouletteBet(w: Writer, bet: RouletteBet): void {
@@ -387,13 +437,24 @@ function writeRouletteBet(w: Writer, bet: RouletteBet): void {
     w.u8(index)
   } else if ('straight' in bet) w.u8(0).u8(bet.straight)
   else if ('dozen' in bet) w.u8(7).u8(bet.dozen)
-  else w.u8(8).u8(bet.column)
+  else if ('column' in bet) w.u8(8).u8(bet.column)
+  else if ('split' in bet) w.u8(9).u8(bet.split[0]).u8(bet.split[1])
+  else if ('street' in bet) w.u8(10).u8(bet.street)
+  else if ('corner' in bet) w.u8(11).u8(bet.corner)
+  else w.u8(12).u8(bet.six_line)
 }
 
+// Declaration order of `Bet`: Dice, Roulette, Blackjack, RouletteSpots(Vec<RouletteSpot>).
 function writeBet(w: Writer, bet: Bet): void {
   if (bet === 'blackjack') w.u8(2)
   else if ('dice' in bet) w.u8(0).u16(bet.dice.chance_bp).bool(bet.dice.over)
-  else {
+  else if ('roulette_spots' in bet) {
+    w.u8(3).u32(bet.roulette_spots.length)
+    for (const spot of bet.roulette_spots) {
+      writeRouletteBet(w, spot.bet)
+      w.u128(spot.stake)
+    }
+  } else {
     w.u8(1)
     writeRouletteBet(w, bet.roulette)
   }

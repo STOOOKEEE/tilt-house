@@ -119,6 +119,12 @@ The bytes signed and hashed are built by `core_rules::session` (`ticket_message`
 `CompactRound`: `{"nonce": 12, "bet": {"dice":{"chance_bp":5000,"over":true}}, "stake": "100000", "actions": [],
 "outcome": {"dice":{"roll":4210}}, "payout": "0"}` (blackjack: `"bet": "blackjack"`, `"actions": ["hit","stand"]`,
 `"outcome": {"blackjack": BjState}`).
+Roulette `bet`: `{"roulette": RouletteBet}` for one bet, or `{"roulette_spots": [{"bet": RouletteBet, "stake":
+"100000"}, …]}` for 1–20 chip stacks settled by one spin (`stake` = their total; each spot pays and is raked as if
+played alone; `outcome` stays `{"roulette":{"pocket":n}}`). `RouletteBet`: `"red"|"black"|"odd"|"even"|"low"|"high"`,
+`{"straight":n}` 35:1, `{"split":[a,b]}` 17:1 (adjacent, smaller first, incl. `[0,1|2|3]`), `{"street":n}` 11:1
+(n = 1, 4 … 34), `{"corner":n}` 8:1 (n, n+1, n+3, n+4), `{"six_line":n}` 5:1 (n..n+5, n = 1, 4 … 31),
+`{"dozen":d}`, `{"column":c}` 2:1. Borsh variants are only appended, so older rounds keep their bytes.
 
 **open_session** checks: server signature over `ticket_message(ticket)`; `now ≤ expires_at`; caller = `player`;
 `session_id` 1–64 chars of `[A-Za-z0-9_-]`, unused; `client_seed_is_valid`; no other `open` session for the player;
@@ -128,7 +134,8 @@ bet now; `max_win ≤ session_max_win(lock, pool.free)`. Then `lock` leaves the 
 `max_win`, the offer is frozen.
 
 **settle_session** checks: session `open`; rounds non-empty, nonces `settled_nonce+1 ..= upto_nonce`; each round
-of the session's game with `0.1 tUSDC ≤ stake ≤ max_bet`, wager ≤ running balance, payout ≤
+of the session's game with `core::session::stake_is_valid` (`0.1 tUSDC ≤ stake ≤ max_bet`; a multi-spot spin also
+needs every spot ≥ 0.1 tUSDC and the spots summing to `stake`), wager ≤ running balance, payout ≤
 `worst_case_payout`; running balance (`− wager + payout`) ends at `balance` ≤ `lock + max_win`; `chain_step` over the
 rounds from the stored chain gives `chain`; server signature over `state_message({session_id, nonce: upto_nonce,
 balance, chain})`. Then the difference moves between escrow and pool (the reserve always equals

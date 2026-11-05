@@ -6,6 +6,7 @@ import {
   clientSeedIsValid,
   parseCompactRound,
   parseTicket,
+  replayRound,
   Rng,
   roundBorsh,
   stepSeed,
@@ -117,6 +118,38 @@ describe('verifySession (after the reveal)', () => {
     const rounds = blackjack.rounds.map((r, i) => (i === 0 ? { ...r, actions: [] } : r))
     const end = blackjack.states[blackjack.states.length - 1]
     expect(verifySession(vectors.server_seed, blackjack.ticket, rounds, end)).toMatchObject({ ok: false, nonce: 1 })
+  })
+
+  // Session 4: every inside bet, then two spins of several chips each.
+  const inside = sessions[3]
+
+  it('replays a multi-spot spin as the sum of its spots played alone on that nonce', () => {
+    const spins = inside.rounds.filter((r) => typeof r.bet === 'object' && 'roulette_spots' in r.bet)
+    expect(spins).toHaveLength(2)
+    for (const round of spins) {
+      if (typeof round.bet !== 'object' || !('roulette_spots' in round.bet)) continue
+      const alone = round.bet.roulette_spots.map((spot) =>
+        replayRound(SEED, inside.ticket, round.nonce, { roulette: spot.bet }, BigInt(spot.stake), []),
+      )
+      expect(alone.every((r) => JSON.stringify(r.outcome) === JSON.stringify(round.outcome))).toBe(true)
+      expect(alone.reduce((sum, r) => sum + BigInt(r.payout), 0n).toString()).toBe(round.payout)
+    }
+  })
+
+  it('refuses spots that do not add up to the stake, and a moved chip', () => {
+    const [spin] = inside.rounds.filter((r) => typeof r.bet === 'object' && 'roulette_spots' in r.bet)
+    expect(() => replayRound(SEED, inside.ticket, spin.nonce, spin.bet, BigInt(spin.stake) + 1n, [])).toThrow()
+    const end = inside.states[inside.states.length - 1]
+    const rounds = inside.rounds.map((r) => (r.nonce !== spin.nonce || typeof r.bet !== 'object' || !('roulette_spots' in r.bet) ? r : {
+      ...r,
+      bet: { roulette_spots: r.bet.roulette_spots.map((spot, i) => (i === 0 ? { ...spot, stake: (BigInt(spot.stake) + 1n).toString() } : spot)) },
+    }))
+    expect(verifySession(vectors.server_seed, inside.ticket, rounds, end)).toMatchObject({ ok: false, nonce: spin.nonce })
+  })
+
+  it('refuses an inside bet that is not adjacent on the layout', () => {
+    expect(() => replayRound(SEED, inside.ticket, 1, { roulette: { split: [7, 9] } }, 100_000n, [])).toThrow()
+    expect(() => replayRound(SEED, inside.ticket, 1, { roulette: { corner: 3 } }, 100_000n, [])).toThrow()
   })
 
   it('catches a dropped round', () => {

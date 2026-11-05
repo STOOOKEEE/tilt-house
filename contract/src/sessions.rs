@@ -7,8 +7,8 @@
 //! `reserve = lock + max_win − escrow`, the most the session can still take from it.
 
 use core_rules::session::{
-    chain_step, client_seed_is_valid, server_seed_hash, session_max_win, state_message,
-    ticket_message, CompactRound, Hash32, SessionState, SessionTicket, SettleBatch,
+    chain_step, client_seed_is_valid, server_seed_hash, session_max_win, stake_is_valid,
+    state_message, ticket_message, CompactRound, Hash32, SessionState, SessionTicket, SettleBatch,
     REVEAL_TIMEOUT_SECS, SESSION_MIN_BET, SESSION_TIMEOUT_SECS,
 };
 use core_rules::{draw_jackpot, rake_bounds, worst_case_payout, Game, Pool};
@@ -197,8 +197,9 @@ fn check_round(session: &Session, round: &CompactRound) {
         round.bet.game() == session.game && round.bet.is_valid(),
         "a round's bet is not valid for this game"
     );
+    // Per spot and in total for a multi-spot spin, whose spots must add up to the stake.
     require!(
-        round.stake >= SESSION_MIN_BET && round.stake <= session.max_bet,
+        stake_is_valid(&round.bet, round.stake, session.max_bet),
         "a round's stake is outside the session's limits"
     );
     require!(

@@ -26,10 +26,18 @@ export function diceWinPayout(stake: bigint, chanceBp: number, rakeBp: number): 
   return applyRake((stake * BP) / BigInt(chanceBp), stake, rakeBp)
 }
 
-/** Roulette payout multiple (stake included): 36× a number, 3× a dozen or column, 2× even-money bets. */
+/**
+ * Roulette payout multiple (stake included): 36× a number, 18× a split, 12× a street, 9× a corner,
+ * 6× a six line, 3× a dozen or column, 2× even-money bets.
+ */
 export function rouletteWinMultiple(bet: RouletteBet): bigint {
   if (typeof bet === 'string') return 2n
-  return 'straight' in bet ? 36n : 3n
+  if ('straight' in bet) return 36n
+  if ('split' in bet) return 18n
+  if ('street' in bet) return 12n
+  if ('corner' in bet) return 9n
+  if ('six_line' in bet) return 6n
+  return 3n
 }
 
 /** `DiceBet::wins`: under wins below `chance`, over wins at or above `10000 − chance`. */
@@ -65,6 +73,10 @@ export function rouletteBetLabel(bet: RouletteBet): string {
   if (typeof bet === 'string') return bet
   if ('dozen' in bet) return `dozen ${bet.dozen}`
   if ('column' in bet) return `column ${bet.column}`
+  if ('split' in bet) return `split ${bet.split[0]}/${bet.split[1]}`
+  if ('street' in bet) return `street ${bet.street}-${bet.street + 2}`
+  if ('corner' in bet) return `corner ${[0, 1, 3, 4].map((d) => bet.corner + d).join('/')}`
+  if ('six_line' in bet) return `six line ${bet.six_line}-${bet.six_line + 5}`
   return `number ${bet.straight}`
 }
 

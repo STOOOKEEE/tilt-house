@@ -49,6 +49,9 @@ fn roulette_total_edge_bounds() {
     let mut bets = vec![Red, Black, Odd, Even, Low, High];
     bets.extend((0..=36).map(Straight));
     bets.extend((1..=3).flat_map(|n| [Dozen(n), Column(n)]));
+    bets.extend((0..=36).flat_map(|a| (0..=36).map(move |b| Split(a, b))));
+    bets.extend((0..=36).flat_map(|n| [Street(n), Corner(n), SixLine(n)]));
+    bets.retain(RouletteBet::is_valid);
 
     let fair: u128 = (0..37).map(|p| roulette_gross(STAKE, &Red, p)).sum();
     let base_bp = (1.0 - fair as f64 / (37.0 * STAKE as f64)) * 10_000.0;

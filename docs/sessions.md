@@ -21,7 +21,10 @@ chain in batches, with a forced-exit path so the server can never hold player mo
    payout, balance, signature }`, where the signature covers `(session_id, nonce, balance,
    round_hash_chain)`; `round_hash_chain_n = sha256(chain_{n-1} || borsh(nonce, bet, outcome))`.
    The browser keeps the last signed state. The server refuses a bet whose worst case would push
-   the session past `max_win` or `lock`.
+   the session past `max_win` or `lock`. A roulette round may carry several chip stacks
+   (`{"roulette_spots": [{bet, stake}, …]}`, up to 20, each ≥ the minimum bet, total ≤ max bet
+   and = the round's stake): one draw settles them all, each paid and raked as if alone, and the
+   round's wager (limits, jackpot odds) is the total.
 4. **Settle (batch, every 60 s or 50 rounds, and at close).** Server → `settle_session(session_id,
    upto_nonce, balance, chain, rounds: Vec<CompactRound>, server_sig)`: the round list is in the tx
    args (public on chain forever); the contract applies the net to escrow/pool, updates the dealer's

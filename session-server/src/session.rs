@@ -3,9 +3,9 @@
 //! persists it, then `apply` makes it real. Reloading the log replays the same `apply`.
 
 use core_rules::session::{
-    replay_round, state_message, worst_balance_after, BjAction, BjSession, CompactRound, Hash32,
-    SessionPublic, SessionState, SessionTicket, SettleBatch, SESSION_MIN_BET, SETTLE_EVERY_ROUNDS,
-    SETTLE_EVERY_SECS,
+    replay_round, stake_is_valid, state_message, worst_balance_after, BjAction, BjSession,
+    CompactRound, Hash32, SessionPublic, SessionState, SessionTicket, SettleBatch, SESSION_MIN_BET,
+    SETTLE_EVERY_ROUNDS, SETTLE_EVERY_SECS,
 };
 use core_rules::{Bet, BjError};
 use serde::{Deserialize, Serialize};
@@ -67,7 +67,10 @@ impl std::fmt::Display for PlayError {
             Self::HandInProgress => f.write_str("finish the blackjack hand first"),
             Self::NoHand => f.write_str("no blackjack hand in progress for this nonce"),
             Self::InvalidBet => f.write_str("invalid bet for this table"),
-            Self::StakeOutOfRange { min, max } => write!(f, "stake must be in {min}..={max}"),
+            Self::StakeOutOfRange { min, max } => write!(
+                f,
+                "stake must be in {min}..={max}; spots of one spin at least {min} each, summing to the stake"
+            ),
             Self::OverLock => f.write_str("stake exceeds the session balance"),
             Self::OverMaxWin => f.write_str("a win would exceed the session's max win"),
             Self::Blackjack(err) => err.fmt(f),
@@ -145,9 +148,9 @@ impl Session {
         if self.phase != Phase::Open {
             return Err(PlayError::NotOpen);
         }
-        match *request {
-            RoundRequest::Bet { nonce, bet, stake } => self.new_round(nonce, &bet, stake, at),
-            RoundRequest::Action { nonce, action } => self.act(nonce, action, at),
+        match request {
+            RoundRequest::Bet { nonce, bet, stake } => self.new_round(*nonce, bet, *stake, at),
+            RoundRequest::Action { nonce, action } => self.act(*nonce, *action, at),
         }
     }
 
@@ -183,7 +186,7 @@ impl Session {
             return Err(PlayError::InvalidBet);
         }
         let max = self.ticket.max_bet;
-        if !(SESSION_MIN_BET..=max).contains(&stake) {
+        if !stake_is_valid(bet, stake, max) {
             return Err(PlayError::StakeOutOfRange {
                 min: SESSION_MIN_BET,
                 max,
@@ -382,6 +385,44 @@ mod tests {
         );
         // Within every limit: accepted.
         play(&mut s, &signer, bet(1, dice(5_000), 1_000_000)).unwrap();
+    }
+
+    #[test]
+    fn multi_spot_limits() {
+        use core_rules::RouletteSpot;
+        let (mut s, signer) = session(Game::Roulette, 20_000_000);
+        let spots = |list: &[(RouletteBet, u128)]| {
+            Bet::RouletteSpots(
+                list.iter()
+                    .map(|&(bet, stake)| RouletteSpot { bet, stake })
+                    .collect(),
+            )
+        };
+        // Total over the 5 USDC table max bet, though each spot is under it.
+        let over = spots(&[
+            (RouletteBet::Red, 3_000_000),
+            (RouletteBet::Black, 3_000_000),
+        ]);
+        assert!(matches!(
+            s.play(&bet(1, over, 6_000_000), 1),
+            Err(PlayError::StakeOutOfRange { .. })
+        ));
+        // A straight at 0.4 USDC plus its split at 0.4 can pay 21.6 USDC: past the 20 USDC max win.
+        let long = spots(&[
+            (RouletteBet::Straight(17), 400_000),
+            (RouletteBet::Split(17, 20), 400_000),
+        ]);
+        assert_eq!(
+            s.play(&bet(1, long, 800_000), 1),
+            Err(PlayError::OverMaxWin)
+        );
+        // Red and black cannot both win: their worst case is one of them.
+        let both = spots(&[
+            (RouletteBet::Red, 2_000_000),
+            (RouletteBet::Black, 2_000_000),
+        ]);
+        play(&mut s, &signer, bet(1, both, 4_000_000)).unwrap();
+        assert_eq!(s.rounds[0].wager(), 4_000_000);
     }
 
     #[test]

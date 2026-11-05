@@ -184,6 +184,65 @@ async fn session_start_play_close_and_verify() {
     assert_eq!(view["server_seed"], hex::encode(closed.server_seed));
 }
 
+/// Chips on a number, a split, a corner and red: one request, one spin, one signed state.
+#[tokio::test]
+async fn multi_spot_roulette_round() {
+    let dir = data_dir();
+    let router = serve(dir.path(), &key_text(), NoChain::default());
+    let s = start(&router, "roulette-demo", 10 * USDC).await;
+    let spots = json!([
+        { "bet": { "straight": 17 }, "stake": "100000" },
+        { "bet": { "split": [7, 10] }, "stake": "100000" },
+        { "bet": { "corner": 8 }, "stake": "200000" },
+        { "bet": "red", "stake": "300000" },
+    ]);
+    let body = |nonce: u64, stake: &str, spots: &Value| json!({ "nonce": nonce, "bet": { "roulette_spots": spots }, "stake": stake });
+    // The stake must be the spots' total, and every spot at least the minimum bet.
+    let (status, _) = round(&router, &s, body(1, "600000", &spots)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let tiny = json!([{ "bet": "red", "stake": "99999" }, { "bet": "black", "stake": "100000" }]);
+    let (status, _) = round(&router, &s, body(1, "199999", &tiny)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let not_adjacent = json!([{ "bet": { "split": [7, 9] }, "stake": "100000" }]);
+    let (status, _) = round(&router, &s, body(1, "100000", &not_adjacent)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let too_many = Value::Array(vec![json!({ "bet": "red", "stake": "100000" }); 21]);
+    let (status, _) = round(&router, &s, body(1, "2100000", &too_many)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, reply) = round(&router, &s, body(1, "700000", &spots)).await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    let reply: RoundReply = serde_json::from_value(reply).unwrap();
+    let played = reply.round.unwrap();
+    assert_eq!(played.wager(), 700_000);
+    assert_eq!(
+        reply.state.state.balance,
+        10 * USDC - 700_000 + played.payout
+    );
+
+    let uri = format!("/sessions/{}/close", s.session_id);
+    let (status, body) = call(&router, "POST", &uri, Some(&s.token), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let closed: CloseReply = serde_json::from_value(body).unwrap();
+    let public = SessionPublic {
+        server_seed_hash: s.ticket.server_seed_hash,
+        client_seed: &s.ticket.client_seed,
+        game: s.ticket.game,
+        rake_bp: s.ticket.rake_bp,
+        lock: s.ticket.lock,
+    };
+    let batch = SettleBatch {
+        session_id: s.session_id.clone(),
+        upto_nonce: 1,
+        balance: closed.state.state.balance,
+        chain: closed.state.state.chain,
+        rounds: closed.rounds,
+        server_sig: closed.state.signature,
+    };
+    let summary = verify_session(&closed.server_seed, &public, &[batch]).unwrap();
+    assert_eq!(summary.wagered, 700_000);
+}
+
 #[tokio::test]
 async fn refuses_over_limit_bets() {
     let dir = data_dir();

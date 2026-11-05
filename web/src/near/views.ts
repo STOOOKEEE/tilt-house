@@ -105,9 +105,23 @@ export type RouletteBet =
   | { straight: number }
   | { dozen: number }
   | { column: number }
+  | { split: [number, number] }
+  | { street: number }
+  | { corner: number }
+  | { six_line: number }
+
+/** `core_rules::RouletteSpot` serde form: one chip stack of a multi-spot spin. */
+export interface RouletteSpot {
+  bet: RouletteBet
+  stake: string
+}
 
 /** `core_rules::Bet` serde form. */
-export type Bet = { dice: { chance_bp: number; over: boolean } } | { roulette: RouletteBet } | 'blackjack'
+export type Bet =
+  | { dice: { chance_bp: number; over: boolean } }
+  | { roulette: RouletteBet }
+  | 'blackjack'
+  | { roulette_spots: RouletteSpot[] }
 
 export interface BlackjackHand {
   player: number[]
@@ -323,6 +337,14 @@ function rouletteBet(value: unknown, path: string): RouletteBet {
   if (b.straight !== undefined) return { straight: int(b.straight, `${path}.straight`) }
   if (b.dozen !== undefined) return { dozen: int(b.dozen, `${path}.dozen`) }
   if (b.column !== undefined) return { column: int(b.column, `${path}.column`) }
+  if (b.split !== undefined) {
+    const pair = list(b.split, `${path}.split`).map((n, i) => int(n, `${path}.split[${i}]`))
+    if (pair.length !== 2) fail(`${path}.split`, 'two numbers')
+    return { split: [pair[0], pair[1]] }
+  }
+  if (b.street !== undefined) return { street: int(b.street, `${path}.street`) }
+  if (b.corner !== undefined) return { corner: int(b.corner, `${path}.corner`) }
+  if (b.six_line !== undefined) return { six_line: int(b.six_line, `${path}.six_line`) }
   fail(path, 'a roulette bet')
 }
 
@@ -330,6 +352,16 @@ export function parseBet(value: unknown): Bet {
   if (value === 'blackjack') return 'blackjack'
   const b = record(value, 'round.bet')
   if (b.roulette !== undefined) return { roulette: rouletteBet(b.roulette, 'round.bet.roulette') }
+  if (b.roulette_spots !== undefined) {
+    const spots = list(b.roulette_spots, 'round.bet.roulette_spots').map((value, i) => {
+      const spot = record(value, `round.bet.roulette_spots[${i}]`)
+      return {
+        bet: rouletteBet(spot.bet, `round.bet.roulette_spots[${i}].bet`),
+        stake: amount(spot.stake, `round.bet.roulette_spots[${i}].stake`),
+      }
+    })
+    return { roulette_spots: spots }
+  }
   const dice = record(b.dice, 'round.bet.dice')
   return { dice: { chance_bp: int(dice.chance_bp, 'round.bet.dice.chance_bp'), over: bool(dice.over, 'round.bet.dice.over') } }
 }

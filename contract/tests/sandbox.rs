@@ -6,7 +6,7 @@ use core_rules::session::{
     replay_round, server_seed_hash, session_max_win, state_message, ticket_message, CompactRound,
     Hash32, SessionPublic, SessionState, SessionTicket, SettleBatch,
 };
-use core_rules::{Bet, DiceBet, Game};
+use core_rules::{Bet, DiceBet, Game, RouletteBet, RouletteSpot};
 use ed25519_dalek::{Signer, SigningKey};
 use near_workspaces::network::Sandbox;
 use near_workspaces::result::ExecutionFinalResult;
@@ -250,6 +250,7 @@ impl Env {
 /// The session server's side of one session: seed, rounds played and signed state.
 struct Play {
     id: String,
+    game: Game,
     seed: Hash32,
     client_seed: String,
     lock: u128,
@@ -267,7 +268,7 @@ impl Play {
         SessionPublic {
             server_seed_hash: server_seed_hash(&self.seed),
             client_seed: &self.client_seed,
-            game: Game::Dice,
+            game: self.game,
             rake_bp: self.rake_bp,
             lock: self.lock,
         }
@@ -275,12 +276,16 @@ impl Play {
 
     /// Plays one coin-flip dice round of `stake`.
     fn round(&mut self, stake: u128) {
-        self.nonce += 1;
         let bet = Bet::Dice(DiceBet {
             chance_bp: 5000,
             over: true,
         });
-        let round = replay_round(&self.seed, &self.public(), self.nonce, &bet, stake, &[]).unwrap();
+        self.play(&bet, stake);
+    }
+
+    fn play(&mut self, bet: &Bet, stake: u128) {
+        self.nonce += 1;
+        let round = replay_round(&self.seed, &self.public(), self.nonce, bet, stake, &[]).unwrap();
         self.balance = self.balance - round.wager() + round.payout;
         self.chain = core_rules::session::chain_step(&self.chain, &round);
         self.pending.push(round);
@@ -308,7 +313,7 @@ impl Play {
     }
 }
 
-/// Opens a 10 tUSDC dice session at `dealer_id` for `player`, as the server would offer it.
+/// Opens a 10 tUSDC session at `dealer_id` (its game) for `player`, as the server would offer it.
 async fn open(
     env: &Env,
     player: &Account,
@@ -320,8 +325,10 @@ async fn open(
     let lock = 10 * USDC;
     let free = amount(&dealer["bankroll"]) - amount(&dealer["reserved"]);
     let seed = [seed_byte; 32];
+    let game: Game = serde_json::from_value(dealer["game"].clone())?;
     let play = Play {
         id: id.to_string(),
+        game,
         seed,
         client_seed: "lucky-7".to_string(),
         lock,
@@ -337,7 +344,7 @@ async fn open(
         session_id: play.id.clone(),
         player: player.id().to_string(),
         dealer_id: dealer_id.to_string(),
-        game: Game::Dice,
+        game,
         lock,
         server_seed_hash: server_seed_hash(&seed),
         client_seed: play.client_seed.clone(),
@@ -472,6 +479,56 @@ async fn session_open_settle_close_reveals_a_verifiable_seed() -> anyhow::Result
         core_rules::session::verify_session(&revealed, &play.public(), &[first, second]).unwrap();
     assert_eq!(summary.balance, play.balance);
     assert_eq!(summary.rounds, 10);
+    Ok(())
+}
+
+/// Several chips, one spin: the contract checks the spots' total against the stake and the
+/// table limits, and the settled rounds replay after the reveal.
+#[tokio::test]
+async fn multi_spot_roulette_rounds_settle_and_verify() -> anyhow::Result<()> {
+    let env = setup(3).await?;
+    let player = env.player(50 * USDC).await?;
+    let mut play = open(&env, &player, "chloe", "s-r", 3).await?;
+    let spot = |bet, stake| RouletteSpot { bet, stake };
+    let chips = Bet::RouletteSpots(vec![
+        spot(RouletteBet::Straight(17), USDC / 10),
+        spot(RouletteBet::Split(7, 10), USDC / 10),
+        spot(RouletteBet::Corner(8), USDC / 5),
+        spot(RouletteBet::Red, USDC / 5),
+    ]);
+    for _ in 0..5 {
+        play.play(&chips, 6 * USDC / 10);
+    }
+
+    // A stake that is not the spots' total is refused before anything moves.
+    let mut wrong = play.batch(&env);
+    play.pending = wrong.rounds.clone();
+    wrong.rounds[0].stake += 1;
+    env.fails(
+        &env.owner,
+        "settle_session",
+        json!({"batch": wrong}),
+        "outside the session's limits",
+    )
+    .await?;
+
+    let batch = play.batch(&env);
+    env.ok(&env.owner, "settle_session", json!({"batch": batch}))
+        .await?;
+    let session = env
+        .view("get_session", json!({"session_id": "s-r"}))
+        .await?;
+    assert_eq!(amount(&session["balance"]), play.balance);
+    env.ok(
+        &env.owner,
+        "close_session",
+        json!({"session_id": "s-r", "server_seed": hex::encode(play.seed)}),
+    )
+    .await?;
+    let summary =
+        core_rules::session::verify_session(&play.seed, &play.public(), &[batch]).unwrap();
+    assert_eq!(summary.wagered, 5 * 6 * USDC / 10);
+    assert_eq!(summary.balance, play.balance);
     Ok(())
 }
 

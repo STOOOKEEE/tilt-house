@@ -20,6 +20,7 @@ import {
   removeChip,
   slipAmount,
   slipProblem,
+  slipRound,
   slipTotal,
   stackChips,
   type DiceTarget,
@@ -129,25 +130,19 @@ function Seat({ dealer, session, walletId, wallet, demo, offline, elsewhere }: S
   const problem = slipProblem(slip, { minBet: BigInt(dealer.min_bet), maxBet, balance })
   const handLive = session.hand !== null && !session.hand.state.done
   const canBet = playing && !session.busy && !tilting && session.broken === '' && session.phase === 'playing' && !handLive
-  const canTilt = canBet && problem === null
+  const round = slipRound(slip)
+  const canTilt = canBet && problem === null && round !== null
 
-  // Each spot is one round: they play one after the other, the slip stays for the next TILT.
-  const latest = useRef(session)
-  latest.current = session
+  // The whole slip is one round: one spin settles every roulette spot, the slip stays for the next TILT.
   const tilt = useCallback(async () => {
-    if (!canTilt) return
+    if (!canTilt || round === null) return
     setTilting(true)
-    for (const entry of slip) {
-      const nonce = latest.current.session?.state.nonce
-      await latest.current.bet(entry.bet, slipAmount(entry))
-      // The next bet must be sent from the state this one produced: wait for React to commit it.
-      const moved = await committed(
-        () => latest.current.session?.state.nonce !== nonce || latest.current.hand !== null || latest.current.error !== '',
-      )
-      if (!moved || latest.current.error || latest.current.broken || latest.current.hand) break
+    try {
+      await session.bet(round.bet, round.stake)
+    } finally {
+      setTilting(false)
     }
-    setTilting(false)
-  }, [canTilt, slip])
+  }, [canTilt, round, session])
 
   const onFelt = (u: number, v: number, action: FeltAction, scene: TableSceneApi) => {
     const spot = action === 'leave' ? null : feltSpot(dealer.game, u, v, dice)
@@ -233,18 +228,6 @@ function Seat({ dealer, session, walletId, wallet, demo, offline, elsewhere }: S
       ) : null}
     </>
   )
-}
-
-/** Frames to wait for a state update to reach the render before giving up (about a second). */
-const COMMIT_FRAMES = 60
-
-/** Resolves true once `done()` holds on a rendered frame, false if it never does. */
-async function committed(done: () => boolean): Promise<boolean> {
-  for (let frame = 0; frame < COMMIT_FRAMES; frame++) {
-    if (done()) return true
-    await new Promise((resolve) => requestAnimationFrame(resolve))
-  }
-  return done()
 }
 
 function diceHint(dice: DiceTarget, slip: readonly SlipEntry[], rakeBp: number): string {

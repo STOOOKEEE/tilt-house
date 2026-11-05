@@ -543,9 +543,11 @@ impl<C: Chain> Gamblers<C> {
         strategy: Option<&BjStrategy>,
     ) -> Result<u128, ApiError> {
         let play = |request| self.app.play(&session.session_id, &session.token, request);
+        let modest = modest_bet(&bet);
+        let retry = bet != modest;
         let mut reply = match play(RoundRequest::Bet { nonce, bet, stake }).await {
-            Err(err) if err.status == StatusCode::BAD_REQUEST && bet != modest_bet(bet) => {
-                let bet = modest_bet(bet);
+            Err(err) if err.status == StatusCode::BAD_REQUEST && retry => {
+                let bet = modest;
                 play(RoundRequest::Bet { nonce, bet, stake }).await?
             }
             other => other?,
@@ -600,13 +602,13 @@ impl<C: Chain> Gamblers<C> {
 }
 
 /// The low-variance bet of the same game, tried when the session's max win refuses a long shot.
-fn modest_bet(bet: Bet) -> Bet {
+fn modest_bet(bet: &Bet) -> Bet {
     match bet {
         Bet::Dice(_) => Bet::Dice(DiceBet {
             chance_bp: 5_000,
             over: true,
         }),
-        Bet::Roulette(_) => Bet::Roulette(RouletteBet::Red),
+        Bet::Roulette(_) | Bet::RouletteSpots(_) => Bet::Roulette(RouletteBet::Red),
         Bet::Blackjack => Bet::Blackjack,
     }
 }

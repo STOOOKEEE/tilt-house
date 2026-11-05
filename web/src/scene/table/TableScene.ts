@@ -4,6 +4,7 @@
 // queue up the clock runs faster instead.
 import * as THREE from 'three'
 import { formatUsdc } from '../../format'
+import { rouletteSpots, rouletteWins, spotPayout } from '../../near/session-client'
 import type { Game, RoundView, RouletteBet } from '../../near/views'
 import { createCharacter } from '../characters'
 import { dealerLook } from '../looks'
@@ -52,6 +53,8 @@ const DEALER_Z = -TABLE_D / 2 - 0.35
 const BACKLOG_SPEEDUP = 0.75
 const MAX_TIME_SCALE = 4
 const RESULT_HOLD_S = 1
+/** A winning roulette spot is paid with a stack this far (world units) beside its own. */
+const PAID_BESIDE_X = 0.14
 /** The answer after a drawing loop: the long throw already played while the VRF drew. */
 const FAST_RESULT_SPEED = 2.5
 const DRAWING_TEXT = 'shuffling…'
@@ -106,8 +109,11 @@ class TableScene implements TableSceneApi {
   /** The steps right after a drawing loop run fast, up to the settle. */
   private fastResult = false
   private props: Props | null = null
-  /** The roulette bet of the round on the felt: where its chips go. */
-  private rouletteBet: RouletteBet | null = null
+  /** The roulette spots of the round on the felt, each with its chip stack. */
+  private spots: { bet: RouletteBet; stake: bigint; stack: THREE.Group }[] = []
+  /** Where the ball landed for the round on the felt; its rake prices each spot's win. */
+  private pocket: number | null = null
+  private rakeBp = 0
   private stake: THREE.Group[] = []
   /** The player's unplayed chips; hidden while a round plays (its own stake animates instead). */
   private readonly slip = new THREE.Group()
@@ -456,7 +462,8 @@ class TableScene implements TableSceneApi {
         this.rig.say('drawing…')
         return
       case 'double':
-        return this.addChips(this.stake.length > 0 ? chipCountOf(this.stake[0]) : 1, 0.26)
+        await this.addChips(this.stake.length > 0 ? chipCountOf(this.stake[0]) : 1, 0.26)
+        return
       case 'deal':
         return this.deal(step.to, step.index, step.rank)
       case 'reveal':
@@ -490,29 +497,36 @@ class TableScene implements TableSceneApi {
     const props = this.props
     if (props?.game === 'blackjack') props.cards.newRound(round.id)
     if (props?.game === 'dice' && typeof round.bet === 'object' && 'dice' in round.bet) props.dice.setBet(round.bet.dice)
-    this.rouletteBet = typeof round.bet === 'object' && 'roulette' in round.bet ? round.bet.roulette : null
-    await this.addChips(chipCount(round.stake), 0)
+    this.rakeBp = round.rake_bp
+    this.pocket = null
+    const spots = rouletteSpots(round.bet, round.stake)
+    if (spots.length === 0) {
+      this.spots = []
+      await this.addChips(chipCount(round.stake), 0)
+      return
+    }
+    const stacks = await Promise.all(spots.map((spot) => this.addChips(chipCount(spot.stake), 0, spotPoint(spot.bet))))
+    this.spots = spots.map((spot, i) => ({ bet: spot.bet, stake: BigInt(spot.stake), stack: stacks[i] }))
   }
 
   /** A stack slides in from the player's edge to the betting spot (offset sideways for a double). */
-  private async addChips(count: number, offsetX: number): Promise<void> {
+  private async addChips(count: number, offsetX: number, at = this.betSpot()): Promise<THREE.Group> {
     const stack = chipStack(count, this.stake.length * 2)
     stack.userData.count = count
     stack.position.copy(feltPoint(0.5, 1.05, 0.02))
     this.table.object.add(stack)
     this.stake.push(stack)
-    const spot = this.betSpot()
+    const spot = at.clone()
     spot.x += offsetX
     await arcTo(this.anim, stack, spot, 0.45, 0.2)
+    return stack
   }
 
   private betSpot(): THREE.Vector3 {
     const props = this.props
     if (props?.game === 'blackjack') return feltPoint(BLACKJACK_BET.u, BLACKJACK_BET.v, 0.002)
-    if (props?.game === 'roulette' && this.rouletteBet !== null) {
-      const cell = betCell(this.rouletteBet)
-      return feltPoint(cell.u + cell.w / 2, cell.v + cell.h / 2, 0.002)
-    }
+    const [first] = this.spots
+    if (props?.game === 'roulette' && first) return spotPoint(first.bet)
     return feltPoint(DICE_BET_SPOT.u, DICE_BET_SPOT.v, 0.002)
   }
 
@@ -527,6 +541,7 @@ class TableScene implements TableSceneApi {
 
   private async spin(pocket: number): Promise<void> {
     if (this.props?.game !== 'roulette') return
+    this.pocket = pocket
     this.rig.say('no more bets!')
     await Promise.all([this.rig.gesture({ kind: 'spin' }), this.props.wheel.spin(pocket)])
     this.backToSeatSoon()
@@ -544,6 +559,7 @@ class TableScene implements TableSceneApi {
   }
 
   private async settle(outcome: 'win' | 'lose' | 'push', payout: string, wager: string): Promise<void> {
+    if (this.spots.length > 1 && this.pocket !== null) return this.settleSpots(this.pocket, payout, wager)
     if (outcome === 'lose') {
       this.rig.say('the house wins this one')
       await Promise.all([this.rig.gesture({ kind: 'collect' }), this.sweepStake(feltPoint(0.5, 0.05, 0.02))])
@@ -573,10 +589,48 @@ class TableScene implements TableSceneApi {
     this.shotTarget = 0
   }
 
+  /**
+   * One spin, several chip stacks: the losing stacks go to the dealer first, so what stays on the
+   * felt is what won; each winner is paid beside its own stack, then everything comes back.
+   */
+  private async settleSpots(pocket: number, payout: string, wager: string): Promise<void> {
+    const won = this.spots.filter((spot) => rouletteWins(spot.bet, pocket))
+    const lost = this.spots.filter((spot) => !rouletteWins(spot.bet, pocket))
+    const net = BigInt(payout) - BigInt(wager)
+    this.rig.say(
+      won.length === 0
+        ? 'the house wins this one'
+        : `${won.length} of ${this.spots.length} spots win · ${net > 0n ? '+' : ''}${formatUsdc(net)} tUSDC`,
+    )
+    if (lost.length > 0) {
+      const toDealer = feltPoint(0.5, 0.05, 0.02)
+      await Promise.all([this.rig.gesture({ kind: 'collect' }), this.sweepStacks(lost.map((spot) => spot.stack), toDealer)])
+    }
+    if (won.length > 0) {
+      await this.rig.gesture({ kind: 'pay' })
+      await Promise.all(
+        won.map((spot) => {
+          const gain = spotPayout(spot.bet, spot.stake, pocket, this.rakeBp) - spot.stake
+          return this.addChips(chipCount(gain.toString()), PAID_BESIDE_X, spotPoint(spot.bet))
+        }),
+      )
+      await this.anim.wait(RESULT_HOLD_S)
+      await this.sweepStake(feltPoint(0.5, 1.15, 0.02))
+    }
+    await this.rig.gesture({ kind: net > 0n ? 'facepalm' : 'celebrate' })
+    await this.anim.wait(RESULT_HOLD_S)
+    this.rig.say(this.reason)
+    this.shotTarget = 0
+  }
+
   /** Every chip on the felt slides to `to` and goes away. */
-  private async sweepStake(to: THREE.Vector3): Promise<void> {
-    const stacks = this.stake
-    this.stake = []
+  private sweepStake(to: THREE.Vector3): Promise<void> {
+    return this.sweepStacks(this.stake, to)
+  }
+
+  /** These stacks slide to `to` and go away. */
+  private async sweepStacks(stacks: readonly THREE.Group[], to: THREE.Vector3): Promise<void> {
+    this.stake = this.stake.filter((stack) => !stacks.includes(stack))
     await Promise.all(stacks.map((stack) => arcTo(this.anim, stack, to, 0.4, 0.1)))
     for (const stack of stacks) {
       stack.removeFromParent()
@@ -594,6 +648,12 @@ function buildProps(game: Game, anim: Animator): Props {
   if (game === 'blackjack') return { game, cards: new Cards(anim) }
   if (game === 'roulette') return { game, wheel: new Roulette(anim) }
   return { game, dice: new Dice(anim) }
+}
+
+/** Where a roulette bet's chips stand: the middle of its cell, line or crossing. */
+function spotPoint(bet: RouletteBet): THREE.Vector3 {
+  const cell = betCell(bet)
+  return feltPoint(cell.u + cell.w / 2, cell.v + cell.h / 2, 0.002)
 }
 
 function chipCountOf(stack: THREE.Group): number {

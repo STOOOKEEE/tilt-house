@@ -155,11 +155,11 @@ export function feltSpot(game: DealerView['game'], u: number, v: number, dice: D
   return { kind: 'side', over: hit.over, cell: around(side, { w: DICE_SIDES.halfW * 2, h: DICE_SIDES.halfH * 2 }) }
 }
 
-/** Felt point where a bet's chips stack. */
+/** Felt point where a bet's chips stack (a multi-spot spin: its first spot). */
 export function stackPoint(bet: Bet): { u: number; v: number } {
   if (bet === 'blackjack') return BLACKJACK_BET_SPOT
   if ('dice' in bet) return DICE_BET_SPOT
-  const cell = betCell(bet.roulette)
+  const cell = betCell('roulette' in bet ? bet.roulette : bet.roulette_spots[0].bet)
   return { u: cell.u + cell.w / 2, v: cell.v + cell.h / 2 }
 }
 
