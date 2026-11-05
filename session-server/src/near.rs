@@ -196,7 +196,8 @@ impl Chain for NearChain {
                 rake_bp: dealer.rake_bp,
                 max_bet: dealer.max_bet,
                 pool_free: dealer.bankroll.saturating_sub(dealer.reserved),
-                open: dealer.open,
+                // open_session refuses a dealer off the floor: no ticket for it either.
+                open: dealer.open && dealer.seat.is_some(),
             }))
     }
 
