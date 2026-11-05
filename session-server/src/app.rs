@@ -26,7 +26,7 @@ pub const IDLE_CLOSE_SECS: u64 = SESSION_TIMEOUT_SECS / 2;
 /// sent just before expiry.
 const EXPIRY_GRACE_SECS: u64 = 60;
 const MAX_ID_LEN: usize = 64;
-/// Share of the pool's free money a ticket is sized on (see `create`).
+/// Share of the pool's free money (and of the table's max bet) a ticket is sized on (see `create`).
 const POOL_FREE_HEADROOM_PCT: u128 = 80;
 
 type Shared = Arc<AsyncMutex<Session>>;
@@ -254,7 +254,9 @@ impl<C: Chain> App<C> {
         // contract refuses it.
         let pool_free = dealer.pool_free * POOL_FREE_HEADROOM_PCT / 100;
         let max_win = session_max_win(request.lock, pool_free);
-        if !dealer.open || dealer.max_bet < SESSION_MIN_BET || max_win == 0 {
+        // The table's max bet also shrinks as the pool reserves: same headroom.
+        let max_bet = dealer.max_bet * POOL_FREE_HEADROOM_PCT / 100;
+        if !dealer.open || max_bet < SESSION_MIN_BET || max_win == 0 {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
                 "this table takes no bets now",
@@ -271,7 +273,7 @@ impl<C: Chain> App<C> {
             server_seed_hash: server_seed_hash(&server_seed),
             client_seed: request.client_seed,
             rake_bp: dealer.rake_bp,
-            max_bet: dealer.max_bet,
+            max_bet,
             max_win,
             expires_at: at + TICKET_TTL_SECS,
         };
