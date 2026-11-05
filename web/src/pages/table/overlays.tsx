@@ -1,6 +1,7 @@
 // The seat's overlays: small HUD panels in the corners, the round drawer, the cards shown before
 // sitting and after leaving, and the bottom bar (chips, TILT, blackjack moves).
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router'
 import { LoginPrompt } from '../../components/LoginPrompt'
 import { formatBp, formatUsdc, parseUsdc } from '../../format'
 import { roundWager, type BjAction, type BjSession, type CompactRound } from '../../near/session-client'
@@ -12,6 +13,13 @@ import { outcomeLabel } from './seat'
 /** What a session locks by default: room for a few dozen minimum bets. */
 const DEFAULT_LOCK_MIN_BETS = 50n
 const DRAWER_ROUNDS = 30
+/** A close that answers faster than this shows no spinner at all. */
+const CLOSING_SPINNER_DELAY_MS = 300
+
+/** Leaving closes the session: not in the middle of a blackjack hand or a round on its way. */
+export function canLeave(session: SessionApi): boolean {
+  return session.phase === 'playing' && !session.busy && session.hand === null
+}
 
 export function SessionHud({ dealer, session, demo }: { dealer: DealerView; session: SessionApi | null; demo: boolean }) {
   const s = session?.session ?? null
@@ -31,6 +39,17 @@ export function SessionHud({ dealer, session, demo }: { dealer: DealerView; sess
           <span className={session?.broken ? 'loss' : 'win'}>
             {demo ? 'demo · local seed, nothing signed' : session?.broken ? 'signed state refused ✗' : 'signed state checked ✓'}
           </span>
+          {session && (session.phase === 'playing' || session.phase === 'closing') ? (
+            <button
+              type="button"
+              className="leave-button"
+              disabled={!canLeave(session)}
+              title="Esc"
+              onClick={() => void session.close()}
+            >
+              Leave table <kbd>Esc</kbd>
+            </button>
+          ) : null}
         </>
       ) : (
         <span className="muted">edge {formatBp(dealer.total_edge_bp)} · not seated</span>
@@ -123,29 +142,67 @@ export function Drawer({ session, s }: { session: SessionApi; s: StoredSession }
   )
 }
 
-export function ClosedCard({ session, s }: { session: SessionApi; s: StoredSession }) {
+/** Shown while the server closes the session, only if that takes long enough to notice. */
+export function ClosingCard() {
+  const [shown, setShown] = useState(false)
+  useEffect(() => {
+    const timer = window.setTimeout(() => setShown(true), CLOSING_SPINNER_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [])
+  if (!shown) return null
   return (
     <div className="center-card">
-      <h2>Session closed</h2>
-      <p>
-        {s.state.nonce} rounds · <span className="money">{formatUsdc(s.state.balance)} tUSDC</span> back to your balance
+      <p className="closing">
+        <span className="spinner" aria-hidden="true" /> leaving the table: the server reveals its seed…
       </p>
+    </div>
+  )
+}
+
+export function ClosedCard({ session, s, onDismiss }: { session: SessionApi; s: StoredSession; onDismiss: () => void }) {
+  const wagered = s.rounds.reduce((sum, round) => sum + roundWager(round), 0n)
+  const net = BigInt(s.state.balance) - BigInt(s.ticket.lock)
+  const verified = session.verified !== null
+  return (
+    <div className="center-card">
+      <button type="button" className="ghost card-close" aria-label="dismiss" onClick={onDismiss}>
+        ✕
+      </button>
+      <h2>You left the table</h2>
+      <dl className="closed-summary">
+        <dt>rounds</dt>
+        <dd>{s.state.nonce}</dd>
+        <dt>wagered</dt>
+        <dd className="money">{formatUsdc(wagered)}</dd>
+        <dt>net</dt>
+        <dd className={net > 0n ? 'win' : net < 0n ? 'loss' : undefined}>
+          {net > 0n ? '+' : ''}
+          {formatUsdc(net)}
+        </dd>
+        <dt>back to your balance</dt>
+        <dd className="money">{formatUsdc(s.state.balance)} tUSDC</dd>
+      </dl>
+      <VerifyResult session={session} />
       {s.server_seed ? (
-        <p className="muted seed">
+        <details className="muted seed">
+          <summary>seeds</summary>
           revealed seed <code>{s.server_seed}</code>
           <br />
           committed hash <code>{s.ticket.server_seed_hash}</code>
           <br />
           your client seed <code>{s.ticket.client_seed}</code>
-        </p>
+        </details>
       ) : (
         <p className="muted">waiting for the server to reveal its seed…</p>
       )}
-      <VerifyResult session={session} />
       <p className="choices">
-        <button type="button" disabled={!s.server_seed} onClick={session.verify}>
+        {/* Verify first, then the way out becomes the main button. */}
+        <button type="button" className={verified ? 'ghost' : undefined} disabled={!s.server_seed} onClick={session.verify}>
           Verify every round
         </button>
+        <Link className={verified ? 'button' : 'button ghost'} to="/">
+          Back to the lobby <kbd>Esc</kbd>
+        </Link>
         <button type="button" className="ghost" onClick={session.forget}>
           Sit down again
         </button>

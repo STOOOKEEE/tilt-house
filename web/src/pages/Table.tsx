@@ -1,7 +1,7 @@
 // A seat at one table, full screen: the player sits at the felt facing the dealer, places chips by
 // clicking the felt, and plays with the TILT button. Everything else floats over the 3D view.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { formatUsdc } from '../format'
 import { diceWinPayout } from '../house'
 import { useDemoSession } from '../near/useDemoSession'
@@ -28,7 +28,7 @@ import {
 import { createTableScene } from '../scene/table/TableScene'
 import type { FeltAction, TableSceneApi } from '../scene/types'
 import { useNow } from '../useNow'
-import { BetBar, ClosedCard, Drawer, SessionHud, SitCard, WalletHud } from './table/overlays'
+import { BetBar, canLeave, ClosedCard, ClosingCard, Drawer, SessionHud, SitCard, WalletHud } from './table/overlays'
 import { boardInfo, feltSpot, ownRoundView, stackPoint } from './table/seat'
 
 const DEFAULT_DICE: DiceTarget = { chance_bp: 5_000, over: false }
@@ -113,6 +113,12 @@ function Seat({ dealer, session, walletId, wallet, demo, offline, elsewhere }: S
   const [dice, setDice] = useState<DiceTarget>(DEFAULT_DICE)
   const [drawer, setDrawer] = useState(false)
   const [tilting, setTilting] = useState(false)
+  const [dismissed, setDismissed] = useState(false)
+  const navigate = useNavigate()
+  // A new close shows its card again.
+  useEffect(() => {
+    if (!closedHere) setDismissed(false)
+  }, [closedHere])
 
   const ownRound = useMemo(
     () => (here ? ownRoundView(s, session.hand, session.last, walletId) : null),
@@ -164,6 +170,8 @@ function Seat({ dealer, session, walletId, wallet, demo, offline, elsewhere }: S
     h: () => handLive && void session.act('hit'),
     s: () => handLive && void session.act('stand'),
     d: () => handLive && void session.act('double'),
+    // Esc leaves the table, and once it is closed, the room.
+    escape: () => (closedHere ? void navigate('/') : canLeave(session) && void session.close()),
   })
 
   const center = elsewhere ? (
@@ -177,7 +185,9 @@ function Seat({ dealer, session, walletId, wallet, demo, offline, elsewhere }: S
       <p className="muted">Play is offline: no session server configured.</p>
     </div>
   ) : closedHere && s ? (
-    <ClosedCard session={session} s={s} />
+    dismissed ? null : <ClosedCard session={session} s={s} onDismiss={() => setDismissed(true)} />
+  ) : here && session.phase === 'closing' ? (
+    <ClosingCard />
   ) : !playing ? (
     <SitCard dealer={dealer} session={session} balance={wallet} loggedIn={walletId !== ''} demo={demo} />
   ) : null
@@ -200,7 +210,7 @@ function Seat({ dealer, session, walletId, wallet, demo, offline, elsewhere }: S
       {center}
       {session.error ? <p className="seat-toast loss">{session.error}</p> : null}
       {session.broken ? <p className="seat-toast loss">Stopped: {session.broken}</p> : null}
-      {playing ? (
+      {playing && session.phase === 'playing' ? (
         <BetBar
           game={dealer.game}
           chip={chip}

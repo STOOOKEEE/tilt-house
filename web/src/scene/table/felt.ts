@@ -58,8 +58,8 @@ export function rouletteBetAt(u: number, v: number): RouletteBet | null {
 /** Where the dice stake sits, and the 0-100 bar the player sets the target on. */
 export const DICE_BET_SPOT = { u: 0.5, v: 0.66 }
 export const DICE_BAR = { u0: 0.14, u1: 0.86, v: 0.8, halfH: 0.07 }
-/** Printed buttons under the bar: which side of the target wins. */
-export const DICE_SIDES = { under: { u: 0.36, v: 0.93 }, over: { u: 0.64, v: 0.93 }, halfW: 0.09, halfH: 0.04 } as const
+/** Printed buttons either side of the stake circle (clear of the bottom overlays): which side of the target wins. */
+export const DICE_SIDES = { under: { u: 0.27, v: 0.66 }, over: { u: 0.73, v: 0.66 }, halfW: 0.09, halfH: 0.045 } as const
 export const BLACKJACK_BET_SPOT = { u: 0.5, v: 0.84 }
 /** Bet circles are easy targets: a little wider than what is printed. */
 const SPOT_RADIUS = { u: 0.06, v: 0.1 }

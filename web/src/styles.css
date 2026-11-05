@@ -17,6 +17,9 @@ body {
 }
 
 .topbar {
+  /* Above the full-screen table seat, so the nav always works from it. */
+  position: relative;
+  z-index: 10;
   display: flex;
   align-items: center;
   gap: 2rem;
@@ -116,7 +119,8 @@ a.button {
   text-decoration: none;
 }
 
-button.ghost {
+button.ghost,
+a.button.ghost {
   color: var(--text);
   background: transparent;
   border: 1px solid #33363b;
@@ -589,6 +593,69 @@ input.number {
 }
 
 .bj-actions kbd {
+  font-size: 0.7rem;
+  opacity: 0.6;
+  margin-left: 0.3rem;
+}
+
+.leave-button {
+  margin-top: 0.35rem;
+  font-weight: 700;
+  background: var(--gold);
+}
+
+.leave-button kbd {
+  font-size: 0.7rem;
+  opacity: 0.6;
+  margin-left: 0.3rem;
+}
+
+.closed-summary {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.25rem 1.5rem;
+  margin: 0;
+}
+
+.closed-summary dt {
+  color: var(--muted);
+}
+
+.closed-summary dd {
+  margin: 0;
+  text-align: right;
+}
+
+.closing {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 3px solid rgba(240, 194, 106, 0.3);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.card-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  padding: 0.1rem 0.5rem;
+}
+
+.center-card .choices kbd {
   font-size: 0.7rem;
   opacity: 0.6;
   margin-left: 0.3rem;
