@@ -12,15 +12,15 @@ const DELEGATE_TTL_BLOCKS = 120
 const KEY_VISIBLE_TRIES = 10
 const KEY_VISIBLE_WAIT_MS = 1_500
 
-const isMissingKey = (error: unknown) => error instanceof Error && /access key .* does not exist/i.test(error.message)
-
 /** Runs `sign`, retrying while the signing key of a just-activated account is not final yet. */
 async function whenKeyVisible<T>(sign: () => Promise<T>): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
       return await sign()
     } catch (error) {
-      if (!isMissingKey(error) || attempt >= KEY_VISIBLE_TRIES) throw error
+      const missingKey = error instanceof Error && /access key .* does not exist/i.test(error.message)
+      if (!missingKey || attempt >= KEY_VISIBLE_TRIES) throw error
+      // ES2022 lib has no Promise.withResolvers.
       await new Promise((resolve) => setTimeout(resolve, KEY_VISIBLE_WAIT_MS))
     }
   }
