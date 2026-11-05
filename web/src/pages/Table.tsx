@@ -35,7 +35,13 @@ export function Table() {
   if (!lobby.data) return <p className="muted">loading table…</p>
   if (!dealer) return <p>No dealer “{dealerId}”. <Link to="/">Back to the lobby</Link></p>
 
-  const elsewhere = session.session && session.session.ticket.dealer_id !== dealer.id ? session.session : null
+  // The chain is the truth: a session closed by us, by the server (idle) or force-closed no longer
+  // holds the player, even if this browser still keeps it for verification.
+  const openOnChain = player.data?.open_session ?? null
+  const elsewhere =
+    session.session && session.session.ticket.dealer_id !== dealer.id && openOnChain === session.session.session_id
+      ? session.session
+      : null
   return (
     <>
       <TableStage dealer={dealer} ownRound={ownRound} drawing={session.busy && session.phase === 'playing'} failed={session.error !== ''} />
@@ -246,6 +252,10 @@ function SessionPanel({ dealer, session, balance, loggedIn }: SessionPanelProps)
     case 'closing':
       return s ? <PlayArea dealer={dealer} session={session} s={s} /> : null
     case 'closed':
+      // A finished session at another table: this one is free to sit at.
+      if (s && s.ticket.dealer_id !== dealer.id) {
+        return <OpenSession dealer={dealer} session={session} balance={balance} loggedIn={loggedIn} />
+      }
       return s ? <ClosedSession session={session} s={s} /> : null
   }
 }
@@ -259,7 +269,7 @@ function OpenSession({ dealer, session, balance, loggedIn }: SessionPanelProps) 
       : balance !== null && lock > balance
         ? 'not enough balance: deposit in Pools'
         : ''
-  const working = session.phase !== 'idle'
+  const working = session.phase === 'starting' || session.phase === 'opening'
   return (
     <section className="play">
       <p className="muted">
