@@ -49,6 +49,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::floor::{FloorView, MIN_RENT_PER_HOUR, PREPAY_HOURS};
 use crate::seats::MIN_SEAT_RENT;
+use crate::session::SESSION_MIN_BET;
 use crate::{base_edge_bp, rake_bounds, worst_case_multiple, Game, Pool, BP};
 
 /// Temperament traits are percentages; anything above counts as 100.
@@ -490,7 +491,12 @@ fn clamp(game: Game, pool: &Pool, offer: Offer, now: u64) -> Offer {
     };
     Offer {
         rake_bp: offer.rake_bp.clamp(min_rake, max_rake),
-        max_bet: offer.max_bet.min(pool.free() / worst_case_multiple(game)),
+        // A small pool's cautious max bet can fall under the minimum bet, which closes the table
+        // although its bankroll covers a minimum bet: keep it playable while the pool allows.
+        max_bet: offer
+            .max_bet
+            .max(SESSION_MIN_BET)
+            .min(pool.free() / worst_case_multiple(game)),
         boost_until,
         reason: offer.reason,
     }
@@ -812,6 +818,22 @@ mod tests {
         assert_eq!(
             reprice(Game::Dice, &busy, &calm(), &BALANCED, &[], NOW).reason,
             Reason::LowBankroll
+        );
+    }
+
+    #[test]
+    fn a_minimum_seed_table_still_takes_the_minimum_bet() {
+        // A player's table opened with the minimum seed (minus its first rent), on autopilot.
+        let cautious = Temperament {
+            greed: 20,
+            caution: 90,
+            promo: 10,
+        };
+        let offer = reprice(Game::Dice, &pool(196), &calm(), &cautious, &[], NOW);
+        assert!(offer.max_bet >= SESSION_MIN_BET, "{}", offer.max_bet);
+        // A pool that cannot cover a minimum bet stays closed.
+        assert!(
+            reprice(Game::Dice, &pool(5), &calm(), &cautious, &[], NOW).max_bet < SESSION_MIN_BET
         );
     }
 
