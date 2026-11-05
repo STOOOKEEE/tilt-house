@@ -10,15 +10,28 @@ const LOOKS: Record<string, DealerLook> = {
   eve: { skin: '#7a4a2e', shirt: '#fbfbf5', vest: '#6b2fd6', hair: '#120c0a', hat: 'top_hat', accent: '#ec6fae' },
 }
 
-const FALLBACK: DealerLook = {
-  skin: '#d6a37e',
-  shirt: '#ececec',
-  vest: '#2f3b33',
-  hair: '#3a2a1e',
-  hat: 'none',
-  accent: '#f0715f',
+/** Looks a player can pick for their own table; `open_table` accepts exactly these names. */
+export const LOOK_PRESETS = ['gold-visor', 'top-hat', 'beanie', 'bare'] as const
+export type LookPreset = (typeof LOOK_PRESETS)[number]
+
+const PRESETS: Record<LookPreset, DealerLook> = {
+  'gold-visor': { skin: '#c98f66', shirt: '#f4f0e4', vest: '#1c2028', hair: '#3a2416', hat: 'visor', accent: '#f0c26a' },
+  'top-hat': { skin: '#8d5a3a', shirt: '#fff3d0', vest: '#c23a8a', hair: '#1a1210', hat: 'top_hat', accent: '#ec6fae' },
+  beanie: { skin: '#f0c4a0', shirt: '#e2e8e2', vest: '#3f5a4c', hair: '#6b3e1e', hat: 'beanie', accent: '#7ccf8f' },
+  bare: { skin: '#d6a37e', shirt: '#ececec', vest: '#2f3b33', hair: '#3a2a1e', hat: 'none', accent: '#f0715f' },
 }
 
-export function dealerLook(id: string): DealerLook {
-  return LOOKS[id] ?? FALLBACK
+/** The preset that matches a temperament, for tables that did not pick one. */
+const BY_TEMPERAMENT: Record<string, LookPreset> = { greedy: 'gold-visor', promoter: 'top-hat', cautious: 'beanie' }
+
+export function isLookPreset(value: string): value is LookPreset {
+  return LOOK_PRESETS.some((preset) => preset === value)
+}
+
+/** Launch dealers keep their own look; other tables wear their preset, else their temperament's. */
+export function dealerLook(id: string, look: string | null = null, temperament = ''): DealerLook {
+  const own = LOOKS[id]
+  if (own) return own
+  if (look !== null && isLookPreset(look)) return PRESETS[look]
+  return PRESETS[BY_TEMPERAMENT[temperament] ?? 'bare']
 }

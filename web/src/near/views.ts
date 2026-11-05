@@ -144,32 +144,32 @@ export class ViewShapeError extends Error {}
 
 type Json = Record<string, unknown>
 
-function fail(path: string, expected: string): never {
+export function fail(path: string, expected: string): never {
   throw new ViewShapeError(`unexpected contract reply: ${path} should be ${expected}`)
 }
 
-function record(value: unknown, path: string): Json {
+export function record(value: unknown, path: string): Json {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) fail(path, 'an object')
   return value as Json
 }
 
-function list(value: unknown, path: string): unknown[] {
+export function list(value: unknown, path: string): unknown[] {
   if (!Array.isArray(value)) fail(path, 'an array')
   return value
 }
 
-function str(value: unknown, path: string): string {
+export function str(value: unknown, path: string): string {
   if (typeof value !== 'string') fail(path, 'a string')
   return value
 }
 
-function bool(value: unknown, path: string): boolean {
+export function bool(value: unknown, path: string): boolean {
   if (typeof value !== 'boolean') fail(path, 'a boolean')
   return value
 }
 
 /** u64 values (ids, seconds, bp) are JSON numbers per the API conventions. */
-function int(value: unknown, path: string): number {
+export function int(value: unknown, path: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) fail(path, 'a non-negative integer')
   return value
 }
@@ -177,16 +177,16 @@ function int(value: unknown, path: string): number {
 const DECIMAL = /^\d+$/
 
 /** u128 amounts: decimal strings only, never JSON numbers (they lose precision). */
-function amount(value: unknown, path: string): string {
+export function amount(value: unknown, path: string): string {
   if (typeof value !== 'string' || !DECIMAL.test(value)) fail(path, 'a decimal string')
   return value
 }
 
-function optional<T>(value: unknown, read: (v: unknown) => T): T | null {
+export function optional<T>(value: unknown, read: (v: unknown) => T): T | null {
   return value === undefined || value === null ? null : read(value)
 }
 
-function oneOf<T extends string>(allowed: readonly T[], value: unknown, path: string): T {
+export function oneOf<T extends string>(allowed: readonly T[], value: unknown, path: string): T {
   const found = allowed.find((a) => a === value)
   if (found === undefined) fail(path, `one of ${allowed.join(', ')}`)
   return found

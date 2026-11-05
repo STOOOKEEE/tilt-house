@@ -43,12 +43,10 @@ export function buildRug(accent: string): THREE.Mesh {
 
 // ---- nameplate ------------------------------------------------------------------------------
 
-export interface PlateInfo {
-  name: string
-  game: Game
-  edge: string
-  open: boolean
-}
+/** A seated table's plate, or an empty seat's. Amounts arrive formatted ("1.10"). */
+export type PlateInfo =
+  | { kind: 'table'; name: string; game: Game; edge: string; open: boolean; rent: string; playerOwned: boolean; accent: string }
+  | { kind: 'empty'; seat: number; from: string }
 
 export interface Nameplate {
   object: THREE.Mesh
@@ -58,10 +56,11 @@ export interface Nameplate {
 
 const PLATE_W = 512
 const PLATE_H = 128
+const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
-export function buildNameplate(accent: string): Nameplate {
-  let info: PlateInfo = { name: '', game: 'dice', edge: '', open: true }
-  const art: PixelTexture = pixelTexture(PLATE_W, PLATE_H, (ctx) => drawPlate(ctx, info, accent), { smooth: true })
+export function buildNameplate(): Nameplate {
+  let info: PlateInfo = { kind: 'empty', seat: 0, from: '' }
+  const art: PixelTexture = pixelTexture(PLATE_W, PLATE_H, (ctx) => drawPlate(ctx, info), { smooth: true })
   const object = texturedBox([1.9, 0.48, 0.06], shade(WOOD, -0.1), art.texture)
   object.position.set(0, 0.4, LOBBY_TABLE_D / 2 + 0.24)
   return {
@@ -75,26 +74,96 @@ export function buildNameplate(accent: string): Nameplate {
   }
 }
 
-function drawPlate(ctx: CanvasRenderingContext2D, info: PlateInfo, accent: string): void {
+function drawPlate(ctx: CanvasRenderingContext2D, info: PlateInfo): void {
+  const accent = info.kind === 'table' ? info.accent : PALETTE.gold
   ctx.fillStyle = '#1a1210'
   ctx.fillRect(0, 0, PLATE_W, PLATE_H)
   ctx.fillStyle = accent
   ctx.fillRect(0, 0, PLATE_W, 8)
   ctx.fillRect(0, PLATE_H - 8, PLATE_W, 8)
   ctx.textBaseline = 'middle'
-  ctx.font = "bold 46px 'JetBrains Mono', ui-monospace, monospace"
+  if (info.kind === 'empty') {
+    ctx.font = `bold 46px ${MONO}`
+    ctx.fillStyle = accent
+    ctx.fillText('FOR RENT', 22, 44)
+    ctx.font = `28px ${MONO}`
+    ctx.fillStyle = PALETTE.cream
+    ctx.fillText(`seat ${info.seat} · from ${info.from}/h`, 22, 92)
+    return
+  }
+  ctx.font = `bold 46px ${MONO}`
   ctx.fillStyle = accent
   ctx.fillText(info.name, 22, 44)
-  ctx.font = "28px 'JetBrains Mono', ui-monospace, monospace"
+  ctx.font = `24px ${MONO}`
   ctx.fillStyle = PALETTE.cream
-  ctx.fillText(`${info.game} · ${info.edge} edge`, 22, 92)
-  const badge = info.open ? 'OPEN' : 'CLOSED'
-  ctx.font = "bold 28px 'JetBrains Mono', ui-monospace, monospace"
-  const bw = ctx.measureText(badge).width + 24
-  ctx.fillStyle = info.open ? PALETTE.green : PALETTE.red
-  ctx.fillRect(PLATE_W - bw - 18, 24, bw, 40)
+  ctx.fillText(`${info.game} · ${info.edge} · ${info.rent}/h`, 22, 92)
+  drawBadge(ctx, info.open ? 'OPEN' : 'CLOSED', info.open ? PALETTE.green : PALETTE.red, 24)
+  // Player-run tables are marked so the floor shows who is an NPC and who is a player business.
+  if (info.playerOwned) drawBadge(ctx, 'PLAYER', PALETTE.pink, 72, 20)
+}
+
+/** A filled pill on the plate's right edge. */
+function drawBadge(ctx: CanvasRenderingContext2D, text: string, color: string, top: number, size = 28): void {
+  ctx.font = `bold ${size}px ${MONO}`
+  const w = ctx.measureText(text).width + 24
+  const h = size + 12
+  ctx.fillStyle = color
+  ctx.fillRect(PLATE_W - w - 18, top, w, h)
   ctx.fillStyle = '#141517'
-  ctx.fillText(badge, PLATE_W - bw - 6, 45)
+  ctx.fillText(text, PLATE_W - w - 6, top + h / 2 + 1)
+}
+
+// ---- for rent sign --------------------------------------------------------------------------
+
+export interface RentSign {
+  object: THREE.Group
+  /** `from` is the formatted rent needed to take the seat. */
+  set(from: string): void
+  redraw(): void
+}
+
+const SIGN_W = 256
+const SIGN_H = 128
+/** Hanging height of the board's center over the empty table. */
+export const SIGN_Y = 1.75
+
+/** A board hanging on two chains over an empty seat: "FOR RENT · from X/h". */
+export function buildRentSign(): RentSign {
+  let from = ''
+  const art = pixelTexture(SIGN_W, SIGN_H, (ctx) => drawSign(ctx, from), { smooth: true })
+  const object = new THREE.Group()
+  const board = texturedBox([1.5, 0.75, 0.06], shade(WOOD, -0.1), art.texture)
+  const chains = voxelPart(
+    [-0.55, 0.55].map((x): VoxelBox => ({ size: [0.04, 3, 0.04], at: [x, 1.85, 0], color: PALETTE.gold })),
+    { shadows: false },
+  )
+  object.add(board, chains)
+  object.position.set(0, SIGN_Y, DEALER_Z + 0.3)
+  return {
+    object,
+    set(next) {
+      if (next === from) return
+      from = next
+      art.redraw()
+    },
+    redraw: art.redraw,
+  }
+}
+
+function drawSign(ctx: CanvasRenderingContext2D, from: string): void {
+  ctx.fillStyle = '#120a0c'
+  ctx.fillRect(0, 0, SIGN_W, SIGN_H)
+  ctx.strokeStyle = PALETTE.gold
+  ctx.lineWidth = 6
+  ctx.strokeRect(5, 5, SIGN_W - 10, SIGN_H - 10)
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = `bold 40px ${MONO}`
+  ctx.fillStyle = PALETTE.gold
+  ctx.fillText('FOR RENT', SIGN_W / 2, 48)
+  ctx.font = `24px ${MONO}`
+  ctx.fillStyle = PALETTE.cream
+  ctx.fillText(`from ${from}/h`, SIGN_W / 2, 90)
 }
 
 // ---- curtain --------------------------------------------------------------------------------

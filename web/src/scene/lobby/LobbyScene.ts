@@ -1,106 +1,266 @@
-// The casino floor: every dealer at its own small table in a gentle arc, mood and reason from
-// the live lobby, an idle animation per game so the room feels alive. Hover lights a table up,
-// click opens it.
+// The casino floor (docs/floor.md): six seats in a gentle arc. A seated dealer plays its game with
+// mood and reason from the live lobby; an empty seat hangs a "FOR RENT" sign. When a seat changes
+// hands between polls, the old dealer stands up and walks off, the sign drops in, then the new one
+// walks in and sits. Hover lights a seat up, click opens its table (or the "open a table" page).
 import * as THREE from 'three'
-import { formatBp } from '../../format'
+import { formatBp, formatUsdc } from '../../format'
+import type { SeatedTable } from '../../near/floor'
 import type { DealerView } from '../../near/views'
-import { createCharacter } from '../characters'
+import { createCharacter, type WalkerRig } from '../characters'
 import { dealerLook } from '../looks'
 import { dealerMood } from '../mood'
 import { mountRenderer } from '../renderer'
-import { Animator, PALETTE } from '../table/props'
-import type { CharacterRig, Mood } from '../types'
+import { Animator, PALETTE, easeOut } from '../table/props'
+import type { Mood } from '../types'
 import { pixelTexture, px, voxelPart } from '../voxel'
 import {
   buildDrapes,
   buildNameplate,
+  buildRentSign,
   buildRug,
   buildTableMesh,
   createProp,
   DEALER_Z,
   LOBBY_TABLE_D,
   LOBBY_TABLE_W,
+  SIGN_Y,
   type Drapes,
   type LobbyProp,
   type Nameplate,
+  type RentSign,
 } from './props'
 
 export interface LobbySceneApi {
-  setDealers(dealers: readonly DealerView[]): void
+  /** One entry per seat (null = for rent); `rentFrom` is the rent needed to take a seat, base units. */
+  setFloor(seats: readonly (SeatedTable | null)[], rentFrom: string): void
   dispose(): void
 }
 
+export interface LobbySceneEvents {
+  onTable(dealerId: string): void
+  onEmptySeat(): void
+}
+
+const SEAT_COUNT = 6
 const SPACING = 3.1
 /** z = ARC × x²: outer tables come forward, so the row curves around the viewer. */
 const ARC = 0.05
 const CAMERA_Z = 9.5
 const LOOK_AT = new THREE.Vector3(0, 1.35, 0.6)
 /** Half the floor width that must stay in view, beyond the outermost table centers. */
-const FRAME_MARGIN = 2.4
+const FRAME_MARGIN = 3.2
 const HOVER_LIFT = 0.06
 const LAMP_ON = 7
 const LAMP_OFF = 1.2
+const LAMP_EMPTY = 3
 /** A press that moves farther than this (px) is a drag, not a click. */
 const CLICK_SLOP = 6
+/** Walking: units per second; dealers leave behind the row, toward the nearest side, out of frame. */
+const WALK_SPEED = 2.4
+const AISLE_BEHIND = 1.2
+const EXIT_X = 13
+const TURN_S = 0.25
+/** Where the sign waits, out of frame above the seat. */
+const SIGN_UP_Y = 7
+const SIGN_DROP_S = 0.9
+const PROP_POP_S = 0.4
 
-interface FloorTable {
+interface Occupant {
   dealer: DealerView
-  group: THREE.Group
-  rig: CharacterRig
+  rig: WalkerRig
   prop: LobbyProp
+  mood: Mood
+  /** Seated and playing; false while walking in or out. */
+  seated: boolean
+}
+
+interface Seat {
+  index: number
+  group: THREE.Group
   plate: Nameplate
+  sign: RentSign
   rug: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
   lamp: THREE.PointLight
   drapes: Drapes
   hit: THREE.Mesh
+  occupant: Occupant | null
+  /** Who the latest poll seats here; animations catch up with it one step at a time. */
+  wanted: SeatedTable | null
+  busy: boolean
   hover: number
   closed: number
-  mood: Mood
 }
 
-export function createLobbyScene(el: HTMLElement, onSelect: (dealerId: string) => void): LobbySceneApi {
+export function createLobbyScene(el: HTMLElement, events: LobbySceneEvents): LobbySceneApi {
   const mounted = mountRenderer(el)
   const { scene, camera, renderer } = mounted
   camera.fov = 38
   buildRoom(scene)
 
   const anim = new Animator()
-  const tables = new Map<string, FloorTable>()
-  let hovered: FloorTable | null = null
+  const seats = Array.from({ length: SEAT_COUNT }, (_, i) => buildSeat(i))
+  for (const seat of seats) scene.add(seat.group)
+  let rentFrom = ''
+  let firstFloor = true
+  let hovered: Seat | null = null
   let disposed = false
 
-  const add = (dealer: DealerView): FloorTable => {
-    const table = buildFloorTable(dealer)
-    scene.add(table.group)
-    tables.set(dealer.id, table)
-    void idleLoop(table)
-    return table
-  }
-
   /** Plays the table's game now and then; happy dealers sometimes cheer, nervous ones despair. */
-  const idleLoop = async (table: FloorTable): Promise<void> => {
+  const idleLoop = async (seat: Seat, occupant: Occupant): Promise<void> => {
     await anim.wait(0.5 + Math.random() * 3)
-    while (!disposed && tables.get(table.dealer.id) === table) {
-      if (table.dealer.open) await table.prop.play(table.rig, anim)
-      if (table.mood === 'happy' && Math.random() < 0.3) await table.rig.gesture({ kind: 'celebrate' })
-      if (table.mood === 'nervous' && Math.random() < 0.3) await table.rig.gesture({ kind: 'facepalm' })
+    const here = (): boolean => !disposed && seat.occupant === occupant && occupant.seated
+    while (here()) {
+      if (occupant.dealer.open) await occupant.prop.play(occupant.rig, anim)
+      if (!here()) break
+      if (occupant.mood === 'happy' && Math.random() < 0.3) await occupant.rig.gesture({ kind: 'celebrate' })
+      if (occupant.mood === 'nervous' && Math.random() < 0.3) await occupant.rig.gesture({ kind: 'facepalm' })
       await anim.wait(2 + Math.random() * 3)
     }
   }
 
-  const layout = (): void => {
-    const list = [...tables.values()]
-    list.forEach((table, i) => {
-      const x = (i - (list.length - 1) / 2) * SPACING
-      const z = ARC * x * x
-      table.group.position.set(x, 0, z)
-      table.group.rotation.y = Math.atan2(-x, CAMERA_Z - z)
+  const seatOccupant = (seat: Seat, table: SeatedTable): Occupant => {
+    const look = dealerLook(table.dealer.id, table.look, table.dealer.temperament)
+    const rig = createCharacter(look, table.dealer.name)
+    rig.object.position.z = DEALER_Z
+    const prop = createProp(table.dealer.game)
+    seat.group.add(rig.object, prop.object)
+    seat.rug.material.color.set(look.accent)
+    const occupant: Occupant = { dealer: table.dealer, rig, prop, mood: 'neutral', seated: false }
+    seat.occupant = occupant
+    applyTable(seat, table)
+    return occupant
+  }
+
+  const showEmpty = (seat: Seat): void => {
+    seat.plate.set({ kind: 'empty', seat: seat.index + 1, from: rentFrom })
+    seat.sign.set(rentFrom)
+    seat.rug.material.color.set(PALETTE.gold)
+  }
+
+  // ---- walking --------------------------------------------------------------------------------
+
+  /** Turns the figure toward `to` (in the rig's own space), then walks there. */
+  const walkTo = async (rig: WalkerRig, to: THREE.Vector3): Promise<void> => {
+    const figure = rig.figure
+    const from = figure.position.clone()
+    from.y = 0
+    const delta = new THREE.Vector3(to.x - from.x, 0, to.z - from.z)
+    const distance = delta.length()
+    if (distance < 1e-3) return
+    await turnTo(figure, Math.atan2(delta.x, delta.z))
+    rig.setWalking(true)
+    await anim.tween(distance / WALK_SPEED, (t) => {
+      figure.position.x = from.x + delta.x * t
+      figure.position.z = from.z + delta.z * t
+    }, (t) => t)
+    rig.setWalking(false)
+  }
+
+  const turnTo = (figure: THREE.Object3D, yaw: number): Promise<void> => {
+    const start = figure.rotation.y
+    // The short way round.
+    const diff = Math.atan2(Math.sin(yaw - start), Math.cos(yaw - start))
+    return anim.tween(TURN_S, (t) => {
+      figure.rotation.y = start + diff * t
     })
   }
 
+  /** The aisle behind the seat and the exit beside the floor, in the rig's own space. */
+  const pathOut = (seat: Seat, rig: WalkerRig): [THREE.Vector3, THREE.Vector3] => {
+    seat.group.updateWorldMatrix(true, true)
+    const chair = rig.object.getWorldPosition(new THREE.Vector3())
+    const side = chair.x >= 0 ? 1 : -1
+    const aisle = new THREE.Vector3(chair.x, 0, chair.z - AISLE_BEHIND)
+    const exit = new THREE.Vector3(side * EXIT_X, 0, aisle.z)
+    return [rig.object.worldToLocal(aisle), rig.object.worldToLocal(exit)]
+  }
+
+  const dropSign = (seat: Seat, down: boolean): Promise<void> => {
+    const sign = seat.sign.object
+    const from = sign.position.y
+    const to = down ? SIGN_Y : SIGN_UP_Y
+    sign.visible = true
+    return anim
+      .tween(SIGN_DROP_S, (t) => {
+        sign.position.y = from + (to - from) * t
+      }, down ? easeOutBack : easeOut)
+      .then(() => {
+        sign.visible = down
+      })
+  }
+
+  const popProp = (prop: LobbyProp, show: boolean): Promise<void> =>
+    anim.tween(PROP_POP_S, (t) => prop.object.scale.setScalar(show ? t : 1 - t))
+
+  /** Stand up, walk off the floor; the sign drops in once the seat is clear. */
+  const evict = async (seat: Seat, occupant: Occupant): Promise<void> => {
+    occupant.seated = false
+    occupant.rig.say('lost my seat')
+    const [aisle, exit] = pathOut(seat, occupant.rig)
+    await Promise.all([occupant.rig.setStanding(true), popProp(occupant.prop, false)])
+    await walkTo(occupant.rig, aisle)
+    showEmpty(seat)
+    await Promise.all([dropSign(seat, true), walkTo(occupant.rig, exit)])
+    seat.occupant = null
+    occupant.rig.dispose()
+    occupant.prop.object.removeFromParent()
+  }
+
+  /** Walk in from the side, the sign lifts, sit down, then start playing. */
+  const arrive = async (seat: Seat, table: SeatedTable): Promise<void> => {
+    const occupant = seatOccupant(seat, table)
+    const { rig, prop } = occupant
+    prop.object.scale.setScalar(0)
+    rig.say('took this seat')
+    const [aisle, entrance] = pathOut(seat, rig)
+    rig.figure.position.copy(entrance)
+    await rig.setStanding(true)
+    await walkTo(rig, aisle)
+    await Promise.all([dropSign(seat, false), walkTo(rig, new THREE.Vector3(0, 0, 0))])
+    await turnTo(rig.figure, 0)
+    await Promise.all([rig.setStanding(false), popProp(prop, true)])
+    occupant.seated = true
+    rig.say(occupant.dealer.reason_text)
+    void idleLoop(seat, occupant)
+  }
+
+  /** Brings the seat to `wanted`, one animation at a time; later polls just move the target. */
+  const settle = async (seat: Seat): Promise<void> => {
+    if (seat.busy) return
+    seat.busy = true
+    while (!disposed) {
+      const wanted = seat.wanted
+      const here = seat.occupant
+      if (here && wanted && here.dealer.id === wanted.dealer.id) {
+        applyTable(seat, wanted)
+        break
+      }
+      if (!here && !wanted) {
+        showEmpty(seat)
+        break
+      }
+      if (here) await evict(seat, here)
+      else if (wanted) await arrive(seat, wanted)
+    }
+    seat.busy = false
+  }
+
+  /** First paint: everyone already in place, no walking. */
+  const place = (seat: Seat): void => {
+    const wanted = seat.wanted
+    if (!wanted) {
+      showEmpty(seat)
+      seat.sign.object.position.y = SIGN_Y
+      seat.sign.object.visible = true
+      return
+    }
+    const occupant = seatOccupant(seat, wanted)
+    occupant.seated = true
+    void idleLoop(seat, occupant)
+  }
+
   const frameCamera = (elapsed: number): void => {
-    const count = Math.max(1, tables.size)
-    const halfWidth = ((count - 1) / 2) * SPACING + FRAME_MARGIN
+    const halfWidth = ((SEAT_COUNT - 1) / 2) * SPACING + FRAME_MARGIN
     const tanHalfH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect
     // Narrow screens back the camera off so the whole row stays in frame.
     const distance = Math.max(CAMERA_Z, halfWidth / tanHalfH + 1)
@@ -111,7 +271,7 @@ export function createLobbyScene(el: HTMLElement, onSelect: (dealerId: string) =
   const unsubscribe = mounted.onFrame((dt, elapsed) => {
     anim.update(dt)
     frameCamera(elapsed)
-    for (const table of tables.values()) updateTable(table, table === hovered, dt)
+    for (const seat of seats) updateSeat(seat, seat === hovered, dt)
   })
 
   // ---- pointer --------------------------------------------------------------------------------
@@ -120,13 +280,12 @@ export function createLobbyScene(el: HTMLElement, onSelect: (dealerId: string) =
   const pointer = new THREE.Vector2()
   let pressedAt: { x: number; y: number } | null = null
 
-  const pick = (event: PointerEvent): FloorTable | null => {
+  const pick = (event: PointerEvent): Seat | null => {
     const rect = renderer.domElement.getBoundingClientRect()
     pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
     raycaster.setFromCamera(pointer, camera)
-    const hits = raycaster.intersectObjects([...tables.values()].map((t) => t.hit), false)
-    const first = hits[0]?.object
-    return [...tables.values()].find((t) => t.hit === first) ?? null
+    const first = raycaster.intersectObjects(seats.map((s) => s.hit), false)[0]?.object
+    return seats.find((s) => s.hit === first) ?? null
   }
   const onMove = (event: PointerEvent): void => {
     hovered = pick(event)
@@ -142,8 +301,11 @@ export function createLobbyScene(el: HTMLElement, onSelect: (dealerId: string) =
     const start = pressedAt
     pressedAt = null
     if (!start || Math.hypot(event.clientX - start.x, event.clientY - start.y) > CLICK_SLOP) return
-    const table = pick(event)
-    if (table) onSelect(table.dealer.id)
+    const seat = pick(event)
+    if (!seat) return
+    // Clicks follow the data, not the animation: a dealer walking off has already lost the seat.
+    if (seat.wanted) events.onTable(seat.wanted.dealer.id)
+    else events.onEmptySeat()
   }
   const canvas = renderer.domElement
   canvas.addEventListener('pointermove', onMove)
@@ -153,29 +315,22 @@ export function createLobbyScene(el: HTMLElement, onSelect: (dealerId: string) =
 
   // Canvas text drawn before the web font loaded uses the fallback: redraw once it is there.
   void document.fonts?.ready.then(() => {
-    if (!disposed) for (const table of tables.values()) table.plate.redraw()
+    if (disposed) return
+    for (const seat of seats) {
+      seat.plate.redraw()
+      seat.sign.redraw()
+    }
   })
 
   return {
-    setDealers(dealers) {
-      const ids = new Set(dealers.map((d) => d.id))
-      let changed = false
-      for (const [id, table] of tables) {
-        if (ids.has(id)) continue
-        table.rig.dispose()
-        scene.remove(table.group)
-        tables.delete(id)
-        changed = true
-      }
-      for (const dealer of dealers) {
-        let table = tables.get(dealer.id)
-        if (!table) {
-          table = add(dealer)
-          changed = true
-        }
-        applyDealer(table, dealer)
-      }
-      if (changed) layout()
+    setFloor(next, from) {
+      rentFrom = formatUsdc(from)
+      seats.forEach((seat, i) => {
+        seat.wanted = next[i] ?? null
+        if (firstFloor) place(seat)
+        else void settle(seat)
+      })
+      firstFloor = false
     },
     dispose() {
       disposed = true
@@ -185,24 +340,32 @@ export function createLobbyScene(el: HTMLElement, onSelect: (dealerId: string) =
       canvas.removeEventListener('pointerleave', onLeave)
       canvas.removeEventListener('pointerdown', onDown)
       canvas.removeEventListener('pointerup', onUp)
-      for (const table of tables.values()) table.rig.dispose()
-      tables.clear()
+      for (const seat of seats) seat.occupant?.rig.dispose()
       mounted.dispose()
     },
   }
 }
 
-// ---- one table --------------------------------------------------------------------------------
+/** Overshoots a little then settles: a sign landing on its chains. */
+function easeOutBack(t: number): number {
+  const c1 = 1.70158
+  return 1 + (c1 + 1) * (t - 1) ** 3 + c1 * (t - 1) ** 2
+}
 
-function buildFloorTable(dealer: DealerView): FloorTable {
-  const look = dealerLook(dealer.id)
+// ---- one seat ---------------------------------------------------------------------------------
+
+function buildSeat(index: number): Seat {
   const group = new THREE.Group()
-  const rig = createCharacter(look, dealer.name)
-  rig.object.position.z = DEALER_Z
-  const prop = createProp(dealer.game)
-  const plate = buildNameplate(look.accent)
-  const rug = buildRug(look.accent) as THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
-  const lamp = new THREE.PointLight('#ffd7a0', LAMP_ON, 5, 1.4)
+  const x = (index - (SEAT_COUNT - 1) / 2) * SPACING
+  const z = ARC * x * x
+  group.position.set(x, 0, z)
+  group.rotation.y = Math.atan2(-x, CAMERA_Z - z)
+  const plate = buildNameplate()
+  const sign = buildRentSign()
+  sign.object.visible = false
+  sign.object.position.y = SIGN_UP_Y
+  const rug = buildRug(PALETTE.gold) as THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
+  const lamp = new THREE.PointLight('#ffd7a0', LAMP_EMPTY, 5, 1.4)
   lamp.position.set(0, 2.7, 0.3)
   const drapes = buildDrapes()
   // An invisible box around table and dealer: an easy target for hover and click.
@@ -211,28 +374,44 @@ function buildFloorTable(dealer: DealerView): FloorTable {
     new THREE.MeshBasicMaterial({ visible: false }),
   )
   hit.position.set(0, 1.3, -0.3)
-  group.add(buildTableMesh(look.accent), rig.object, prop.object, plate.object, rug, lamp, drapes.object, hit)
-  return { dealer, group, rig, prop, plate, rug, lamp, drapes, hit, hover: 0, closed: dealer.open ? 0 : 1, mood: 'neutral' }
+  group.add(buildTableMesh(PALETTE.gold), plate.object, sign.object, rug, lamp, drapes.object, hit)
+  return { index, group, plate, sign, rug, lamp, drapes, hit, occupant: null, wanted: null, busy: false, hover: 0, closed: 0 }
 }
 
-function applyDealer(table: FloorTable, dealer: DealerView): void {
-  table.dealer = dealer
-  table.mood = dealerMood(dealer)
-  table.rig.setMood(table.mood)
-  table.rig.say(dealer.reason_text)
-  table.plate.set({ name: dealer.name, game: dealer.game, edge: formatBp(dealer.total_edge_bp), open: dealer.open })
+function applyTable(seat: Seat, table: SeatedTable): void {
+  const occupant = seat.occupant
+  if (!occupant) return
+  const { dealer } = table
+  occupant.dealer = dealer
+  occupant.mood = dealerMood(dealer)
+  occupant.rig.setMood(occupant.mood)
+  if (occupant.seated) occupant.rig.say(dealer.reason_text)
+  seat.plate.set({
+    kind: 'table',
+    name: dealer.name,
+    game: dealer.game,
+    edge: formatBp(dealer.total_edge_bp),
+    open: dealer.open,
+    rent: formatUsdc(table.rent),
+    playerOwned: table.playerOwned,
+    accent: dealerLook(dealer.id, table.look, dealer.temperament).accent,
+  })
 }
 
-function updateTable(table: FloorTable, hovered: boolean, dt: number): void {
+function updateSeat(seat: Seat, hovered: boolean, dt: number): void {
   const ease = Math.min(1, dt * 8)
-  table.hover += ((hovered ? 1 : 0) - table.hover) * ease
-  table.closed += ((table.dealer.open ? 0 : 1) - table.closed) * Math.min(1, dt * 3)
-  table.group.position.y = table.hover * HOVER_LIFT
-  table.rug.material.opacity = 0.12 + table.hover * 0.38
-  table.lamp.intensity = THREE.MathUtils.lerp(LAMP_ON, LAMP_OFF, table.closed) + table.hover * 3
-  table.drapes.set(table.closed)
-  table.prop.update(dt)
-  table.rig.update(dt)
+  const occupant = seat.occupant
+  const closed = occupant && !occupant.dealer.open ? 1 : 0
+  seat.hover += ((hovered ? 1 : 0) - seat.hover) * ease
+  seat.closed += (closed - seat.closed) * Math.min(1, dt * 3)
+  seat.group.position.y = seat.hover * HOVER_LIFT
+  seat.rug.material.opacity = 0.12 + seat.hover * 0.38
+  const lit = occupant ? THREE.MathUtils.lerp(LAMP_ON, LAMP_OFF, seat.closed) : LAMP_EMPTY
+  seat.lamp.intensity = lit + seat.hover * 3
+  seat.drapes.set(seat.closed)
+  if (!occupant) return
+  occupant.prop.update(dt)
+  occupant.rig.update(dt)
 }
 
 // ---- room -------------------------------------------------------------------------------------

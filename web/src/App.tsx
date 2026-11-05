@@ -7,6 +7,7 @@ import { TopBar } from './components/TopBar'
 import { Dealers } from './pages/Dealers'
 import { FastForward } from './pages/FastForward'
 import { Lobby } from './pages/Lobby'
+import { OpenTable } from './pages/OpenTable'
 import { Pools } from './pages/Pools'
 import { Table } from './pages/Table'
 
@@ -21,6 +22,7 @@ export default function App({ config }: { config: Config }) {
         <Routes>
           <Route path="/" element={<Lobby />} />
           <Route path="/table/:dealer" element={<Table />} />
+          <Route path="/open" element={<OpenTable />} />
           <Route path="/pools" element={<Pools />} />
           <Route path="/dealers" element={<Dealers />} />
           <Route path="/sim" element={<FastForward />} />

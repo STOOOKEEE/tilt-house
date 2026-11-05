@@ -1,10 +1,11 @@
 // The dealers: original blocky characters (boxes + a 16×16 pixel face), seated, facing +Z.
 // Everything is animated procedurally from a small pose model (shoulders, elbows, lean, head):
 // moods pick a resting pose and a face, gestures are short keyframe sequences on top of it.
+// The lobby can also stand a dealer up and walk them on or off the floor (jointed legs).
 import * as THREE from 'three'
 import { createBubble } from './bubble'
 import { disposeObject } from './renderer'
-import type { CharacterRig, CreateCharacter, DealerLook, Gesture, Mood } from './types'
+import type { CharacterRig, DealerLook, Gesture, Mood } from './types'
 import { pixelTexture, px, shade, texturedBox, voxelPart, type Vec3, type VoxelBox } from './voxel'
 
 /** Seat height: the body pivots at the hips. */
@@ -228,20 +229,58 @@ function drawBroke(ctx: CanvasRenderingContext2D, look: DealerLook): void {
 
 // ---- build ----------------------------------------------------------------------------------
 
-function buildLegsAndStool(): THREE.Mesh {
-  const boxes: VoxelBox[] = [
+/** Seated, the thigh is horizontal and knee-to-sole equals the seat height, so the feet touch the floor. */
+const THIGH = 0.4
+/** Standing (legs straight) raises the hips by the thigh length. */
+const STAND_LIFT = THIGH
+const SEATED_HIP_X = -Math.PI / 2
+const SEATED_KNEE_X = Math.PI / 2
+/** Seconds to stand up or sit down; steps per second and leg swing (radians) while walking. */
+const STAND_S = 0.45
+const STEP_RATE = 2.2
+const LEG_SWING = 0.5
+const KNEE_BEND = 0.7
+const ARM_SWING = 0.45
+
+function buildStool(): THREE.Mesh {
+  return voxelPart([
     { size: [0.5, 0.08, 0.5], at: [0, HIP_Y - 0.12, -0.02], color: STOOL },
     { size: [0.08, HIP_Y - 0.16, 0.08], at: [0, (HIP_Y - 0.16) / 2, -0.02], color: shade(STOOL, -0.1) },
     { size: [0.36, 0.04, 0.36], at: [0, 0.02, -0.02], color: shade(STOOL, -0.1) },
-  ]
-  for (const x of [-0.14, 0.14]) {
-    boxes.push(
-      { size: [0.24, 0.2, 0.5], at: [x, HIP_Y, 0.2], color: PANTS },
-      { size: [0.22, HIP_Y - 0.05, 0.22], at: [x, (HIP_Y - 0.05) / 2 + 0.05, 0.4], color: PANTS },
-      { size: [0.24, 0.1, 0.32], at: [x, 0.05, 0.46], color: SHOES },
-    )
-  }
-  return voxelPart(boxes)
+  ])
+}
+
+interface Leg {
+  hip: THREE.Group
+  knee: THREE.Group
+}
+
+/** A leg hanging along -Y from the hip; the seated pose folds it at hip and knee. */
+function buildLeg(x: number): Leg {
+  const hip = new THREE.Group()
+  hip.position.set(x, HIP_Y, 0)
+  hip.add(voxelPart([{ size: [0.24, THIGH + 0.1, 0.2], at: [0, -THIGH / 2, 0], color: PANTS }]))
+  const knee = new THREE.Group()
+  knee.position.y = -THIGH
+  knee.add(
+    voxelPart([
+      { size: [0.22, HIP_Y - 0.1, 0.22], at: [0, -(HIP_Y - 0.1) / 2 - 0.05, 0], color: PANTS },
+      { size: [0.24, 0.1, 0.32], at: [0, -HIP_Y + 0.05, 0.06], color: SHOES },
+    ]),
+  )
+  hip.add(knee)
+  hip.rotation.x = SEATED_HIP_X
+  knee.rotation.x = SEATED_KNEE_X
+  return { hip, knee }
+}
+
+/** A dealer the lobby can stand up and walk on or off the floor. */
+export interface WalkerRig extends CharacterRig {
+  /** The person without the stool: the lobby moves it (x, z, rotation.y) along a path. */
+  readonly figure: THREE.Object3D
+  /** Resolves once fully standing (true) or seated (false). */
+  setStanding(standing: boolean): Promise<void>
+  setWalking(walking: boolean): void
 }
 
 function buildTorso(look: DealerLook): THREE.Mesh {
@@ -359,14 +398,18 @@ const BLINK_S = 0.12
 const BUBBLE_Y = 2.0
 const TOP_HAT_EXTRA = 0.4
 
-export const createCharacter: CreateCharacter = (look, name) => {
+export function createCharacter(look: DealerLook, name: string): WalkerRig {
   const root = new THREE.Group()
   root.name = name
-  root.add(buildLegsAndStool())
+  root.add(buildStool())
+  const figure = new THREE.Group()
+  root.add(figure)
+  const legs = [buildLeg(-0.14), buildLeg(0.14)]
+  for (const leg of legs) figure.add(leg.hip)
 
   const body = new THREE.Group()
   body.position.y = HIP_Y
-  root.add(body)
+  figure.add(body)
   body.add(buildTorso(look))
 
   const neck = new THREE.Group()
@@ -396,7 +439,7 @@ export const createCharacter: CreateCharacter = (look, name) => {
 
   const bubble = createBubble(look.accent)
   bubble.object.position.y = BUBBLE_Y + (look.hat === 'top_hat' ? TOP_HAT_EXTRA : 0)
-  root.add(bubble.object)
+  figure.add(bubble.object)
 
   let time = 0
   let nextBlink = 2
@@ -495,6 +538,39 @@ export const createCharacter: CreateCharacter = (look, name) => {
     })
   }
 
+  let stand = 0
+  let standTarget = 0
+  const standWaiters: (() => void)[] = []
+  let walking = false
+  let walkAmount = 0
+  let stride = 0
+
+  const updateStance = (dt: number): void => {
+    const step = dt / STAND_S
+    stand = standTarget > stand ? Math.min(standTarget, stand + step) : Math.max(standTarget, stand - step)
+    if (stand === standTarget) for (const done of standWaiters.splice(0)) done()
+    walkAmount = THREE.MathUtils.clamp(walkAmount + (walking ? dt : -dt) * 4, 0, 1)
+    stride += dt * STEP_RATE * Math.PI * walkAmount
+  }
+
+  /** Arms hang and swing against the legs when standing; seated poses fade out as the dealer rises. */
+  const standingPose = (p: Pose): Pose => {
+    if (stand === 0) return p
+    const swing = Math.sin(stride) * ARM_SWING * walkAmount
+    const hanging: Pose = { ...p, rS: [swing, 0, 0.08], lS: [-swing, 0, -0.08], rE: -0.2, lE: -0.2, lean: 0, lift: 0 }
+    return lerpPose(p, hanging, THREE.MathUtils.smoothstep(stand, 0, 1))
+  }
+
+  const applyLegs = (): void => {
+    const k = THREE.MathUtils.smoothstep(stand, 0, 1)
+    figure.position.y = k * STAND_LIFT
+    legs.forEach((leg, i) => {
+      const phase = Math.sin(stride + i * Math.PI)
+      leg.hip.rotation.x = THREE.MathUtils.lerp(SEATED_HIP_X, 0, k) + phase * LEG_SWING * walkAmount
+      leg.knee.rotation.x = THREE.MathUtils.lerp(SEATED_KNEE_X, 0, k) + Math.max(0, -phase) * KNEE_BEND * walkAmount
+    })
+  }
+
   const applyPose = (p: Pose): void => {
     const idle = IDLE[mood]
     const breath = Math.sin((time * Math.PI * 2) / idle.breath)
@@ -503,14 +579,23 @@ export const createCharacter: CreateCharacter = (look, name) => {
     right.elbow.rotation.x = p.rE
     left.elbow.rotation.x = p.lE
     // Happy dealers sway a little; everyone breathes.
-    const sway = mood === 'happy' ? Math.sin(time * 2.4) * 0.05 : 0
+    const sway = mood === 'happy' && stand === 0 ? Math.sin(time * 2.4) * 0.05 : 0
     body.rotation.set(p.lean + breath * 0.015, 0, sway)
     body.position.y = HIP_Y + p.lift + breath * 0.008
     headGroup.rotation.set(p.headX, p.headY + (active ? 0 : lookYaw), p.headZ - sway * 0.5)
   }
 
-  const rig: CharacterRig = {
+  const rig: WalkerRig = {
     object: root,
+    figure,
+    setStanding(standing) {
+      standTarget = standing ? 1 : 0
+      if (stand === standTarget) return Promise.resolve()
+      return new Promise<void>((resolve) => standWaiters.push(resolve))
+    },
+    setWalking(next) {
+      walking = next
+    },
     handPosition() {
       root.updateWorldMatrix(true, true)
       return right.hand.getWorldPosition(new THREE.Vector3())
@@ -531,8 +616,10 @@ export const createCharacter: CreateCharacter = (look, name) => {
     update(dt) {
       time += dt
       updateIdle(dt)
+      updateStance(dt)
       pose = stepGesture(dt)
-      applyPose(pose)
+      applyPose(standingPose(pose))
+      applyLegs()
       updateSweat()
       redrawFaceIfChanged()
       bubble.update(dt)
@@ -541,6 +628,7 @@ export const createCharacter: CreateCharacter = (look, name) => {
       // Nobody should wait forever on a gesture of a dealer that is gone.
       active?.resolve()
       for (const queued of queue.splice(0)) queued.resolve()
+      for (const done of standWaiters.splice(0)) done()
       active = null
       root.removeFromParent()
       disposeObject(root)
