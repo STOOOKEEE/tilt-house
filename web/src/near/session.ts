@@ -7,6 +7,24 @@ type SessionConfig = Pick<Config, 'houseContract' | 'relayerUrl'>
 
 // The relayer refuses delegates valid for more than 600 blocks; ~2 minutes is plenty.
 const DELEGATE_TTL_BLOCKS = 120
+// Activation answers once its transfer executed, but signing reads the key at `final`, a block or
+// two later: a fresh account's key can be missing for a few seconds.
+const KEY_VISIBLE_TRIES = 10
+const KEY_VISIBLE_WAIT_MS = 1_500
+
+const isMissingKey = (error: unknown) => error instanceof Error && /access key .* does not exist/i.test(error.message)
+
+/** Runs `sign`, retrying while the signing key of a just-activated account is not final yet. */
+async function whenKeyVisible<T>(sign: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await sign()
+    } catch (error) {
+      if (!isMissingKey(error) || attempt >= KEY_VISIBLE_TRIES) throw error
+      await new Promise((resolve) => setTimeout(resolve, KEY_VISIBLE_WAIT_MS))
+    }
+  }
+}
 
 function storageKey(accountId: string, houseContract: string): string {
   return `tilt-house:game-key:${accountId}:${houseContract}`
@@ -30,11 +48,13 @@ export async function ensureGameKey(account: Account, config: SessionConfig): Pr
   await activate(config.relayerUrl, account.accountId)
   const gameKey = KeyPair.fromRandom('ed25519')
   // AddKey acts on the delegate's receiver, so it targets the player's own account.
-  const { signedDelegate } = await account.createSignedMetaTransaction({
-    receiverId: account.accountId,
-    actions: [gameKeyAction(gameKey.getPublicKey(), config.houseContract)],
-    blockHeightTtl: DELEGATE_TTL_BLOCKS,
-  })
+  const { signedDelegate } = await whenKeyVisible(() =>
+    account.createSignedMetaTransaction({
+      receiverId: account.accountId,
+      actions: [gameKeyAction(gameKey.getPublicKey(), config.houseContract)],
+      blockHeightTtl: DELEGATE_TTL_BLOCKS,
+    }),
+  )
   await relay(config.relayerUrl, signedDelegate)
   localStorage.setItem(storageKey(account.accountId, config.houseContract), gameKey.toString())
   return gameKey
@@ -51,11 +71,14 @@ export async function playMove(
   const gameKey = loadGameKey(accountId, config.houseContract)
   if (!gameKey) throw new Error('No game key in this browser: log in again')
   const account = new Account(accountId, provider, new KeyPairSigner(gameKey))
-  const { signedDelegate } = await account.createSignedMetaTransaction({
-    receiverId: config.houseContract,
-    actions: [moveAction(method, args)],
-    blockHeightTtl: DELEGATE_TTL_BLOCKS,
-  })
+  // The game key was just added by a relayed AddKey: it can take a block to become final.
+  const { signedDelegate } = await whenKeyVisible(() =>
+    account.createSignedMetaTransaction({
+      receiverId: config.houseContract,
+      actions: [moveAction(method, args)],
+      blockHeightTtl: DELEGATE_TTL_BLOCKS,
+    }),
+  )
   return relay(config.relayerUrl, signedDelegate)
 }
 
