@@ -2,7 +2,7 @@
 name = "tilt-house-contract"
 version = "0.1.0"
 edition = "2021"
-description = "Tilt House: NPC dealers as LP pools, dice, roulette and blackjack with OutLayer VRF (NEAR testnet)"
+description = "Tilt House floor: NPC and player-owned tables as LP pools, seats, rent, jackpot and provably fair sessions (NEAR testnet)"
 license = "MIT"
 publish = false
 
@@ -19,7 +19,6 @@ near-sdk = { version = "5.30", features = ["unit-testing"] }
 near-workspaces = { version = "0.24", features = ["unstable"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ed25519-dalek = "2"
-sha2 = "0.10"
 serde_json = "1"
 anyhow = "1"
 # near-workspaces pulls native-tls; build OpenSSL from source so tests need no system libssl-dev.

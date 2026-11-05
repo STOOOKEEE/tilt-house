@@ -1,45 +1,37 @@
-//! Tilt House: a casino where each NPC dealer is a liquidity pool.
+//! Tilt House v2: the casino floor (docs/floor.md, docs/sessions.md, docs/tycoon.md).
 //!
-//! Players keep a tUSDC balance in the contract and play dice, roulette and blackjack against a
-//! dealer's pool; LPs own the pools through NEP-245 shares (token id = dealer id). Every rule
-//! (payouts, rake, pool prices, dealer pricing) comes from `core_rules`; this crate only holds the
-//! money, the rounds and the randomness (OutLayer VRF). API: `docs/contract-api.md`.
+//! Players keep a tUSDC balance in the contract. Each dealer is a table (one game) backed by an
+//! LP pool (NEP-245 shares, token id = dealer id), run by an NPC or by the player who opened it.
+//! Dealers rent one of the floor's seats (lease token `seat-<n>`); rent fills the jackpot. Play
+//! happens in provably fair sessions: the session server plays the rounds off chain and settles
+//! them here in signed batches. Every rule comes from `core_rules`; this crate holds the money,
+//! checks the signatures and keeps the books. API: `docs/contract-api.md`.
 //!
 //! Times are seconds (block time). Amounts are token base units (`u128`, decimal strings in JSON).
 
 mod dealers;
+mod floor;
 mod ft;
 mod mt;
-mod rounds;
+mod sessions;
 mod views;
-mod vrf;
 
-#[cfg(test)]
-mod tests;
-
-use near_sdk::serde_json::{self, Value};
-use near_sdk::store::LookupMap;
+use near_sdk::serde_json::{json, Value};
+use near_sdk::store::{Lazy, LookupMap};
 use near_sdk::{env, near, require, AccountId, BorshStorageKey, PanicOnDefault};
 
 pub use dealers::{Dealer, LogEntry, LogKind};
-pub use rounds::{Proof, Round, Status};
+pub use sessions::{Session, SessionStatus};
 
-/// Smallest stake a table takes: 0.10 tUSDC.
-pub const MIN_BET: u128 = 100_000;
-/// `core_rules::rake_bounds` keeps every bet's edge under 5 % only from 0.01 USDC up (integer
-/// rounding); the table minimum must never go below it.
-const CORE_MIN_STAKE: u128 = 10_000;
-const _: () = assert!(MIN_BET >= CORE_MIN_STAKE);
-
-/// A round still waiting for its VRF answer after this long can be refunded.
-pub const REFUND_AFTER_SECS: u64 = 120;
-/// A blackjack hand left in the player's turn this long can be stood by anyone, so an abandoned
-/// hand cannot lock the pool's reserve forever.
-pub const ABANDON_AFTER_SECS: u64 = 600;
-/// Rounds kept per player; older ones are deleted (the contract pays storage).
-pub const ROUNDS_PER_PLAYER: usize = 50;
+/// Smallest stake a table takes: 0.10 tUSDC (core's `SESSION_MIN_BET`).
+pub const MIN_BET: u128 = core_rules::session::SESSION_MIN_BET;
 /// Log entries kept per dealer (a ring).
 pub const HISTORY_PER_DEALER: u64 = 100;
+/// Session ids kept per player; older finished sessions are deleted (the contract pays storage).
+pub const SESSIONS_PER_PLAYER: usize = 20;
+
+const EVENT_STANDARD: &str = "tilthouse";
+const EVENT_VERSION: &str = "2.0.0";
 
 #[derive(BorshStorageKey)]
 #[near]
@@ -47,18 +39,19 @@ enum StorageKey {
     Players,
     Dealers,
     Shares,
-    Rounds,
     History,
+    Sessions,
+    Floor,
 }
 
 #[near(serializers = [borsh])]
 #[derive(Clone, Default)]
 pub struct Player {
     pub balance: u128,
-    /// The round not yet settled or refunded (one at a time).
-    pub open_round: Option<u64>,
-    /// Last `ROUNDS_PER_PLAYER` round ids, oldest first.
-    pub rounds: Vec<u64>,
+    /// The session still in status `open` (one at a time).
+    pub open_session: Option<String>,
+    /// Last `SESSIONS_PER_PLAYER` session ids, oldest first.
+    pub sessions: Vec<String>,
 }
 
 #[near(contract_state)]
@@ -66,18 +59,18 @@ pub struct Player {
 pub struct House {
     owner: AccountId,
     token: AccountId,
-    outlayer: AccountId,
-    vrf_pubkey: [u8; 32],
-    /// OutLayer `source` JSON (pinned project version).
-    vrf_source: String,
+    /// Runs `reprice` / `rent_bid` for dealers whose controller is not online (autopilot).
+    keeper: AccountId,
+    /// The session server's ed25519 public key: signs tickets and session states.
+    server_pubkey: [u8; 32],
     players: LookupMap<AccountId, Player>,
     dealer_ids: Vec<String>,
     dealers: LookupMap<String, Dealer>,
     shares: LookupMap<(String, AccountId), u128>,
-    rounds: LookupMap<u64, Round>,
     /// Key: (dealer id, seq % HISTORY_PER_DEALER).
     history: LookupMap<(String, u64), LogEntry>,
-    next_round_id: u64,
+    floor: Lazy<core_rules::Floor>,
+    sessions: LookupMap<String, Session>,
 }
 
 /// Block time in seconds.
@@ -89,42 +82,57 @@ pub(crate) fn fail(message: &str) -> ! {
     env::panic_str(message)
 }
 
+/// NEP-297 event of this contract.
+pub(crate) fn emit(event: &str, data: Value) {
+    let log = json!({
+        "standard": EVENT_STANDARD,
+        "version": EVENT_VERSION,
+        "event": event,
+        "data": data,
+    });
+    env::log_str(&format!("EVENT_JSON:{log}"));
+}
+
+pub(crate) fn parse_hex<const N: usize>(text: &str, what: &str) -> [u8; N] {
+    let mut out = [0u8; N];
+    hex::decode_to_slice(text, &mut out)
+        .unwrap_or_else(|_| fail(&format!("{what}: expected {} hex characters", N * 2)));
+    out
+}
+
 #[near]
 impl House {
     #[init]
     pub fn new(
         owner: AccountId,
         token: AccountId,
-        outlayer: AccountId,
-        vrf_pubkey_hex: String,
-        vrf_source: Value,
+        keeper: AccountId,
+        server_pubkey_hex: String,
     ) -> Self {
         Self {
             owner,
             token,
-            outlayer,
-            vrf_pubkey: parse_pubkey(&vrf_pubkey_hex),
-            vrf_source: checked_source(&vrf_source),
+            keeper,
+            server_pubkey: parse_hex(&server_pubkey_hex, "server_pubkey_hex"),
             players: LookupMap::new(StorageKey::Players),
             dealer_ids: Vec::new(),
             dealers: LookupMap::new(StorageKey::Dealers),
             shares: LookupMap::new(StorageKey::Shares),
-            rounds: LookupMap::new(StorageKey::Rounds),
             history: LookupMap::new(StorageKey::History),
-            next_round_id: 1,
+            floor: Lazy::new(StorageKey::Floor, core_rules::Floor::default()),
+            sessions: LookupMap::new(StorageKey::Sessions),
         }
     }
 
-    /// OutLayer may rotate its VRF key (rare).
-    pub fn set_vrf_pubkey(&mut self, vrf_pubkey_hex: String) {
+    /// The session server rotated its key.
+    pub fn set_server_pubkey(&mut self, server_pubkey_hex: String) {
         self.assert_owner();
-        self.vrf_pubkey = parse_pubkey(&vrf_pubkey_hex);
+        self.server_pubkey = parse_hex(&server_pubkey_hex, "server_pubkey_hex");
     }
 
-    /// Points rounds at another pinned VRF version.
-    pub fn set_vrf_source(&mut self, vrf_source: Value) {
+    pub fn set_keeper(&mut self, keeper: AccountId) {
         self.assert_owner();
-        self.vrf_source = checked_source(&vrf_source);
+        self.keeper = keeper;
     }
 }
 
@@ -145,6 +153,9 @@ impl House {
     }
 
     pub(crate) fn credit(&mut self, account: &AccountId, amount: u128) {
+        if amount == 0 {
+            return;
+        }
         let mut player = self.player(account);
         player.balance = player
             .balance
@@ -176,16 +187,4 @@ impl House {
             self.shares.insert(key, shares);
         }
     }
-}
-
-fn parse_pubkey(hex_key: &str) -> [u8; 32] {
-    vrf::decode_hex::<32>(hex_key).unwrap_or_else(|e| fail(&format!("vrf_pubkey_hex: {e}")))
-}
-
-fn checked_source(source: &Value) -> String {
-    require!(
-        source.is_object(),
-        "vrf_source must be an OutLayer source object"
-    );
-    serde_json::to_string(source).unwrap_or_else(|_| fail("vrf_source"))
 }
