@@ -6,6 +6,7 @@ use core_rules::dealer_rules::{rent_bid, RentAction, Temperament};
 use core_rules::floor::{
     Floor, FloorError, COOLDOWN_SECS, MIN_RENT_PER_HOUR, OUTBID_BP, PREPAY_HOURS, SEATS,
 };
+use core_rules::seats::{seat_min_rent, MIN_SEAT_RENT};
 use core_rules::{Pool, Rng, Stats, BP};
 
 const USDC: u128 = 1_000_000;
@@ -25,8 +26,8 @@ fn random_pool(rng: &mut Rng) -> Pool {
 
 fn random_rent(rng: &mut Rng) -> u128 {
     match rng.below(4) {
-        0 => MIN_RENT_PER_HOUR - 1,
-        1 => MIN_RENT_PER_HOUR,
+        0 => MIN_SEAT_RENT - 1,
+        1 => [MIN_SEAT_RENT, MIN_RENT_PER_HOUR][rng.below(2) as usize],
         _ => u128::from(rng.below(200)) * USDC / 4,
     }
 }
@@ -79,7 +80,7 @@ fn rent_and_bids_keep_money_and_rules() {
                 let snapshot = (floor.clone(), pools[d].clone());
                 match floor.bid_for_seat(&ids[d], rent, &mut pools[d], now, cooldowns[d]) {
                     Ok(outcome) => {
-                        assert!(rent >= MIN_RENT_PER_HOUR);
+                        assert!(rent >= seat_min_rent(outcome.seat));
                         assert_eq!(floor.seat_of(&ids[d]), Some(outcome.seat));
                         if let Some(victim) = &outcome.evicted {
                             assert!(was_full && !was_seated);
@@ -117,7 +118,8 @@ fn rent_and_bids_keep_money_and_rules() {
     assert!(outbids > 100 && unpaid > 100, "{outbids} {unpaid}");
 }
 
-/// Property: rent bids are always at least the minimum, and an off-floor bid can be prepaid.
+/// Property: rent bids are always at least the seat's minimum, and an off-floor bid can be
+/// prepaid and accepted.
 #[test]
 fn rent_bids_are_always_valid() {
     let mut rng = Rng::new(*b"rent bid property test seed 0001");
@@ -137,7 +139,8 @@ fn rent_bids_are_always_valid() {
             floor
                 .bid_for_seat(
                     &format!("s{i}"),
-                    random_rent(&mut rng).max(MIN_RENT_PER_HOUR),
+                    // Seats fill in order: seat i is the busiest empty one.
+                    random_rent(&mut rng).max(seat_min_rent(i as usize)),
                     &mut Pool {
                         bankroll: u128::MAX / 2,
                         ..Pool::default()
@@ -152,8 +155,11 @@ fn rent_bids_are_always_valid() {
         let decision = rent_bid(&pool, &stats, &temperament, &view, START);
         match decision.action {
             RentAction::Raise(rent) | RentAction::Lower(rent) => {
-                assert!(rent >= MIN_RENT_PER_HOUR);
+                assert!(rent >= view.my_min_rent && rent >= MIN_SEAT_RENT);
                 assert!(view.my_rent.is_some());
+                let mut floor = floor.clone();
+                let mut pool = pool.clone();
+                assert!(floor.bid_for_seat(me, rent, &mut pool, START, 0).is_ok());
             }
             RentAction::BidEmpty(rent) | RentAction::Outbid(rent) => {
                 assert!(view.my_rent.is_none());

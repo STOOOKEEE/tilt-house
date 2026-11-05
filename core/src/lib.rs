@@ -8,10 +8,12 @@ pub mod blackjack;
 pub mod dealer_rules;
 pub mod dice;
 pub mod floor;
+pub mod gambler_rules;
 pub mod jackpot;
 pub mod pool;
 pub mod rng;
 pub mod roulette;
+pub mod seats;
 pub mod session;
 
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -22,7 +24,7 @@ pub use blackjack::{
     BjStrategy,
 };
 pub use dealer_rules::{
-    rent_bid, reprice, Offer, Reason, RentAction, RentDecision, RentReason, RivalOffer, Stats,
+    clamp_owner_offer, rent_bid, reprice, Offer, Reason, RentAction, RentDecision, RentReason, RivalOffer, Stats,
     Temperament,
 };
 pub use dice::{dice_gross, dice_roll, DiceBet};
@@ -34,6 +36,7 @@ pub use jackpot::{draw_jackpot, jackpot_hit, JACKPOT_ODDS_UNIT, MIN_JACKPOT};
 pub use pool::{Pool, PoolError, FLOOR_SHARES_PER_UNIT, SHARES_PER_UNIT};
 pub use rng::Rng;
 pub use roulette::{roulette_gross, roulette_spin, RouletteBet};
+pub use seats::{seat_min_rent, SeatSale, MIN_SEAT_RENT, SEAT_TRAFFIC_BP};
 
 /// Basis points per unit.
 pub const BP: u128 = 10_000;

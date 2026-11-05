@@ -48,6 +48,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
 use crate::floor::{FloorView, MIN_RENT_PER_HOUR, PREPAY_HOURS};
+use crate::seats::MIN_SEAT_RENT;
 use crate::{base_edge_bp, rake_bounds, worst_case_multiple, Game, Pool, BP};
 
 /// Temperament traits are percentages; anything above counts as 100.
@@ -216,6 +217,8 @@ pub enum Reason {
     Undercut,
     /// A rival is boosting.
     MatchBoost,
+    /// A table owner set this offer by hand (`clamp_owner_offer`).
+    Owner,
 }
 
 impl Reason {
@@ -231,6 +234,7 @@ impl Reason {
             Self::Steady => "steady",
             Self::Undercut => "undercut",
             Self::MatchBoost => "match_boost",
+            Self::Owner => "owner",
         }
     }
 
@@ -258,6 +262,7 @@ impl Reason {
                 "cutting my edge under a rival's: players went to the cheaper table".to_string()
             }
             Self::MatchBoost => "boosting: a rival is boosting, I'm matching it".to_string(),
+            Self::Owner => "my owner set this offer".to_string(),
         }
     }
 }
@@ -491,6 +496,38 @@ fn clamp(game: Game, pool: &Pool, offer: Offer, now: u64) -> Offer {
     }
 }
 
+/// An owner may start a boost at most once an hour (docs/tycoon.md, "Owner controls").
+pub const BOOST_COOLDOWN_SECS: u64 = 60 * 60;
+
+/// A table owner's hand-set offer (`set_offer`), clamped to the same hard limits as the NPC
+/// dealers' (`rake_bounds`, max bet the free bankroll covers, boost ≤ 15 min), plus one boost
+/// per hour: a boost asked within `BOOST_COOLDOWN_SECS` of the last one (`last_boost_at`, 0 =
+/// never) is dropped. The caller stores `last_boost_at = now` when the result boosts.
+pub fn clamp_owner_offer(
+    game: Game,
+    pool: &Pool,
+    rake_bp: u16,
+    max_bet: u128,
+    boost_secs: u64,
+    last_boost_at: u64,
+    now: u64,
+) -> Offer {
+    let boost_allowed =
+        last_boost_at == 0 || now >= last_boost_at.saturating_add(BOOST_COOLDOWN_SECS);
+    let boost_until = if boost_secs > 0 && boost_allowed {
+        now.saturating_add(boost_secs)
+    } else {
+        0
+    };
+    let asked = Offer {
+        rake_bp,
+        max_bet,
+        boost_until,
+        reason: Reason::Owner,
+    };
+    clamp(game, pool, asked, now)
+}
+
 /// What the dealer does about its seat.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -591,7 +628,7 @@ pub fn rent_bid(
     // The highest rent the pool can prepay.
     let affordable = pool.free() / u128::from(PREPAY_HOURS);
     match floor.my_rent {
-        Some(rent) => seated_rent(rent, target, affordable, floor),
+        Some(rent) => seated_rent(rent, target.max(floor.my_min_rent), affordable, floor),
         None => {
             let budget = scale(
                 pool.free(),
@@ -625,14 +662,17 @@ fn seated_rent(rent: u128, target: u128, affordable: u128, floor: &FloorView) ->
 
 /// Off the floor: an empty seat at the target, else the weakest seat if `ceiling` reaches it.
 fn off_floor_bid(target: u128, ceiling: u128, floor: &FloorView, now: u64) -> RentDecision {
-    if now < floor.cooldown_until || ceiling < MIN_RENT_PER_HOUR {
+    if now < floor.cooldown_until || ceiling < MIN_SEAT_RENT {
         return STAY;
     }
     if floor.empty_seats > 0 {
-        return decide(
-            RentAction::BidEmpty(target.min(ceiling)),
-            RentReason::BiddingForSeat,
-        );
+        // `outbid_min` is the cheapest empty seat's minimum rent: never bid under it.
+        let bid = target.min(ceiling).max(floor.outbid_min);
+        return if bid <= ceiling {
+            decide(RentAction::BidEmpty(bid), RentReason::BiddingForSeat)
+        } else {
+            STAY
+        };
     }
     if floor.outbid_min <= ceiling {
         return decide(
@@ -954,6 +994,7 @@ mod tests {
                 (lowest * 11_000).div_ceil(BP)
             },
             cooldown_until: 0,
+            my_min_rent: if my_rent.is_some() { MIN_RENT_PER_HOUR } else { 0 },
         }
     }
 
@@ -1061,6 +1102,51 @@ mod tests {
             rent_bid(&pool(10_000), &calm(), &BALANCED, &cooling, NOW),
             STAY
         );
+    }
+
+    #[test]
+    fn rent_bids_respect_seat_minimums() {
+        // Seated at the entrance (min 1.5 USDC): a cut stops at the seat's minimum.
+        let entrance = FloorView {
+            my_min_rent: 1_500_000,
+            ..floor(Some(20 * USDC), 10 * USDC, 0)
+        };
+        assert_eq!(
+            rent_bid(&pool(10_000), &calm(), &BALANCED, &entrance, NOW).action,
+            RentAction::Lower(1_500_000)
+        );
+        // Off the floor, only the entrance seat is free: bid its minimum, not the bare target.
+        let only_entrance = FloorView {
+            outbid_min: 1_500_000,
+            ..floor(None, 5 * USDC, 1)
+        };
+        assert_eq!(
+            rent_bid(&pool(10_000), &calm(), &BALANCED, &only_entrance, NOW).action,
+            RentAction::BidEmpty(1_500_000)
+        );
+        // ...unless the pool cannot prepay it.
+        assert_eq!(
+            rent_bid(&pool(2), &calm(), &BALANCED, &only_entrance, NOW),
+            STAY
+        );
+    }
+
+    #[test]
+    fn owner_offer_is_clamped_like_an_npc_offer() {
+        let p = pool(1_000);
+        let wild = clamp_owner_offer(Game::Dice, &p, 9_000, u128::MAX, 3 * 3_600, 0, NOW);
+        assert_eq!(wild.rake_bp, rake_bounds(Game::Dice).1);
+        assert_eq!(wild.max_bet, p.free() / worst_case_multiple(Game::Dice));
+        assert_eq!(wild.boost_until, NOW + MAX_BOOST_SECS);
+        assert_eq!(wild.reason, Reason::Owner);
+        let cheap = clamp_owner_offer(Game::Dice, &p, 0, USDC, 0, 0, NOW);
+        assert_eq!((cheap.rake_bp, cheap.max_bet, cheap.boost_until), (100, USDC, 0));
+        // One boost per hour.
+        let again = clamp_owner_offer(Game::Dice, &p, 200, USDC, 600, NOW - 3_599, NOW);
+        assert_eq!(again.boost_until, 0);
+        let later = clamp_owner_offer(Game::Dice, &p, 200, USDC, 600, NOW - 3_600, NOW);
+        assert_eq!(later.boost_until, NOW + 600);
+        assert_eq!(Reason::Owner.code(), "owner");
     }
 
     #[test]

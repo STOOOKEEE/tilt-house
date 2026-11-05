@@ -1,11 +1,13 @@
 //! # The floor: seats and rent (docs/floor.md, rules 1–4)
 //!
-//! The casino floor has `SEATS` seats. Only a seated dealer takes bets. Every seated dealer pays
+//! The casino floor has `SEATS` seats. Only a seated dealer takes bets. Seats near the entrance
+//! see more gamblers and cost more: each seat's minimum rent scales with its traffic
+//! (`seats::seat_min_rent`). Every seated dealer pays
 //! its own `rent_per_hour` from its pool's free bankroll into the jackpot, accrued per second and
 //! settled lazily (`accrue_rent`). A dealer that cannot pay is evicted.
 //!
-//! A dealer off the floor gets a seat with `bid_for_seat`: an empty seat goes to any bid of at
-//! least `MIN_RENT_PER_HOUR`; on a full floor the bid must beat the lowest rent by 10 %, and the
+//! A dealer off the floor gets a seat with `bid_for_seat`: a bid takes the busiest empty seat
+//! whose minimum rent it covers; on a full floor the bid must beat the lowest rent by 10 %, and the
 //! lowest-rent dealer loses its seat. Either way the bidder prepays `PREPAY_HOURS` of rent. An
 //! evicted dealer waits `COOLDOWN_SECS` before bidding again.
 //!
@@ -19,12 +21,14 @@ use std::fmt;
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
+use crate::seats::{seat_min_rent, MIN_SEAT_RENT};
 use crate::{Pool, BP};
 
 /// Seats on the floor: scarce on purpose, so tables compete for them.
 pub const SEATS: usize = 6;
 
-/// Cheapest rent a seat can be held for: 1 USDC an hour.
+/// Rent of an average-traffic seat at its minimum: 1 USDC an hour. Each seat's own minimum is
+/// this scaled by its traffic (`seats::seat_min_rent`: 0.6 to 1.5 USDC).
 pub const MIN_RENT_PER_HOUR: u128 = 1_000_000;
 
 /// Hours of rent a bidder pays up front, so a seat is never taken for free.
@@ -61,6 +65,27 @@ pub struct Seat {
     pub seated_at: u64,
     /// Rent is paid up to this time. Ahead of `now` while prepaid time remains.
     pub paid_until: u64,
+    /// Asking price while the seat is for sale (`list_seat`).
+    #[serde(default, with = "opt_amount_str")]
+    pub ask: Option<u128>,
+}
+
+/// `Option<u128>` as a JSON decimal string or null.
+mod opt_amount_str {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &Option<u128>, serializer: S) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(amount) => serializer.collect_str(amount),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u128>, D::Error> {
+        Option::<String>::deserialize(deserializer)?
+            .map(|text| text.parse().map_err(serde::de::Error::custom))
+            .transpose()
+    }
 }
 
 #[derive(
@@ -139,12 +164,24 @@ pub enum FloorError {
     TooManyDealers,
     BadTableId,
     BadTableName,
+    /// The dealer has no seat (to list).
+    NotSeated,
+    /// The buyer's dealer already has a seat (its own included).
+    AlreadySeated,
+    /// The seat is empty or not for sale.
+    NotListed,
+    /// The seat's asking price is above the buyer's `max_price`.
+    PriceAbove {
+        ask: u128,
+    },
+    /// A listing price must be positive.
+    BadPrice,
 }
 
 impl fmt::Display for FloorError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::RentTooLow => write!(f, "rent below {MIN_RENT_PER_HOUR} per hour"),
+            Self::RentTooLow => f.write_str("rent below the seat's minimum"),
             Self::RentTooHigh => f.write_str("rent too high"),
             Self::CannotPrepay { need } => {
                 write!(f, "the pool's free bankroll cannot prepay {need}")
@@ -162,6 +199,11 @@ impl fmt::Display for FloorError {
                 f,
                 "table name: 1 to {MAX_TABLE_NAME_LEN} bytes, no control characters"
             ),
+            Self::NotSeated => f.write_str("this dealer has no seat"),
+            Self::AlreadySeated => f.write_str("this dealer already has a seat"),
+            Self::NotListed => f.write_str("this seat is not for sale"),
+            Self::PriceAbove { ask } => write!(f, "the seat costs {ask}, above your maximum"),
+            Self::BadPrice => f.write_str("a seat's price must be positive"),
         }
     }
 }
@@ -226,16 +268,18 @@ fn pay_jackpot(jackpot: &mut u128, pool: &mut Pool, amount: u128) {
 }
 
 impl Floor {
-    /// The launch floor: these dealers seated at `MIN_RENT_PER_HOUR`, rent accruing from `now`
-    /// (no prepay: their pools may still be empty). Extra dealers beyond `SEATS` are ignored.
+    /// The launch floor: these dealers seated in order at their seat's minimum rent, rent
+    /// accruing from `now` (no prepay: their pools may still be empty). Extra dealers beyond
+    /// `SEATS` are ignored.
     pub fn launch(dealer_ids: &[&str], now: u64) -> Self {
         let mut floor = Self::default();
-        for (seat, id) in floor.seats.iter_mut().zip(dealer_ids) {
+        for (index, (seat, id)) in floor.seats.iter_mut().zip(dealer_ids).enumerate() {
             *seat = Some(Seat {
                 dealer_id: (*id).to_string(),
-                rent_per_hour: MIN_RENT_PER_HOUR,
+                rent_per_hour: seat_min_rent(index),
                 seated_at: now,
                 paid_until: now,
+                ask: None,
             });
         }
         floor
@@ -271,16 +315,26 @@ impl Floor {
         self.seated().map(|seat| seat.rent_per_hour).min()
     }
 
-    /// Smallest rent that gets a seat right now: `MIN_RENT_PER_HOUR` while a seat is empty,
-    /// otherwise 110 % of the lowest seated rent, rounded up.
+    /// Smallest rent that gets a seat right now: the cheapest empty seat's minimum while a seat
+    /// is empty, otherwise 110 % of the lowest seated rent, rounded up.
     pub fn outbid_min(&self) -> u128 {
-        match self.lowest_rent() {
-            Some(lowest) if self.empty_seats() == 0 => lowest
+        if let Some(cheapest) = self.empty_seat_indexes().map(seat_min_rent).min() {
+            return cheapest;
+        }
+        self.lowest_rent().map_or(MIN_SEAT_RENT, |lowest| {
+            lowest
                 .saturating_mul(OUTBID_BP)
                 .div_ceil(BP)
-                .max(MIN_RENT_PER_HOUR),
-            _ => MIN_RENT_PER_HOUR,
-        }
+                .max(MIN_SEAT_RENT)
+        })
+    }
+
+    fn empty_seat_indexes(&self) -> impl Iterator<Item = usize> + '_ {
+        self.seats
+            .iter()
+            .enumerate()
+            .filter(|(_, seat)| seat.is_none())
+            .map(|(i, _)| i)
     }
 
     /// The seat a winning outbid takes: the lowest rent, ties going to the most recently
@@ -324,9 +378,10 @@ impl Floor {
         }
     }
 
-    /// A dealer's controller sets its rent. Off the floor: takes an empty seat, or the weakest
-    /// seat on a full floor, and prepays `PREPAY_HOURS`. Seated: changes its own rent (any raise,
-    /// any cut down to `MIN_RENT_PER_HOUR`); see `change_rent`.
+    /// A dealer's controller sets its rent. Off the floor: takes the busiest empty seat whose
+    /// minimum rent the bid covers, or the weakest seat on a full floor, and prepays
+    /// `PREPAY_HOURS`. Seated: changes its own rent (any raise, any cut down to its seat's
+    /// minimum); see `change_rent`.
     ///
     /// `cooldown_until` is the bidder's (0 if never evicted). Rent due by the bidder or by the
     /// seat it would take must be settled first (`RentDue`), so the evicted dealer's pool,
@@ -339,7 +394,7 @@ impl Floor {
         now: u64,
         cooldown_until: u64,
     ) -> Result<BidOutcome, FloorError> {
-        if rent_per_hour < MIN_RENT_PER_HOUR {
+        if rent_per_hour < MIN_SEAT_RENT {
             return Err(FloorError::RentTooLow);
         }
         if let Some(seat) = self.seat_of(dealer_id) {
@@ -368,6 +423,7 @@ impl Floor {
             rent_per_hour,
             seated_at: now,
             paid_until: now.saturating_add(PREPAY_SECS),
+            ask: None,
         });
         Ok(BidOutcome {
             seat,
@@ -378,8 +434,13 @@ impl Floor {
 
     /// Where a winning bid sits, and who it evicts. Changes nothing.
     fn seat_for_bid(&self, rent: u128, now: u64) -> Result<(usize, Option<String>), FloorError> {
-        if let Some(empty) = self.seats.iter().position(Option::is_none) {
-            return Ok((empty, None));
+        if self.empty_seats() > 0 {
+            // Seats are in traffic order: the first empty one the bid covers is the busiest.
+            return self
+                .empty_seat_indexes()
+                .find(|&i| rent >= seat_min_rent(i))
+                .map(|i| (i, None))
+                .ok_or(FloorError::RentTooLow);
         }
         let min = self.outbid_min();
         if rent < min {
@@ -402,6 +463,9 @@ impl Floor {
     /// to an unbeatable rent for protection and lower it again before paying anything: a raise
     /// starts costing at once.
     fn change_rent(&mut self, index: usize, rent: u128, now: u64) -> Result<(), FloorError> {
+        if rent < seat_min_rent(index) {
+            return Err(FloorError::RentTooLow);
+        }
         let seat = self.seats[index].as_mut().expect("seat_of found it");
         if seat.paid_until < now {
             return Err(FloorError::RentDue {
@@ -427,6 +491,7 @@ impl Floor {
             empty_seats: self.empty_seats(),
             outbid_min: self.outbid_min(),
             cooldown_until,
+            my_min_rent: self.seat_of(dealer_id).map_or(0, seat_min_rent),
         }
     }
 }
@@ -442,6 +507,8 @@ pub struct FloorView {
     pub outbid_min: u128,
     /// This dealer cannot bid before this time.
     pub cooldown_until: u64,
+    /// The minimum rent of this dealer's seat (0 when off the floor): it cannot cut below it.
+    pub my_min_rent: u128,
 }
 
 #[cfg(test)]
@@ -475,9 +542,40 @@ mod tests {
         let floor = Floor::launch(&["ada", "bo"], NOW);
         assert_eq!(floor.seat_of("bo"), Some(1));
         assert_eq!(floor.empty_seats(), SEATS - 2);
-        assert_eq!(floor.lowest_rent(), Some(MIN_RENT_PER_HOUR));
-        assert_eq!(floor.outbid_min(), MIN_RENT_PER_HOUR);
+        // Each at its seat's minimum: 1.5 and 1.3 USDC.
+        assert_eq!(floor.lowest_rent(), Some(1_300_000));
+        // The back seat is the cheapest empty one.
+        assert_eq!(floor.outbid_min(), MIN_SEAT_RENT);
         assert_eq!(Floor::default().lowest_rent(), None);
+    }
+
+    #[test]
+    fn a_bid_takes_the_busiest_empty_seat_it_covers() {
+        let mut floor = Floor::default();
+        let outcome = floor
+            .bid_for_seat("ada", 1_200_000, &mut pool(100), NOW, 0)
+            .unwrap();
+        assert_eq!(outcome.seat, 2);
+        let outcome = floor
+            .bid_for_seat("bo", 1_500_000, &mut pool(100), NOW, 0)
+            .unwrap();
+        assert_eq!(outcome.seat, 0);
+        assert_eq!(
+            floor.bid_for_seat("cy", MIN_SEAT_RENT - 1, &mut pool(100), NOW, 0),
+            Err(FloorError::RentTooLow)
+        );
+        // Seated at 1.1 USDC minimum: cannot cut under it.
+        assert_eq!(
+            floor.bid_for_seat("ada", 1_099_999, &mut pool(100), NOW, 0),
+            Err(FloorError::RentTooLow)
+        );
+        // Only seats 1 and 2 (1.3, 1.1 USDC) and the back ones left: 1.0 USDC gets seat 3.
+        let outcome = floor
+            .bid_for_seat("cy", MIN_RENT_PER_HOUR, &mut pool(100), NOW, 0)
+            .unwrap();
+        assert_eq!(outcome.seat, 3);
+        assert_eq!(floor.view("ada", 0).my_min_rent, 1_100_000);
+        assert_eq!(floor.view("zed", 0).my_min_rent, 0);
     }
 
     #[test]
@@ -557,7 +655,8 @@ mod tests {
 
     #[test]
     fn rent_accrues_per_second_rounded_up() {
-        let mut floor = Floor::launch(&["ada"], NOW);
+        // Seat 4 (index 3) has the average traffic: 1 USDC/h.
+        let mut floor = Floor::launch(&["a", "b", "c", "ada"], NOW);
         let mut p = pool(10);
         // 1 USDC/h for 1 s: 277.7… units, rounded up.
         assert_eq!(floor.rent_owed("ada", NOW + 1), 278);
@@ -650,7 +749,13 @@ mod tests {
         let floor = Floor::launch(&["ada"], NOW);
         let json = serde_json::to_value(&floor).unwrap();
         assert_eq!(json["jackpot"], "0");
-        assert_eq!(json["seats"][0]["rent_per_hour"], "1000000");
+        assert_eq!(json["seats"][0]["rent_per_hour"], "1500000");
+        assert!(json["seats"][0]["ask"].is_null());
         assert!(json["seats"][1].is_null());
+        let mut listed = floor.clone();
+        listed.list_seat("ada", Some(7)).unwrap();
+        let json = serde_json::to_string(&listed).unwrap();
+        assert!(json.contains(r#""ask":"7""#));
+        assert_eq!(serde_json::from_str::<Floor>(&json).unwrap(), listed);
     }
 }
