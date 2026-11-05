@@ -56,10 +56,11 @@ Tables that earn attract LPs and can afford higher rent; tables that don't lose 
 ## Contract API additions (house)
 
 - `collect_rent()` (anyone), `bid_for_seat(dealer_id, rent_per_hour: U128)` (dealer controller:
-  NPC dealer account or owning player), `open_table(...)`, `set_temperament(dealer_id, temperament)`.
+  NPC dealer account or owning player), `open_table(id, name, game, temperament, look, seed_amount)`
+  where `look` is a preset name from web/src/scene/looks.ts (validated against a fixed list, max 32 chars), `set_temperament(dealer_id, temperament)`.
 - Views: `get_floor() -> { seats: [{ seat, dealer_id|null, rent_per_hour, seated_at }], lowest_rent,
   outbid_min, jackpot, jackpot_odds_unit }`; DealerView gains `seated`, `seat`, `rent_per_hour`,
-  `rent_owed`, `controller`, `earnings_1h`, `cooldown_until`; history kinds add `seated`, `evicted`,
+  `rent_owed`, `controller`, `look`, `earnings_1h`, `cooldown_until`; history kinds add `seated`, `evicted`,
   `rent`, `jackpot`, `opened`.
 - Relayer allow-list adds (full-access key, 0 deposit): `open_table`, `bid_for_seat`,
   `set_temperament`. Keeper calls `collect_rent` and NPC `bid_for_seat`.
