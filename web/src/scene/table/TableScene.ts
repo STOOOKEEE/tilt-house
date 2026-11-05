@@ -22,6 +22,7 @@ import {
   buildTable,
   chipCount,
   chipStack,
+  easeInOut,
   CURTAIN_UP_Y,
   curtain,
   type FeltTable,
@@ -33,7 +34,7 @@ import {
   textSprite,
   valueStack,
 } from './props'
-import { paintRouletteFelt, Roulette } from './roulette'
+import { paintRouletteFelt, Roulette, WHEEL_AT } from './roulette'
 
 export interface TableSceneOptions {
   dealerId: string
@@ -50,10 +51,24 @@ const DEALER_Z = -TABLE_D / 2 - 0.35
 /** Each round still waiting in the queue speeds the clock up by this much. */
 const BACKLOG_SPEEDUP = 0.75
 const MAX_TIME_SCALE = 4
-const RESULT_HOLD_S = 1.4
+const RESULT_HOLD_S = 1
 /** The answer after a drawing loop: the long throw already played while the VRF drew. */
 const FAST_RESULT_SPEED = 2.5
 const DRAWING_TEXT = 'shuffling…'
+/**
+ * Close-ups while a round plays: over the wheel, down on the dice, a little closer to the cards.
+ * The camera glides there in `SHOT_MOVE_S` when the player plays and back once the result held.
+ */
+const WHEEL = feltPoint(WHEEL_AT.u, WHEEL_AT.v)
+const SHOTS: Record<Game, { eye: THREE.Vector3; look: THREE.Vector3; amount: number }> = {
+  roulette: { eye: new THREE.Vector3(WHEEL.x + 0.25, 2.55, WHEEL.z + 0.95), look: WHEEL.clone(), amount: 1 },
+  dice: { eye: new THREE.Vector3(0, 2.5, 1.55), look: feltPoint(0.5, 0.38), amount: 0.85 },
+  blackjack: { eye: new THREE.Vector3(0, 2.3, 1.7), look: feltPoint(0.5, 0.42), amount: 0.6 },
+}
+const SHOT_MOVE_S = 0.4
+const CLOSE_UP_HOLD_S = 1
+/** Skipping plays the rest of the round this many times faster. */
+const SKIP_SPEED = 12
 /** The player's eyes: seated at the felt's near edge, looking down at it and across at the dealer. */
 const EYE = new THREE.Vector3(0, 2.45, TABLE_D / 2 + 2.0)
 const LOOK_AT = new THREE.Vector3(0, 1.0, -0.75)
@@ -99,6 +114,12 @@ class TableScene implements TableSceneApi {
   private readonly glow: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
   private readonly board = createBoard()
   private readonly detachPointer: () => void
+  /** 0 = seat view, 1 = the game's close-up; eased toward `shotTarget` every frame. */
+  private shot = 0
+  private shotTarget = 0
+  private skipping = false
+  /** Seconds (frame clock, unaffected by the animation speed) until the camera goes back; null = no release pending. */
+  private releaseIn: number | null = null
   private queue: Step[] = []
   private lastQueued: RoundView | null = null
   private running = false
@@ -168,6 +189,11 @@ class TableScene implements TableSceneApi {
     this.setGame(game)
     this.drawing = true
     this.slip.visible = false
+    this.glow.visible = false
+    this.shotTarget = 1
+    this.releaseIn = null
+    // The player is waiting: clearing the last round and placing the bet run fast too.
+    this.fastResult = true
     this.drawingLabel.set(DRAWING_TEXT)
     this.hourglass.visible = false
     const props = this.props
@@ -187,6 +213,18 @@ class TableScene implements TableSceneApi {
 
   stopDrawing(): void {
     if (this.drawing) this.endDrawing(false)
+    this.shotTarget = 0
+  }
+
+  animating(): boolean {
+    return this.running || this.drawing
+  }
+
+  /** Plays the rest of the queued round fast and cuts the camera back to the seat. */
+  skip(): void {
+    if (!this.running) return
+    this.skipping = true
+    this.anim.timeScale = SKIP_SPEED
   }
 
   setMood(mood: Mood): void {
@@ -249,6 +287,15 @@ class TableScene implements TableSceneApi {
   // ---- frame loop -----------------------------------------------------------------------------
 
   private frame(dt: number, elapsed: number): void {
+    if (this.releaseIn !== null) {
+      this.releaseIn -= dt
+      if (this.releaseIn <= 0) {
+        this.releaseIn = null
+        if (!this.drawing) this.shotTarget = 0
+      }
+    }
+    const step = this.skipping ? 1 : dt / SHOT_MOVE_S
+    this.shot = this.shotTarget > this.shot ? Math.min(this.shotTarget, this.shot + step) : Math.max(this.shotTarget, this.shot - step)
     this.frameCamera(elapsed)
     this.anim.update(dt)
     this.rig.update(dt)
@@ -270,7 +317,14 @@ class TableScene implements TableSceneApi {
     const tanHalfH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect
     const back = Math.max(0, FRAME_HALF_W / tanHalfH - (EYE.z - LOOK_AT.z) * 0.9)
     camera.position.set(EYE.x + Math.sin(elapsed * 0.3) * 0.02, EYE.y + back * 0.35, EYE.z + back)
-    camera.lookAt(LOOK_AT)
+    const close = this.props ? SHOTS[this.props.game] : null
+    if (!close || this.shot === 0) {
+      camera.lookAt(LOOK_AT)
+      return
+    }
+    const t = easeInOut(this.shot) * close.amount
+    camera.position.lerp(close.eye, t)
+    camera.lookAt(LOOK_AT.clone().lerp(close.look, t))
   }
 
   // ---- pointer --------------------------------------------------------------------------------
@@ -309,7 +363,10 @@ class TableScene implements TableSceneApi {
       press = null
       if (!p) return
       window.clearTimeout(p.timer)
-      if (!p.long && Math.hypot(event.clientX - p.x, event.clientY - p.y) <= CLICK_SLOP) report(event, 'add')
+      if (p.long || Math.hypot(event.clientX - p.x, event.clientY - p.y) > CLICK_SLOP) return
+      // A click while a round plays skips its animation instead of placing a chip.
+      if (this.running) this.skip()
+      else report(event, 'add')
     }
     const onMove = (event: PointerEvent): void => {
       if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > CLICK_SLOP) {
@@ -352,7 +409,11 @@ class TableScene implements TableSceneApi {
       }
       if (step.kind === 'settle' || step.kind === 'void') this.fastResult = false
       const backlog = this.queue.filter((s) => s.kind === 'clear').length
-      this.anim.timeScale = this.fastResult ? FAST_RESULT_SPEED : Math.min(MAX_TIME_SCALE, 1 + backlog * BACKLOG_SPEEDUP)
+      this.anim.timeScale = this.skipping
+        ? SKIP_SPEED
+        : this.fastResult
+          ? FAST_RESULT_SPEED
+          : Math.min(MAX_TIME_SCALE, 1 + backlog * BACKLOG_SPEEDUP)
       if (step.kind !== 'think' && this.hourglass.visible) {
         // The draw came back: the thinking loop ends and the dealer's reason returns.
         this.hourglass.visible = false
@@ -365,8 +426,11 @@ class TableScene implements TableSceneApi {
         console.error('table step failed', step.kind, error)
       }
     }
-    this.fastResult = false
+    // Still waiting for the answer: the steps that bring it stay fast.
+    this.fastResult = this.drawing
     this.running = false
+    this.skipping = false
+    this.anim.timeScale = 1
     if (!this.drawing) this.slip.visible = true
   }
 
@@ -465,11 +529,18 @@ class TableScene implements TableSceneApi {
     if (this.props?.game !== 'roulette') return
     this.rig.say('no more bets!')
     await Promise.all([this.rig.gesture({ kind: 'spin' }), this.props.wheel.spin(pocket)])
+    this.backToSeatSoon()
+  }
+
+  /** The draw landed: hold the close-up on the result a moment (real time), then back to the seat. */
+  private backToSeatSoon(): void {
+    this.releaseIn = this.skipping ? 0 : CLOSE_UP_HOLD_S
   }
 
   private async throwDice(roll: number): Promise<void> {
     if (this.props?.game !== 'dice') return
     await Promise.all([this.rig.gesture({ kind: 'throw' }), this.props.dice.throw(roll)])
+    this.backToSeatSoon()
   }
 
   private async settle(outcome: 'win' | 'lose' | 'push', payout: string, wager: string): Promise<void> {
@@ -487,6 +558,7 @@ class TableScene implements TableSceneApi {
     }
     await this.anim.wait(RESULT_HOLD_S)
     this.rig.say(this.reason)
+    this.shotTarget = 0
   }
 
   private async voidRound(refunded: boolean): Promise<void> {
@@ -498,6 +570,7 @@ class TableScene implements TableSceneApi {
     }
     await this.anim.wait(RESULT_HOLD_S)
     this.rig.say(this.reason)
+    this.shotTarget = 0
   }
 
   /** Every chip on the felt slides to `to` and goes away. */

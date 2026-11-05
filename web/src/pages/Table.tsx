@@ -165,8 +165,10 @@ function Seat({ dealer, session, walletId, wallet, demo, offline, elsewhere }: S
     else setSlip((current) => removeChip(current, spot.bet))
   }
 
+  // Space skips the animation of the round on screen, else plays the next one.
+  const scene = useRef<TableSceneApi | null>(null)
   useKeys({
-    ' ': () => void tilt(),
+    ' ': () => (scene.current?.animating() ? scene.current.skip() : void tilt()),
     h: () => handLive && void session.act('hit'),
     s: () => handLive && void session.act('stand'),
     d: () => handLive && void session.act('double'),
@@ -203,6 +205,7 @@ function Seat({ dealer, session, walletId, wallet, demo, offline, elsewhere }: S
         dice={dealer.game === 'dice' ? dice : null}
         rounds={here && s ? s.rounds : []}
         onFelt={onFelt}
+        onScene={(created) => (scene.current = created)}
       />
       <SessionHud dealer={dealer} session={here ? session : null} demo={demo} />
       <WalletHud wallet={wallet} demo={demo} onRounds={() => setDrawer((open) => !open)} drawerOpen={drawer} />
@@ -279,15 +282,18 @@ interface StageProps {
   dice: DiceTarget | null
   rounds: readonly CompactRound[]
   onFelt: (u: number, v: number, action: FeltAction, scene: TableSceneApi) => void
+  onScene: (scene: TableSceneApi | null) => void
 }
 
 /** The 3D seat: the player's session rounds, the chips on the felt, the dealer's board. */
-function TableStage({ dealer, ownRound, drawing, failed, slip, dice, rounds, onFelt }: StageProps) {
+function TableStage({ dealer, ownRound, drawing, failed, slip, dice, rounds, onFelt, onScene }: StageProps) {
   const host = useRef<HTMLDivElement>(null)
   const [scene, setScene] = useState<TableSceneApi | null>(null)
   // Through a ref: the scene is built once per dealer, the handler changes with every render.
   const felt = useRef(onFelt)
   felt.current = onFelt
+  const sceneRef = useRef(onScene)
+  sceneRef.current = onScene
 
   useEffect(() => {
     if (!host.current) return
@@ -299,9 +305,11 @@ function TableStage({ dealer, ownRound, drawing, failed, slip, dice, rounds, onF
       onFelt: (u, v, action) => created && felt.current(u, v, action, created),
     })
     setScene(created)
+    sceneRef.current(created)
     return () => {
       created?.dispose()
       setScene(null)
+      sceneRef.current(null)
     }
     // Rebuilt only for another dealer: live fields are pushed by the effects below.
   }, [dealer.id])

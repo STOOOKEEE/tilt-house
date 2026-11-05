@@ -73,6 +73,10 @@ export interface TableSceneApi {
   highlight(cell: FeltCell | null): void
   /** The dice bar shows this bet before it is played. */
   previewDiceBet(bet: { chance_bp: number; over: boolean } | null): void
+  /** True while a round animates (or the draw is pending). */
+  animating(): boolean
+  /** Fast-forwards the round on screen to its result, camera back at the seat. */
+  skip(): void
   /** The dealer's display board. */
   setBoard(info: BoardInfo): void
   dispose(): void

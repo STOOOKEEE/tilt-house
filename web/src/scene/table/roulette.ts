@@ -127,6 +127,11 @@ export class Roulette {
   private readonly ball: THREE.Mesh
   private readonly readout: TextSprite = textSprite(0.2, 8)
   private readonly dolly: THREE.Mesh
+  /** Lights the winning pocket on the rotor (it turns with it). */
+  private readonly pocketGlow = new THREE.Mesh(
+    new THREE.RingGeometry(POCKET_R - 0.07, POCKET_R + 0.09, 6, 1, -STEP / 2, STEP),
+    new THREE.MeshBasicMaterial({ color: PALETTE.gold, transparent: true, opacity: 0.75, depthWrite: false }),
+  )
   private spinning = false
   /** The drawing loop is on; `ballAngle` is where the ball runs on the track. */
   private running = false
@@ -140,12 +145,17 @@ export class Roulette {
     this.ball = new THREE.Mesh(new THREE.IcosahedronGeometry(0.03, 0), new THREE.MeshLambertMaterial({ color: '#fbfbf7', flatShading: true }))
     this.ball.castShadow = true
     this.ball.visible = false
-    this.readout.sprite.position.set(0, 0.55, 0)
+    // Above the wheel's far rim: readable from the seat and from the close-up over the wheel.
+    this.readout.sprite.position.set(0, 0.6, -0.8)
     this.dolly = voxelPart([
       { size: [0.06, 0.08, 0.06], at: [0, 0.04, 0], color: '#f7f1e3' },
       { size: [0.08, 0.03, 0.08], at: [0, 0.095, 0], color: PALETTE.gold },
     ])
     this.dolly.visible = false
+    this.pocketGlow.rotation.x = -Math.PI / 2
+    this.pocketGlow.position.y = ROTOR_Y + 0.004
+    this.pocketGlow.visible = false
+    this.rotor.add(this.pocketGlow)
     this.group.add(buildBowl(), this.rotor, this.readout.sprite)
   }
 
@@ -169,6 +179,7 @@ export class Roulette {
     this.group.add(this.ball)
     this.ball.visible = true
     this.dolly.visible = false
+    this.pocketGlow.visible = false
     this.readout.set('')
   }
 
@@ -181,6 +192,7 @@ export class Roulette {
     // A ball already running for the next draw stays on the track.
     if (!this.running) this.ball.visible = false
     this.dolly.visible = false
+    this.pocketGlow.visible = false
     this.readout.set('')
   }
 
@@ -221,6 +233,9 @@ export class Roulette {
     const cell = numberCell(pocket)
     this.dolly.position.copy(feltPoint(cell.u + cell.w / 2, cell.v + cell.h / 2))
     this.dolly.visible = true
+    // The ring is laid in the rotor's plane: its angle is the pocket's angle.
+    this.pocketGlow.rotation.z = pocketAngle(pocket)
+    this.pocketGlow.visible = true
   }
 }
 
