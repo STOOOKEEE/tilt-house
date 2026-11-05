@@ -3,10 +3,6 @@
 import type { BlackjackHand, Game, RoundView } from '../../near/views'
 
 const STAKE = '2000000'
-/** Dev `?latency=1`: when the mock move's round shows up (relayer answers at inclusion), then when
- *  its VRF answer lands (OutLayer takes about 6 s), in ms after the click. */
-export const LATENCY_INCLUDED_MS = 1_500
-export const LATENCY_DRAW_MS = 6_000
 
 /** Hands in the order the contract would reveal them: the deal, each hit, the dealer's play. */
 const BLACKJACK_SCRIPTS: { snapshots: BlackjackHand[]; doubled?: boolean; payout: string }[] = [

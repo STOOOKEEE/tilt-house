@@ -3,11 +3,9 @@ import {
   ViewShapeError,
   decodeViewReply,
   getLobby,
-  parseConfig,
   parseHistory,
   parseLobby,
   parsePlayer,
-  parseRound,
 } from './views'
 
 const DEALER = {
@@ -168,53 +166,6 @@ describe('parsePlayer', () => {
   })
 })
 
-describe('parseRound', () => {
-  const ROUND = {
-    id: 12,
-    player: 'alice.testnet',
-    dealer_id: 'eve',
-    game: 'blackjack',
-    bet: 'blackjack',
-    stake: '1000000',
-    wager: '2000000',
-    rake_bp: 120,
-    status: 'settled',
-    step: 2,
-    created_at: 1_762_190_000,
-    updated_at: 1_762_190_021,
-    roll: null,
-    pocket: null,
-    bj: { player: [10, 1], dealer: [9, 7, 5], doubled: false, done: true },
-    payout: '4950000',
-    proofs: [{ step: 0, alpha: 'vrf:6802:alice.testnet:round-12-0', signature_hex: 'ab', output_hex: 'cd' }],
-    error: null,
-  }
-
-  it('reads a settled blackjack round with its VRF proofs', () => {
-    const round = parseRound(ROUND)
-    expect(round?.status).toBe('settled')
-    expect(round?.bj?.dealer).toEqual([9, 7, 5])
-    expect(round?.roll).toBeNull()
-    expect(round?.proofs[0].alpha).toBe('vrf:6802:alice.testnet:round-12-0')
-  })
-
-  it('reads dice and roulette bets in core serde form', () => {
-    expect(parseRound({ ...ROUND, game: 'dice', bet: { dice: { chance_bp: 5000, over: true } } })?.bet).toEqual({
-      dice: { chance_bp: 5000, over: true },
-    })
-    expect(parseRound({ ...ROUND, game: 'roulette', bet: { roulette: { dozen: 2 } } })?.bet).toEqual({
-      roulette: { dozen: 2 },
-    })
-    expect(() => parseRound({ ...ROUND, bet: { roulette: 'green' } })).toThrow(/round\.bet\.roulette/)
-  })
-
-  it('returns null for a missing round and rejects unknown statuses', () => {
-    expect(parseRound(null)).toBeNull()
-    expect(() => parseRound({ ...ROUND, status: 'won' })).toThrow(ViewShapeError)
-    expect(() => parseRound({ ...ROUND, bj: { ...ROUND.bj, player: ['A'] } })).toThrow(/bj\.player\[0\]/)
-  })
-})
-
 describe('parseHistory', () => {
   it('reads reprice and invest entries', () => {
     const entries = parseHistory([
@@ -224,20 +175,6 @@ describe('parseHistory', () => {
     expect(entries[0]).toMatchObject({ seq: 41, kind: 'reprice', rake_bp: 300, max_bet: '9' })
     expect(entries[1]).toMatchObject({ kind: 'invest', text: 'in', account_id: 'a.testnet', amount: '5', reason: null })
     expect(() => parseHistory([{ ...entries[0], kind: 'jackpot' }])).toThrow(/kind/)
-  })
-})
-
-describe('parseConfig', () => {
-  it('needs a 32-byte hex VRF key', () => {
-    const config = { vrf_pubkey_hex: 'c0'.repeat(32), min_bet: '100000', refund_after_secs: 120, next_round_id: 13, owner: 'x' }
-    expect(parseConfig(config).refund_after_secs).toBe(120)
-    expect(() => parseConfig({ ...config, vrf_pubkey_hex: 'c0' })).toThrow(/vrf_pubkey_hex/)
-  })
-
-  it('reads next_round_id, which the spectator view polls', () => {
-    const config = { vrf_pubkey_hex: 'c0'.repeat(32), min_bet: '100000', refund_after_secs: 120, next_round_id: 13 }
-    expect(parseConfig(config).next_round_id).toBe(13)
-    expect(() => parseConfig({ ...config, next_round_id: undefined })).toThrow(/next_round_id/)
   })
 })
 

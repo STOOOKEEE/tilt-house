@@ -93,7 +93,6 @@ export interface PlayerView {
 
 /** Done = `settled` or `refunded`; moves are legal only in `player_turn`. */
 export type RoundStatus = 'waiting_vrf' | 'player_turn' | 'failed' | 'settled' | 'refunded'
-const STATUSES: readonly RoundStatus[] = ['waiting_vrf', 'player_turn', 'failed', 'settled', 'refunded']
 
 /** `core_rules::RouletteBet` serde form. */
 export type RouletteBet =
@@ -170,14 +169,6 @@ export interface HistoryEntry {
   account_id: string | null
   /** tUSDC in/out for invest/divest. */
   amount: string | null
-}
-
-export interface VrfConfig {
-  vrf_pubkey_hex: string
-  min_bet: string
-  refund_after_secs: number
-  /** Id the next round will get: rounds 1..next_round_id-1 exist (spectator view). */
-  next_round_id: number
 }
 
 // ---- guards -------------------------------------------------------------------------------
@@ -360,42 +351,6 @@ export function parseHand(value: unknown): BlackjackHand {
   return { player, dealer, doubled: bool(h.doubled, 'round.bj.doubled'), done: bool(h.done, 'round.bj.done') }
 }
 
-function proof(value: unknown, i: number): VrfProof {
-  const path = `round.proofs[${i}]`
-  const v = record(value, path)
-  return {
-    step: int(v.step, `${path}.step`),
-    alpha: str(v.alpha, `${path}.alpha`),
-    signature_hex: str(v.signature_hex, `${path}.signature_hex`),
-    output_hex: str(v.output_hex, `${path}.output_hex`),
-  }
-}
-
-export function parseRound(value: unknown): RoundView | null {
-  if (value === null) return null
-  const r = record(value, 'round')
-  return {
-    id: int(r.id, 'round.id'),
-    player: str(r.player, 'round.player'),
-    dealer_id: str(r.dealer_id, 'round.dealer_id'),
-    game: oneOf(GAMES, r.game, 'round.game'),
-    bet: parseBet(r.bet),
-    stake: amount(r.stake, 'round.stake'),
-    wager: amount(r.wager, 'round.wager'),
-    rake_bp: int(r.rake_bp, 'round.rake_bp'),
-    status: oneOf(STATUSES, r.status, 'round.status'),
-    step: int(r.step, 'round.step'),
-    created_at: int(r.created_at, 'round.created_at'),
-    updated_at: int(r.updated_at, 'round.updated_at'),
-    roll: optional(r.roll, (v) => int(v, 'round.roll')),
-    pocket: optional(r.pocket, (v) => int(v, 'round.pocket')),
-    bj: optional(r.bj, parseHand),
-    payout: optional(r.payout, (v) => amount(v, 'round.payout')),
-    proofs: list(r.proofs, 'round.proofs').map(proof),
-    error: optional(r.error, (v) => str(v, 'round.error')),
-  }
-}
-
 export function parseHistory(value: unknown): HistoryEntry[] {
   return list(value, 'history').map((entry, i) => {
     const path = `history[${i}]`
@@ -414,20 +369,6 @@ export function parseHistory(value: unknown): HistoryEntry[] {
       amount: optional(e.amount, (v) => amount(v, `${path}.amount`)),
     }
   })
-}
-
-const HEX_32 = /^[0-9a-f]{64}$/i
-
-export function parseConfig(value: unknown): VrfConfig {
-  const c = record(value, 'config')
-  const pubkey = str(c.vrf_pubkey_hex, 'config.vrf_pubkey_hex')
-  if (!HEX_32.test(pubkey)) fail('config.vrf_pubkey_hex', '64 hex characters')
-  return {
-    vrf_pubkey_hex: pubkey,
-    min_bet: amount(c.min_bet, 'config.min_bet'),
-    refund_after_secs: int(c.refund_after_secs, 'config.refund_after_secs'),
-    next_round_id: int(c.next_round_id, 'config.next_round_id'),
-  }
 }
 
 // ---- RPC ----------------------------------------------------------------------------------
@@ -485,19 +426,11 @@ export async function getPlayer(target: ViewTarget, accountId: string): Promise<
   return parsePlayer(await viewCall(target.rpcUrl, target.houseContract, 'get_player', { account_id: accountId }))
 }
 
-export async function getRound(target: ViewTarget, roundId: number): Promise<RoundView | null> {
-  return parseRound(await viewCall(target.rpcUrl, target.houseContract, 'get_round', { round_id: roundId }))
-}
-
 /** The latest `limit` (≤ 50) entries of a dealer's log, oldest first. */
 export async function getHistory(target: ViewTarget, dealerId: string, limit = 50): Promise<HistoryEntry[]> {
   return parseHistory(
     await viewCall(target.rpcUrl, target.houseContract, 'get_history', { dealer_id: dealerId, from: null, limit }),
   )
-}
-
-export async function getConfig(target: ViewTarget): Promise<VrfConfig> {
-  return parseConfig(await viewCall(target.rpcUrl, target.houseContract, 'get_config'))
 }
 
 /** The player's wallet balance on the token contract (not yet deposited in the house). */
