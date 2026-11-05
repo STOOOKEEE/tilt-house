@@ -5,6 +5,7 @@ import { actions, encodeSignedDelegate, type Action, type PublicKey, type Signed
  * Must be a subset of the relayer's allow-list.
  */
 export const GAME_METHODS = ['open_session', 'close_session', 'force_close', 'claim_unrevealed'] as const
+export type GameMethod = (typeof GAME_METHODS)[number]
 
 /** 0.25 NEAR in yoctoNEAR: caps what a stolen browser key can burn in gas. */
 export const GAME_KEY_ALLOWANCE = 250_000_000_000_000_000_000_000n

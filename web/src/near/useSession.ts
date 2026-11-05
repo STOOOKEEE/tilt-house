@@ -1,13 +1,13 @@
 /**
  * A provably fair session at one table (docs/sessions.md), from the browser: start it on the
- * session server, open it on chain with one relayed full-access call, then instant rounds, each
+ * session server, open it on chain with one relayed game-key call (no popup), then instant rounds, each
  * signed state checked before it is shown. The last valid state is kept in localStorage: it is the
  * player's proof for `force_close` if the server ever stops answering.
  */
 import { useCallback, useEffect, useState } from 'react'
-import type { Account } from 'near-api-js'
+import type { JsonRpcProvider } from 'near-api-js'
 import type { Config } from '../config'
-import { fullAccessCall } from './session'
+import { gameKeyCall } from './session'
 import {
   checkNextState,
   NOT_OPEN_YET,
@@ -94,10 +94,15 @@ export function ticketProblem(
   return null
 }
 
+/**
+ * `ready`: the browser game key exists. Opening and force-closing are signed with it (no popup):
+ * the money only moves between the player's floor balance and the session escrow.
+ */
 export function useSession(
   config: Config,
-  account: Account | null,
+  provider: JsonRpcProvider,
   walletId: string,
+  ready: boolean,
   dealer: DealerView | undefined,
 ): SessionApi {
   const [session, setSession] = useState<StoredSession | null>(null)
@@ -143,7 +148,8 @@ export function useSession(
   const start = (lock: bigint) =>
     run(async () => {
       if (!config.sessionUrl) throw new Error('no session server configured (VITE_SESSION_URL)')
-      if (!account || !dealer) throw new Error('log in first')
+      if (!walletId || !dealer) throw new Error('log in first')
+      if (!ready) throw new Error('your game key is still being set up')
       setPhase('starting')
       setVerified(null)
       setBroken('')
@@ -172,10 +178,10 @@ export function useSession(
         }
         save(stored)
         setPhase('opening')
-        await fullAccessCall(account, config, config.houseContract, 'open_session', {
+        await gameKeyCall(walletId, provider, config, 'open_session', {
           ticket: started.ticket,
           server_sig: started.ticket_signature,
-        }, 0n)
+        })
         save({ ...stored, opened: true })
         setPhase('playing')
       } catch (e) {
@@ -247,13 +253,13 @@ export function useSession(
 
   const forceClose = () =>
     run(async () => {
-      if (!session || !account) throw new Error('no session')
+      if (!session || !walletId) throw new Error('no session')
       const { signature, ...state } = session.state
-      await fullAccessCall(account, config, config.houseContract, 'force_close', {
+      await gameKeyCall(walletId, provider, config, 'force_close', {
         session_id: session.session_id,
         state,
         server_sig: signature,
-      }, 0n)
+      })
       setPhase('closed')
     })
 

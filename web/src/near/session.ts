@@ -1,6 +1,6 @@
-import { KeyPair, type Account, type KeyPairString } from 'near-api-js'
+import { Account, KeyPair, KeyPairSigner, type JsonRpcProvider, type KeyPairString } from 'near-api-js'
 import type { Config } from '../config'
-import { callAction, gameKeyAction } from './delegate'
+import { callAction, gameKeyAction, type GameMethod } from './delegate'
 import { activate, relay, type RelayResult } from './relay'
 
 type SessionConfig = Pick<Config, 'houseContract' | 'relayerUrl'>
@@ -60,7 +60,33 @@ export async function ensureGameKey(account: Account, config: SessionConfig): Pr
   return gameKey
 }
 
-/** Money moves (deposit, withdraw, invest, sessions) signed by the Privy full-access key and relayed. */
+/**
+ * A session call (docs/sessions.md) signed by the browser game key and relayed: no popup, no gas
+ * for the player. Safe with a function-call key: the money only moves inside the floor contract
+ * (balance to session escrow and back), and the key cannot attach deposits.
+ */
+export async function gameKeyCall(
+  accountId: string,
+  provider: JsonRpcProvider,
+  config: SessionConfig,
+  method: GameMethod,
+  args: object,
+): Promise<RelayResult> {
+  const gameKey = loadGameKey(accountId, config.houseContract)
+  if (!gameKey) throw new Error('No game key in this browser: log in again')
+  const account = new Account(accountId, provider, new KeyPairSigner(gameKey))
+  // The game key was just added by a relayed AddKey: it can take a block to become final.
+  const { signedDelegate } = await whenKeyVisible(() =>
+    account.createSignedMetaTransaction({
+      receiverId: config.houseContract,
+      actions: [callAction(method, args, 0n)],
+      blockHeightTtl: DELEGATE_TTL_BLOCKS,
+    }),
+  )
+  return relay(config.relayerUrl, signedDelegate)
+}
+
+/** Money moves (deposit, withdraw, invest) signed by the Privy full-access key and relayed. */
 export async function fullAccessCall(
   account: Account,
   config: SessionConfig,

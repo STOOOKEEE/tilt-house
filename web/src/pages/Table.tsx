@@ -22,11 +22,11 @@ const DEFAULT_LOCK_MIN_BETS = 50n
 
 export function Table() {
   const { dealer: dealerId = '' } = useParams()
-  const { config, nearAccount, walletId } = useNear()
+  const { config, provider, walletId, gameKey } = useNear()
   const lobby = useLobby(TABLE_POLL_MS)
   const player = usePlayer(TABLE_POLL_MS)
   const dealer = lobby.data?.find((d) => d.id === dealerId)
-  const session = useSession(config, nearAccount, walletId, dealer)
+  const session = useSession(config, provider, walletId, gameKey.state === 'ready', dealer)
   const { session: stored, hand, last } = session
   // Memoized: the scene replays its animation for every new round object.
   const ownRound = useMemo(() => ownRoundView(stored, hand, last, walletId), [stored, hand, last, walletId])
