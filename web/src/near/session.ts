@@ -41,10 +41,22 @@ function loadGameKey(accountId: string, houseContract: string): KeyPair | null {
  * exist until funded), then one Privy signature for the AddKey delegate, relayed gas-free.
  * The key is stored only after the relayer accepted it, so a failed relay retries next login.
  */
-export async function ensureGameKey(account: Account, config: SessionConfig): Promise<KeyPair> {
-  const existing = loadGameKey(account.accountId, config.houseContract)
-  if (existing) return existing
+// The provider effect reruns whenever Privy hands a new Account object for the same wallet; two
+// concurrent setups sign AddKey delegates with the same nonce and the second one fails on chain.
+const pendingSetups = new Map<string, Promise<KeyPair>>()
 
+export function ensureGameKey(account: Account, config: SessionConfig): Promise<KeyPair> {
+  const existing = loadGameKey(account.accountId, config.houseContract)
+  if (existing) return Promise.resolve(existing)
+  const id = storageKey(account.accountId, config.houseContract)
+  const pending = pendingSetups.get(id)
+  if (pending) return pending
+  const setup = setUpGameKey(account, config).finally(() => pendingSetups.delete(id))
+  pendingSetups.set(id, setup)
+  return setup
+}
+
+async function setUpGameKey(account: Account, config: SessionConfig): Promise<KeyPair> {
   await activate(config.relayerUrl, account.accountId)
   const gameKey = KeyPair.fromRandom('ed25519')
   // AddKey acts on the delegate's receiver, so it targets the player's own account.

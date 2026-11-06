@@ -50,7 +50,7 @@ async function jsonField(c: Context, field: string): Promise<string | null> {
   return typeof value === "string" ? value : null;
 }
 
-const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+const LOOPBACK: Record<string, true> = { "127.0.0.1": true, "::1": true, "::ffff:127.0.0.1": true };
 
 /**
  * The relayer listens on loopback only; public traffic reaches it through the local HTTPS proxy
@@ -65,7 +65,7 @@ function clientIp(c: Context): string | undefined {
     return undefined;
   }
   const forwarded = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim();
-  return peer !== undefined && LOOPBACK.has(peer) && forwarded ? forwarded : peer;
+  return peer !== undefined && LOOPBACK[peer] === true && forwarded ? forwarded : peer;
 }
 
 export function createApp({ config, chain, now = Date.now }: AppDeps): Hono {
