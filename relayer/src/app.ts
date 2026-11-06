@@ -54,7 +54,7 @@ const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 
 /**
  * The relayer listens on loopback only; public traffic reaches it through the local HTTPS proxy
- * (Cloudflare Tunnel), which appends the real client to X-Forwarded-For. Only that last entry is
+ * (Tailscale Funnel), which appends the real client to X-Forwarded-For. Only that last entry is
  * trusted: earlier ones come from the client and can be forged.
  */
 function clientIp(c: Context): string | undefined {

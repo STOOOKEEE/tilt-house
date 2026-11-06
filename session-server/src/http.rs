@@ -83,8 +83,8 @@ async fn limit_ip<C: Chain>(
     next.run(request).await
 }
 
-/// The server listens on loopback; public traffic arrives through the local HTTPS proxy (Cloudflare
-/// Tunnel), which appends the real client to X-Forwarded-For. Only that last entry is trusted,
+/// The server listens on loopback; public traffic arrives through the local HTTPS proxy (Tailscale
+/// Funnel), which appends the real client to X-Forwarded-For. Only that last entry is trusted,
 /// and only from a loopback peer: earlier entries come from the client and can be forged.
 fn client_ip(peer: SocketAddr, headers: &HeaderMap) -> IpAddr {
     if !peer.ip().is_loopback() {
