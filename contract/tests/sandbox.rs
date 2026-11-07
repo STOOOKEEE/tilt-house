@@ -737,17 +737,28 @@ async fn unpaid_rent_evicts_and_feeds_the_jackpot() -> anyhow::Result<()> {
     let env = setup(0).await?;
     let alice = env.player(TABLE_SEED).await?;
     env.open_table(&alice, "alice-dice").await?;
-    // 99 tUSDC/h: the 2 h prepay leaves the pool 2 tUSDC, a few minutes more of rent.
-    env.ok(
+    // Regression: 99 tUSDC/h left the pool 2 tUSDC after the 2 h prepay, under what a 0.10
+    // minimum dice bet needs: the table took a seat it could not play at (seen on testnet,
+    // qa-min evicting Chloe, 2026-11-07).
+    env.fails(
         &alice,
         "bid_for_seat",
         json!({"dealer_id": "alice-dice", "rent_per_hour": "99000000"}),
+        "could not cover a minimum bet",
+    )
+    .await?;
+    // 95 tUSDC/h: the prepay leaves 10 tUSDC (just open), a few minutes more of rent.
+    env.ok(
+        &alice,
+        "bid_for_seat",
+        json!({"dealer_id": "alice-dice", "rent_per_hour": "95000000"}),
     )
     .await?;
     assert_eq!(
         amount(&env.dealer("alice-dice").await?["bankroll"]),
-        2 * USDC
+        10 * USDC
     );
+    assert_eq!(env.dealer("alice-dice").await?["open"], true);
     env.wait_secs(2 * 3600 + 600).await?;
     env.ok(&alice, "collect_rent", json!({})).await?;
     let table = env.dealer("alice-dice").await?;
@@ -765,9 +776,18 @@ async fn unpaid_rent_evicts_and_feeds_the_jackpot() -> anyhow::Result<()> {
             json!({"dealer_id": "alice-dice", "from": null, "limit": 50}),
         )
         .await?;
-    let last = history.as_array().unwrap().last().unwrap().clone();
-    assert_eq!(last["kind"], "evicted");
-    assert_eq!(last["detail"], "unpaid_rent");
+    // The eviction empties the pool, so the table also logs that it closed (`bust`).
+    let kinds: Vec<&str> = history
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .take(2)
+        .map(|e| e["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["bust", "evicted"]);
+    let evicted = &history.as_array().unwrap()[history.as_array().unwrap().len() - 2];
+    assert_eq!(evicted["detail"], "unpaid_rent");
     Ok(())
 }
 

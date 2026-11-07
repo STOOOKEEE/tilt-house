@@ -251,6 +251,13 @@ impl House {
                 }),
             );
         } else {
+            // A seat is the floor's scarcest thing: a table whose pool can no longer take a
+            // minimum bet once the rent is prepaid would hold it (and may have evicted an open
+            // table for it) without taking a single bet. Panicking reverts the whole bid.
+            require!(
+                dealer.is_open(),
+                "after prepaying the rent the pool could not cover a minimum bet: add liquidity first"
+            );
             self.on_seated(&mut dealer, outcome.paid);
         }
         self.save_dealer(dealer);
