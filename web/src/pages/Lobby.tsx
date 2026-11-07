@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type Dispatch } from 'react'
 import type { Config } from '../config'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { Jackpot } from '../components/Jackpot'
+import { TourOffer, TourPanel, useFootfalls, type TourFloor } from '../components/Tour'
 import { formatBp, formatCountdown, formatPrice, formatPriceChange, formatUsdc } from '../format'
 import { freeBankroll, reopenNeeds } from '../house'
 import { devEvict, floorSeats, getFloorState, type FloorState, type SeatedTable } from '../near/floor'
 import { useNear } from '../near/useNear'
 import { PAGE_POLL_MS, usePoll } from '../near/usePoll'
 import type { DealerView } from '../near/views'
-import { createLobbyScene, type LobbySceneApi } from '../scene/lobby/LobbyScene'
+import { createLobbyScene, type FloorFocus, type LobbySceneApi } from '../scene/lobby/LobbyScene'
 import {
   diffGamblers,
   getLiveFloor,
@@ -19,6 +20,19 @@ import {
   type GamblerSnapshot,
   type GamblerTimeline,
 } from '../sim/gamblers'
+import {
+  currentStep,
+  markTourSeen,
+  pickChooser,
+  pickGambler,
+  pickTable,
+  TOUR_HIDDEN,
+  tourFocus,
+  tourReducer,
+  tourSeen,
+  type TourAction,
+  type TourState,
+} from '../tour'
 import { useNow } from '../useNow'
 
 /** Dev demo `?evict=<id>`: wait this long after the floor appears, then play the seat change. */
@@ -38,6 +52,26 @@ export function Lobby() {
   const seats = useMemo(() => (state ? floorSeats(state) : null), [state])
   const seatedIds = useMemo(() => seats?.map((s) => s?.dealer.id ?? null) ?? null, [seats])
   const gamblers = useGamblerFloor(config, seatedIds)
+  const [tour, dispatch] = useTour()
+  const step = currentStep(tour)
+  const gambler = useMemo(() => pickGambler(gamblers.gamblers), [gamblers.gamblers])
+  const tableSeat = useMemo(() => (seats ? pickTable(seats) : null), [seats])
+  const footfalls = useFootfalls(step && gamblers.live ? config.sessionUrl : '', seats)
+  const chooser = useMemo(() => pickChooser(gambler, footfalls), [gambler, footfalls])
+  const chooserSeat = chooser && seatedIds ? seatedIds.indexOf(chooser.dealer_id) : -1
+  const focus = step ? tourFocus(step, { chooserSeat: chooserSeat >= 0 ? chooserSeat : null, tableSeat }) : null
+  const tourFloor: TourFloor = {
+    state,
+    seats,
+    gamblers: gamblers.gamblers,
+    live: gamblers.live,
+    sessionUrl: config.sessionUrl,
+    houseContract: config.houseContract,
+    gambler,
+    chooser,
+    footfalls,
+    tableSeat,
+  }
   return (
     <>
       <h1>Lobby</h1>
@@ -47,12 +81,55 @@ export function Lobby() {
       </p>
       {polled.error ? <p className="loss">Could not load the floor: {polled.error}</p> : null}
       {state === null && !polled.error ? <p className="muted">loading tables…</p> : null}
-      {state ? <Jackpot amount={state.floor.jackpot} oddsUnit={state.floor.jackpot_odds_unit} mock={state.mock} /> : null}
-      <CasinoFloor seats={seats} rentFrom={state?.floor.outbid_min ?? null} cues={gamblers.cues} />
+      {state ? (
+        <Jackpot amount={state.floor.jackpot} oddsUnit={state.floor.jackpot_odds_unit} mock={state.mock} pulse={step === 'jackpot'} />
+      ) : null}
+      <div className="floor-stage">
+        <CasinoFloor seats={seats} rentFrom={state?.floor.outbid_min ?? null} cues={gamblers.cues} focus={focus} />
+        {tour.kind === 'offered' ? <TourOffer dispatch={dispatch} /> : null}
+        <TourPanel tour={tour} dispatch={dispatch} floor={tourFloor} />
+      </div>
       <p className="muted floor-mode">{gamblers.label}</p>
       {state && seats ? <DealerList dealers={state.dealers} seats={seats} /> : null}
     </>
   )
+}
+
+/**
+ * The guided tour: offered once on a first visit, started by `?tour=1` (the top bar's button).
+ * Starting or dismissing it is remembered, so the offer never nags.
+ */
+function useTour(): [TourState, Dispatch<TourAction>] {
+  const [tour, rawDispatch] = useReducer(tourReducer, TOUR_HIDDEN)
+  const dispatch = useCallback((action: TourAction) => {
+    if (action.type === 'start' || action.type === 'close') markTourSeen(window.localStorage)
+    rawDispatch(action)
+  }, [])
+  const [params, setParams] = useSearchParams()
+  const asked = params.get('tour') === '1'
+
+  useEffect(() => {
+    if (!tourSeen(window.localStorage)) dispatch({ type: 'offer' })
+  }, [dispatch])
+
+  useEffect(() => {
+    if (!asked) return
+    dispatch({ type: 'start' })
+    // Drop the query so the top bar's button starts the tour again on the next click.
+    setParams(
+      (current) => {
+        current.delete('tour')
+        return current
+      },
+      { replace: true },
+    )
+  }, [asked, setParams, dispatch])
+
+  // The tour plays over the jackpot and the floor: bring both into view when it starts.
+  useEffect(() => {
+    if (tour.kind === 'step') document.querySelector('.jackpot')?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }, [tour.kind])
+  return [tour, dispatch]
 }
 
 /** Dev builds only, on mock data only (see `devEvict`); production ignores the query. */
@@ -74,9 +151,11 @@ interface CasinoFloorProps {
   seats: (SeatedTable | null)[] | null
   rentFrom: string | null
   cues: GamblerCues
+  /** The tour's camera shot; null = the idle drift. */
+  focus: FloorFocus | null
 }
 
-function CasinoFloor({ seats, rentFrom, cues }: CasinoFloorProps) {
+function CasinoFloor({ seats, rentFrom, cues, focus }: CasinoFloorProps) {
   const host = useRef<HTMLDivElement>(null)
   const scene = useRef<LobbySceneApi | null>(null)
   const latest = useRef({ seats, rentFrom })
@@ -109,6 +188,11 @@ function CasinoFloor({ seats, rentFrom, cues }: CasinoFloorProps) {
   useEffect(() => {
     if (seats) scene.current?.cueGamblers(cues.list)
   }, [cues, seats])
+
+  // Only sets the camera's target: the same shot again changes nothing.
+  useEffect(() => {
+    scene.current?.focus(focus)
+  }, [focus])
 
   return <div className="casino-floor" ref={host} aria-hidden="true" />
 }
@@ -198,6 +282,9 @@ interface GamblerCues {
 interface GamblerFloor {
   cues: GamblerCues
   label: string
+  /** On the floor now, names and personas filled in (the sim keeps them apart from its frames). */
+  gamblers: GamblerSnapshot[]
+  live: boolean
 }
 
 const NO_CUES: GamblerCues = { list: [] }
@@ -281,7 +368,15 @@ function useGamblerFloor(config: Config, seatedIds: readonly (string | null)[] |
     previous.current = snapshot.gamblers
     setCues({ list: toCues(moves, snapshot.gamblers, snapshot.info, ids) })
   }, [snapshot])
-  return { cues, label }
+  const gamblers = useMemo(
+    () =>
+      snapshot?.gamblers.map((g) => {
+        const known = snapshot.info.get(g.id)
+        return { ...g, name: g.name ?? known?.name ?? null, persona: g.persona ?? known?.persona ?? null }
+      }) ?? [],
+    [snapshot],
+  )
+  return { cues, label, gamblers, live: mode === 'live' && snapshot !== null }
 }
 
 async function loadTimeline(): Promise<GamblerTimeline | null> {

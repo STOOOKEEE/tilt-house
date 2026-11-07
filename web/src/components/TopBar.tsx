@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router'
+import { Link, NavLink } from 'react-router'
 import { formatUsdc } from '../format'
 import { useNear, type GameKeyStatus } from '../near/useNear'
 import { usePlayer } from '../near/usePoll'
@@ -44,6 +44,9 @@ export function TopBar() {
           </NavLink>
         ))}
       </nav>
+      <Link className="button ghost tour-link" to="/?tour=1">
+        How the house works
+      </Link>
       <div className="account">
         {authenticated && walletId ? (
           <>

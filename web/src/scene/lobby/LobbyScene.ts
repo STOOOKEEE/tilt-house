@@ -4,7 +4,7 @@
 // walks in and sits. Hover lights a seat up, click opens its table (or the "open a table" page).
 import * as THREE from 'three'
 import { formatBp, formatUsdc } from '../../format'
-import type { SeatedTable } from '../../near/floor'
+import { SEAT_TRAFFIC_BP, type SeatedTable } from '../../near/floor'
 import type { DealerView } from '../../near/views'
 import { createCharacter, type WalkerRig } from '../characters'
 import { dealerLook } from '../looks'
@@ -38,8 +38,18 @@ export interface LobbySceneApi {
   setFloor(seats: readonly (SeatedTable | null)[], rentFrom: string): void
   /** NPC gamblers' next steps; each gambler plays its own in order. */
   cueGamblers(cues: readonly GamblerCue[]): void
+  /** The guided tour's camera; null gives the camera back to its idle drift. */
+  focus(target: FloorFocus | null): void
   dispose(): void
 }
+
+/** What the guided tour points at: the door, one seat (0-based), the seats lit by traffic, the pot. */
+export type FloorFocus =
+  | { kind: 'overview' }
+  | { kind: 'entrance' }
+  | { kind: 'seat'; seat: number }
+  | { kind: 'traffic' }
+  | { kind: 'jackpot' }
 
 export interface LobbySceneEvents {
   onTable(dealerId: string): void
@@ -68,6 +78,19 @@ const EXIT_X = 13
 const SIGN_UP_Y = 7
 const SIGN_DROP_S = 0.9
 const PROP_POP_S = 0.4
+/** How fast the camera glides to the tour's next shot (1/s, exponential). */
+const CAMERA_EASE = 2.2
+/** A seat close-up: this far in front of the table, this high. */
+const SEAT_SHOT_DIST = 6.4
+const SEAT_SHOT_Y = 2.8
+/** The tour card covers the right of the floor: the shot slides right so the table sits left of center. */
+const SEAT_SHOT_SHIFT = 1.4
+/** The entrance shot: from the front of the row, looking down the walkway toward the door (seat 1's side). */
+const ENTRANCE_SHOT = { at: new THREE.Vector3(-2.5, 3, 10), look: new THREE.Vector3(-8, 1.2, 3.4) }
+/** The jackpot shot: pulled back over the whole floor, the sign at the top, never above the wall. */
+const JACKPOT_SHOT = { at: new THREE.Vector3(0, 3.4, 13), look: new THREE.Vector3(0, 0.8, 0) }
+const TRAFFIC_MIN_BP = Math.min(...SEAT_TRAFFIC_BP)
+const TRAFFIC_SPAN_BP = Math.max(...SEAT_TRAFFIC_BP) - TRAFFIC_MIN_BP
 
 interface Occupant {
   dealer: DealerView
@@ -109,6 +132,9 @@ export function createLobbyScene(el: HTMLElement, events: LobbySceneEvents): Lob
   let firstFloor = true
   let hovered: Seat | null = null
   let disposed = false
+  let focus: FloorFocus | null = null
+  /** Where the camera is and looks, eased toward the wanted shot each frame; null before the first frame. */
+  let shot: { at: THREE.Vector3; look: THREE.Vector3 } | null = null
 
   /**
    * Plays the table's game now and then, briskly while gamblers sit there (one of them cheers or
@@ -246,19 +272,49 @@ export function createLobbyScene(el: HTMLElement, events: LobbySceneEvents): Lob
     void idleLoop(seat, occupant)
   }
 
-  const frameCamera = (elapsed: number): void => {
+  const idleShot = (elapsed: number): { at: THREE.Vector3; look: THREE.Vector3 } => {
     const halfWidth = ((SEAT_COUNT - 1) / 2) * SPACING + FRAME_MARGIN
     const tanHalfH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect
     // Narrow screens back the camera off so the whole row stays in frame.
     const distance = Math.max(CAMERA_Z, halfWidth / tanHalfH + 1)
-    camera.position.set(Math.sin(elapsed * 0.08) * 1.2, 2.6 + distance * 0.12 + Math.sin(elapsed * 0.11) * 0.25, distance)
-    camera.lookAt(LOOK_AT)
+    const at = new THREE.Vector3(Math.sin(elapsed * 0.08) * 1.2, 2.6 + distance * 0.12 + Math.sin(elapsed * 0.11) * 0.25, distance)
+    return { at, look: LOOK_AT }
+  }
+
+  const focusShot = (target: FloorFocus, elapsed: number): { at: THREE.Vector3; look: THREE.Vector3 } => {
+    if (target.kind === 'entrance') return ENTRANCE_SHOT
+    if (target.kind === 'jackpot') return JACKPOT_SHOT
+    const group = target.kind === 'seat' ? seats[target.seat]?.group : undefined
+    if (!group) return idleShot(elapsed)
+    // Straight in front of the table, whichever way the arc turns it.
+    const facing = new THREE.Vector3(Math.sin(group.rotation.y), 0, Math.cos(group.rotation.y))
+    const right = new THREE.Vector3(facing.z, 0, -facing.x)
+    const look = group.position.clone().addScaledVector(right, SEAT_SHOT_SHIFT).setY(1.1)
+    const at = look.clone().addScaledVector(facing, SEAT_SHOT_DIST).setY(SEAT_SHOT_Y)
+    return { at, look }
+  }
+
+  const frameCamera = (dt: number, elapsed: number): void => {
+    const wanted = focus ? focusShot(focus, elapsed) : idleShot(elapsed)
+    if (!shot) shot = { at: wanted.at.clone(), look: wanted.look.clone() }
+    const k = 1 - Math.exp(-dt * CAMERA_EASE)
+    shot.at.lerp(wanted.at, k)
+    shot.look.lerp(wanted.look, k)
+    camera.position.copy(shot.at)
+    camera.lookAt(shot.look)
+  }
+
+  /** How much the tour lights a seat up, 0..1: its own close-up, or its share of the passers-by. */
+  const spotlight = (seat: Seat): number => {
+    if (focus?.kind === 'seat') return focus.seat === seat.index ? 1 : 0
+    if (focus?.kind === 'traffic') return (SEAT_TRAFFIC_BP[seat.index] - TRAFFIC_MIN_BP) / TRAFFIC_SPAN_BP
+    return 0
   }
 
   const unsubscribe = mounted.onFrame((dt, elapsed) => {
     anim.update(dt)
-    frameCamera(elapsed)
-    for (const seat of seats) updateSeat(seat, seat === hovered, dt)
+    frameCamera(dt, elapsed)
+    for (const seat of seats) updateSeat(seat, Math.max(seat === hovered ? 1 : 0, spotlight(seat)), dt)
     crowd.update(dt)
   })
 
@@ -322,6 +378,9 @@ export function createLobbyScene(el: HTMLElement, events: LobbySceneEvents): Lob
     },
     cueGamblers(cues) {
       for (const cue of cues) crowd.cue(cue)
+    },
+    focus(target) {
+      focus = target
     },
     dispose() {
       disposed = true
@@ -390,11 +449,12 @@ function applyTable(seat: Seat, table: SeatedTable): void {
   })
 }
 
-function updateSeat(seat: Seat, hovered: boolean, dt: number): void {
+/** `light` 0..1: hover, or the tour's spotlight. */
+function updateSeat(seat: Seat, light: number, dt: number): void {
   const ease = Math.min(1, dt * 8)
   const occupant = seat.occupant
   const closed = occupant && !occupant.dealer.open ? 1 : 0
-  seat.hover += ((hovered ? 1 : 0) - seat.hover) * ease
+  seat.hover += (light - seat.hover) * ease
   seat.closed += (closed - seat.closed) * Math.min(1, dt * 3)
   seat.group.position.y = seat.hover * HOVER_LIFT
   seat.rug.material.opacity = 0.12 + seat.hover * 0.38

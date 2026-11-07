@@ -31,6 +31,7 @@ import type { FeltAction, TableSceneApi } from '../scene/types'
 import { useNow } from '../useNow'
 import { BetBar, canLeave, ClosedCard, ClosingCard, Drawer, SessionHud, SitCard, WalletHud } from './table/overlays'
 import { boardInfo, feltSpot, ownRoundView, stackPoint } from './table/seat'
+import { TableLegend } from './table/Legend'
 
 const DEFAULT_DICE: DiceTarget = { chance_bp: 5_000, over: false }
 
@@ -205,6 +206,7 @@ function Seat({ dealer, session, walletId, wallet, demo, offline, elsewhere }: S
       <SessionHud dealer={dealer} session={here ? session : null} demo={demo} />
       <WalletHud wallet={wallet} demo={demo} onRounds={() => setDrawer((open) => !open)} drawerOpen={drawer} />
       {drawer && here && s ? <Drawer session={session} s={s} /> : null}
+      <TableLegend game={dealer.game} />
       {center}
       {session.error ? <p className="seat-toast loss">{session.error}</p> : null}
       {session.broken ? <p className="seat-toast loss">Stopped: {session.broken}</p> : null}

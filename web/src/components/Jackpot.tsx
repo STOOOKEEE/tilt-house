@@ -6,11 +6,11 @@ const COUNT_MS = 1_500
 /** Easing resolution: the shown amount moves in 1/1000 steps of the change, all in integers. */
 const STEPS = 1_000
 
-/** The global jackpot (docs/floor.md): rent fills it, any settled bet can win all of it. */
-export function Jackpot({ amount, oddsUnit, mock }: { amount: string; oddsUnit: string; mock: boolean }) {
+/** The global jackpot (docs/floor.md): rent fills it, any settled bet can win all of it. `pulse`: the tour points at it. */
+export function Jackpot({ amount, oddsUnit, mock, pulse = false }: { amount: string; oddsUnit: string; mock: boolean; pulse?: boolean }) {
   const shown = useCountUp(BigInt(amount))
   return (
-    <div className="jackpot" aria-label={`jackpot ${formatUsdc(amount)} tUSDC`}>
+    <div className={pulse ? 'jackpot pulse' : 'jackpot'} aria-label={`jackpot ${formatUsdc(amount)} tUSDC`}>
       <span className="jackpot-label">JACKPOT</span>
       <span className="jackpot-amount" aria-hidden="true">
         {formatUsdc(shown)} <small>tUSDC</small>

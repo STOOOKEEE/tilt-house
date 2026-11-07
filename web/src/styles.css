@@ -660,3 +660,184 @@ input.number {
   opacity: 0.6;
   margin-left: 0.3rem;
 }
+
+/* ---- guided tour: a card over the lobby's 3D floor ------------------------------------------ */
+
+.floor-stage {
+  position: relative;
+}
+
+.tour-link {
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.tour-card {
+  position: absolute;
+  right: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  width: min(440px, calc(100% - 1.5rem));
+  max-height: calc(100% - 1.5rem);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 0.9rem 1.1rem;
+  font-size: 0.85rem;
+  background: rgba(12, 11, 13, 0.86);
+  border: 1px solid rgba(240, 194, 106, 0.35);
+  backdrop-filter: blur(4px);
+}
+
+.tour-offer {
+  top: 0.75rem;
+}
+
+.tour-panel {
+  bottom: 0.75rem;
+}
+
+.tour-panel h2 {
+  margin: 0;
+  color: var(--gold);
+}
+
+.tour-caption {
+  margin: 0;
+}
+
+.tour-head,
+.tour-nav,
+.tour-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tour-head {
+  justify-content: space-between;
+}
+
+.tour-count {
+  color: var(--pink);
+  letter-spacing: 0.2em;
+}
+
+.tour-close {
+  padding: 0.1rem 0.5rem;
+}
+
+.tour-actions {
+  flex-wrap: wrap;
+}
+
+.tour-nav .tour-dots {
+  display: flex;
+  gap: 0.3rem;
+  margin-right: auto;
+}
+
+.tour-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  padding: 0;
+  border-radius: 50%;
+  background: #33363b;
+}
+
+.tour-dot.on {
+  background: var(--pink);
+}
+
+.tour-data {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+}
+
+.tour-gambler {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--pink);
+}
+
+.tour-bubble {
+  margin: 0;
+  padding: 0.45rem 0.7rem;
+  color: #1a1210;
+  background: #fff6d8;
+  border-radius: 0.6rem;
+}
+
+.tour-offers {
+  font-size: 0.8rem;
+}
+
+.tour-offers tr.tour-chosen {
+  color: var(--gold);
+}
+
+.traffic-bar {
+  display: inline-block;
+  height: 0.55em;
+  margin-right: 0.4rem;
+  background: var(--gold);
+}
+
+.tour-fair {
+  padding-left: 1.2rem;
+}
+
+.tour-fair code {
+  color: var(--gold);
+}
+
+.jackpot.pulse {
+  animation: jackpot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes jackpot-pulse {
+  50% {
+    box-shadow: 0 0 28px rgba(240, 194, 106, 0.55);
+    border-color: var(--gold);
+  }
+}
+
+/* ---- table legend ------------------------------------------------------------------------ */
+
+.legend {
+  position: absolute;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.legend-card {
+  position: static;
+  width: min(340px, 80vw);
+  margin: 0;
+}
+
+.legend-card dt {
+  color: var(--gold);
+  font-weight: 700;
+}
+
+.legend-card dd {
+  margin: 0 0 0.35rem;
+}
+
+.legend-toggle {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(12, 11, 13, 0.78);
+}
