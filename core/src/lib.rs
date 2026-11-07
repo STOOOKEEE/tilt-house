@@ -24,8 +24,8 @@ pub use blackjack::{
     BjStrategy,
 };
 pub use dealer_rules::{
-    clamp_owner_offer, rent_bid, reprice, Offer, Reason, RentAction, RentDecision, RentReason,
-    RivalOffer, Stats, Temperament,
+    clamp_owner_offer, keep_running_boost, rent_bid, reprice, Offer, Reason, RentAction,
+    RentDecision, RentReason, RivalOffer, Stats, Temperament,
 };
 pub use dice::{dice_gross, dice_roll, DiceBet};
 pub use floor::{

@@ -4,8 +4,8 @@
 
 use core_rules::dealer_rules::{CAUTIOUS, GREEDY, PROMOTER};
 use core_rules::{
-    can_set_temperament, clamp_owner_offer, validate_new_table, worst_case_multiple, Game, Offer,
-    Pool, Reason, RivalOffer, Stats, Temperament, BP,
+    can_set_temperament, clamp_owner_offer, keep_running_boost, validate_new_table,
+    worst_case_multiple, Game, Offer, Pool, Reason, RivalOffer, Stats, Temperament, BP,
 };
 use near_sdk::borsh::{BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::U128;
@@ -375,7 +375,7 @@ impl House {
         let mut dealer = self.controlled_dealer(&dealer_id);
         let now = now();
         self.settle_rent(&mut dealer, now);
-        let offer = clamp_owner_offer(
+        let asked = clamp_owner_offer(
             dealer.game,
             &dealer.pool,
             rake_bp,
@@ -384,7 +384,9 @@ impl House {
             dealer.last_boost_at,
             now,
         );
-        if offer.boost_until > now {
+        let offer = keep_running_boost(asked, &dealer.offer, now);
+        // Only a boost started now spends the hour's boost; a kept one was counted when it began.
+        if offer.boost_until > now && offer.boost_until != dealer.offer.boost_until {
             dealer.last_boost_at = now;
         }
         dealer.offer = offer;

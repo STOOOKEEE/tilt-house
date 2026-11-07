@@ -534,6 +534,20 @@ pub fn clamp_owner_offer(
     clamp(game, pool, asked, now)
 }
 
+/// A `set_offer` while the owner's own boost still runs keeps that boost: the hour's boost is
+/// already spent, so dropping it would leave the owner with none (the web form sends
+/// `boost_secs = 0` whenever only the rake or max bet changes). `running` is the offer in force.
+pub fn keep_running_boost(offer: Offer, running: &Offer, now: u64) -> Offer {
+    if offer.boost_until <= now && running.reason == Reason::Owner && running.boost_until > now {
+        Offer {
+            boost_until: running.boost_until,
+            ..offer
+        }
+    } else {
+        offer
+    }
+}
+
 /// What the dealer does about its seat.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -1176,6 +1190,30 @@ mod tests {
         let later = clamp_owner_offer(Game::Dice, &p, 200, USDC, 600, NOW - 3_600, NOW);
         assert_eq!(later.boost_until, NOW + 600);
         assert_eq!(Reason::Owner.code(), "owner");
+    }
+
+    /// Regression: changing the rake or max bet mid-boost cancelled the owner's boost, and the
+    /// hourly limit then refused a new one (seen live on testnet, qa-big, 2026-11-07).
+    #[test]
+    fn owner_offer_keeps_the_running_owner_boost() {
+        let p = pool(1_000);
+        let boosted = clamp_owner_offer(Game::Dice, &p, 200, USDC, 600, 0, NOW - 60);
+        assert_eq!(boosted.boost_until, NOW + 540);
+        let edit = clamp_owner_offer(Game::Dice, &p, 300, 2 * USDC, 0, NOW - 60, NOW);
+        let kept = keep_running_boost(edit, &boosted, NOW);
+        assert_eq!((kept.rake_bp, kept.max_bet), (300, 2 * USDC));
+        assert_eq!(kept.boost_until, NOW + 540);
+        // Over: nothing to keep.
+        assert_eq!(keep_running_boost(edit, &boosted, NOW + 540), edit);
+        // An autopilot boost is not the owner's: switching to a manual offer ends it.
+        let autopilot = Offer {
+            reason: Reason::Idle,
+            ..boosted
+        };
+        assert_eq!(keep_running_boost(edit, &autopilot, NOW), edit);
+        // A new boost wins over the running one.
+        let fresh = clamp_owner_offer(Game::Dice, &p, 300, USDC, 900, NOW - 3_600, NOW);
+        assert_eq!(keep_running_boost(fresh, &boosted, NOW), fresh);
     }
 
     #[test]

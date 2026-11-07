@@ -614,6 +614,26 @@ async fn open_table_bid_and_outbid_eviction() -> anyhow::Result<()> {
     let table = env.dealer("bob-dice").await?;
     assert_eq!(table["autopilot"], false);
     assert!(table["total_edge_bp"].as_u64().unwrap() <= 500);
+    // Editing the offer mid-boost keeps the owner's boost (regression: it was cancelled, and
+    // the hourly limit then refused a new one).
+    env.ok(
+        &bob,
+        "set_offer",
+        json!({"dealer_id": "bob-dice", "rake_bp": 200, "max_bet": "1000000", "boost_secs": 600}),
+    )
+    .await?;
+    let boosted = env.dealer("bob-dice").await?;
+    assert!(boosted["boost_until"].as_u64().unwrap() > 0);
+    env.ok(
+        &bob,
+        "set_offer",
+        json!({"dealer_id": "bob-dice", "rake_bp": 300, "max_bet": "1000000", "boost_secs": 0}),
+    )
+    .await?;
+    let edited = env.dealer("bob-dice").await?;
+    assert_eq!(edited["offer_rake_bp"], 300);
+    assert_eq!(edited["boost_until"], boosted["boost_until"]);
+    assert_eq!(edited["last_boost_at"], boosted["last_boost_at"]);
     env.fails(
         &env.owner,
         "reprice",
