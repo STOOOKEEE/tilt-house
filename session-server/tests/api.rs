@@ -184,6 +184,44 @@ async fn session_start_play_close_and_verify() {
     assert_eq!(view["server_seed"], hex::encode(closed.server_seed));
 }
 
+/// The public view carries every round (so anyone can verify), but before closing never the seed,
+/// and never the token.
+#[tokio::test]
+async fn public_view_lists_rounds_without_token_or_early_seed() {
+    let dir = data_dir();
+    let router = serve(dir.path(), &key_text(), NoChain::default());
+    let s = start(&router, "dice-demo", 10 * USDC).await;
+    for nonce in 1..=3 {
+        assert_eq!(
+            round(&router, &s, dice_round(nonce, USDC)).await.0,
+            StatusCode::OK
+        );
+    }
+    let uri = format!("/sessions/{}", s.session_id);
+    let (status, open_view) = call(&router, "GET", &uri, None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(open_view["rounds"].as_array().unwrap().len(), 3);
+    assert_eq!(open_view["rounds"][2], open_view["last_round"]);
+    assert!(open_view["server_seed"].is_null(), "{open_view}");
+
+    let close = format!("/sessions/{}/close", s.session_id);
+    let (status, body) = call(&router, "POST", &close, Some(&s.token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let closed: CloseReply = serde_json::from_value(body).unwrap();
+    let seed = hex::encode(closed.server_seed);
+    let open_text = open_view.to_string();
+    assert!(!open_text.contains(&s.token));
+    assert!(!open_text.contains(&seed));
+
+    let (_, closed_view) = call(&router, "GET", &uri, None, None).await;
+    assert!(!closed_view.to_string().contains(&s.token));
+    assert_eq!(closed_view["server_seed"], seed);
+    assert_eq!(
+        serde_json::to_value(&closed.rounds).unwrap(),
+        closed_view["rounds"]
+    );
+}
+
 /// Chips on a number, a split, a corner and red: one request, one spin, one signed state.
 #[tokio::test]
 async fn multi_spot_roulette_round() {

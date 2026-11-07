@@ -131,6 +131,9 @@ pub struct SessionView {
     pub state: SignedState,
     pub hand: Option<BjSession>,
     pub last_round: Option<CompactRound>,
+    /// Every finished round, oldest first: with the on-chain commitment (seed hash, hash chain)
+    /// and the revealed seed, anyone can replay a session without its token.
+    pub rounds: Vec<CompactRound>,
     /// Revealed once closed.
     pub server_seed: Option<String>,
 }
@@ -368,6 +371,7 @@ impl<C: Chain> App<C> {
             state: Self::signed(&session),
             hand: session.hand.clone(),
             last_round: session.rounds.last().cloned(),
+            rounds: session.rounds.clone(),
             server_seed: matches!(session.phase, Phase::Closing | Phase::Closed)
                 .then(|| hex::encode(session.server_seed)),
         })
