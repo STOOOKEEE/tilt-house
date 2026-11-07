@@ -19,6 +19,12 @@ describe("keeperPass", () => {
     expect(calls.filter((c) => c.args.dealer_id === "ace").map((c) => c.method)).toEqual(["reprice", "rent_bid"]);
   });
 
+  it("reprices only tables on the floor (off the floor an NPC only bids for a seat)", async () => {
+    const calls: Call[] = [];
+    await keeperPass(deps(async (call) => void calls.push(call)));
+    expect(calls.filter((c) => c.args.dealer_id === "otto").map((c) => c.method)).toEqual(["rent_bid"]);
+  });
+
   it("keeps going after an error and logs one line per call", async () => {
     const lines: string[] = [];
     await keeperPass(

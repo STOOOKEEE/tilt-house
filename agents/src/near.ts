@@ -22,6 +22,7 @@ export interface DealerView {
   share_price_sell: string;
   npc: boolean;
   autopilot: boolean;
+  seated: boolean;
 }
 
 /** A change call signed by `signer`, to the house contract unless `receiver` says otherwise. */
@@ -94,6 +95,7 @@ function parseDealer(entry: unknown): DealerView {
     share_price_sell: field(entry, "share_price_sell", isDecimal),
     npc: field(entry, "npc", isBool),
     autopilot: field(entry, "autopilot", isBool),
+    seated: field(entry, "seated", isBool),
   };
 }
 

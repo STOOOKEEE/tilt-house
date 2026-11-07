@@ -39,15 +39,17 @@ async function attempt(deps: KeeperDeps, fields: Record<string, unknown>, run: (
 }
 
 /**
- * One keeper pass: settle the floor's rent, then let each autopilot table reprice and each NPC
- * dealer decide its rent bid. One failing call never stops the others.
+ * One keeper pass: settle the floor's rent, then let each seated autopilot table reprice and each
+ * NPC dealer decide its rent bid. Tables off the floor draw no gamblers, so repricing them only
+ * burns the keeper's gas (one tx per table per pass); they reprice once seated again. One
+ * failing call never stops the others.
  */
 export async function keeperPass(deps: KeeperDeps): Promise<void> {
   const call = (method: string, args: Record<string, unknown>) => () => deps.send({ signer: deps.keeper, method, args });
   await attempt(deps, { action: "collect_rent" }, call("collect_rent", {}));
   for (const dealer of await deps.house.lobby()) {
     const args = { dealer_id: dealer.id };
-    if (dealer.autopilot) await attempt(deps, { action: "reprice", dealer: dealer.id }, call("reprice", args));
+    if (dealer.autopilot && dealer.seated) await attempt(deps, { action: "reprice", dealer: dealer.id }, call("reprice", args));
     if (dealer.npc) await attempt(deps, { action: "rent_bid", dealer: dealer.id }, call("rent_bid", args));
   }
 }

@@ -16,6 +16,7 @@ export function dealer(over: Partial<DealerView> & Pick<DealerView, "id" | "game
     share_price_sell: "1000000",
     npc: true,
     autopilot: true,
+    seated: true,
     ...over,
   };
 }
@@ -27,6 +28,7 @@ export const LOBBY: DealerView[] = [
   dealer({ id: "dex", game: "dice", total_edge_bp: 180, npc: false, autopilot: false }),
   dealer({ id: "rita", game: "roulette", max_bet: "20000000" }),
   dealer({ id: "rex", game: "roulette", max_bet: "90000000" }),
+  dealer({ id: "otto", game: "dice", seated: false }),
 ];
 
 export function fakeHouse(lobby: DealerView[], balances: Record<string, bigint> = {}, wallets: Record<string, bigint> = {}): House {
