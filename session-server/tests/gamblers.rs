@@ -125,6 +125,21 @@ async fn an_evening_hour_of_gamblers() {
     let count = |kind: &str| log.matches(&format!(r#""kind":"{kind}""#)).count();
     assert!(count("created") > 0);
     assert!(count("round") > count("created"));
+    // Every session plays: a gambler never opens one its first bet cannot fit (an empty
+    // session still costs an open and a close on chain).
+    let events: Vec<Value> = log
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    for created in events.iter().filter(|e| e["kind"] == "created") {
+        let id = &created["ticket"]["session_id"];
+        assert!(
+            events
+                .iter()
+                .any(|e| (e["kind"] == "round" || e["kind"] == "hand") && &e["session_id"] == id),
+            "session {id} closed without a round: {created}"
+        );
+    }
     // Closed on the player's side; the chain reveal runs in the background tick, not run here.
     assert!(count("closing") > 0);
     // Loyalty is remembered on disk.

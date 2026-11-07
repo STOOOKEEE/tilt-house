@@ -25,7 +25,7 @@ use core_rules::{Bet, BjMove, BjStrategy, DiceBet, Game, Rng, RouletteBet};
 use serde::{Deserialize, Serialize};
 use tokio::time::{sleep, Instant};
 
-use crate::app::{now, ApiError, App, CreateReply, CreateRequest};
+use crate::app::{now, ticket_max_bet, ApiError, App, CreateReply, CreateRequest};
 use crate::chain::{Chain, FloorInfo, FloorTable};
 use crate::keys::{random_bytes, Signer};
 use crate::session::RoundRequest;
@@ -445,7 +445,7 @@ impl<C: Chain> Gamblers<C> {
         let Some(table) = chosen else {
             return Ok(());
         };
-        let Some(plan) = plan_session(member.persona, stake, table.max_bet, balance, rng) else {
+        let Some(plan) = plan_at(member.persona, stake, table.max_bet, balance, rng) else {
             self.say(
                 index,
                 GamblerReason::NothingWorthIt.code(),
@@ -512,13 +512,15 @@ impl<C: Chain> Gamblers<C> {
         self.update(index, |s| s.balance = balance.saturating_sub(plan.lock));
         let strategy =
             (table.game == Game::Blackjack).then(|| BjStrategy::optimal(session.ticket.rake_bp));
+        // The table may have repriced since the floor read: never bet above the ticket.
+        let stake = plan.stake.min(session.ticket.max_bet);
         let mut net: i128 = 0;
         for nonce in 1..=u64::from(plan.rounds) {
             sleep(Duration::from_secs(ROUND_SECS)).await;
             let bet = pick_bet(member.persona, table.game, rng);
             // The server refuses what the session's limits cannot take; any refusal ends it.
             let Ok(session_balance) = self
-                .round(&session, nonce, bet, plan.stake, strategy.as_ref())
+                .round(&session, nonce, bet, stake, strategy.as_ref())
                 .await
             else {
                 break;
@@ -601,6 +603,19 @@ impl<C: Chain> Gamblers<C> {
     }
 }
 
+/// The session to play at a table whose max bet is `table_max_bet`, planned on the max bet the
+/// ticket will carry (`ticket_max_bet`): a stake above it is refused at the first round, which
+/// would leave an empty session that still cost an open and a close on chain.
+fn plan_at(
+    persona: Persona,
+    stake: u128,
+    table_max_bet: u128,
+    balance: u128,
+    rng: &mut Rng,
+) -> Option<SessionPlan> {
+    plan_session(persona, stake, ticket_max_bet(table_max_bet), balance, rng)
+}
+
 /// The low-variance bet of the same game, tried when the session's max win refuses a long shot.
 fn modest_bet(bet: &Bet) -> Bet {
     match bet {
@@ -672,5 +687,35 @@ mod tests {
             key
         );
         assert!(load_key(dir.path(), "g-noah.tilthouse.testnet").is_err());
+    }
+
+    /// Regression: gamblers planned on the table's max bet while tickets carry 80 % of it, so
+    /// at a table priced near its max (Bruno at 0.82 USDC on testnet) the first bet was refused
+    /// and ~70 % of the sessions closed empty.
+    #[test]
+    fn plans_fit_the_ticket_max_bet() {
+        let table_max_bet = 824_321;
+        for persona in [
+            Persona::BargainHunter,
+            Persona::Regular,
+            Persona::Whale,
+            Persona::ThrillSeeker,
+            Persona::Tourist,
+        ] {
+            let mut rng = Rng::new([1; 32]);
+            let plan = plan_at(persona, 2_000_000, table_max_bet, 200_000_000, &mut rng).unwrap();
+            assert!(plan.stake <= ticket_max_bet(table_max_bet), "{persona:?}");
+            assert!(plan.stake >= SESSION_MIN_BET && plan.lock >= plan.stake);
+        }
+        // A table at the minimum bet stays playable.
+        let mut rng = Rng::new([1; 32]);
+        let plan = plan_at(
+            Persona::Regular,
+            2_000_000,
+            SESSION_MIN_BET,
+            200_000_000,
+            &mut rng,
+        );
+        assert_eq!(plan.unwrap().stake, SESSION_MIN_BET);
     }
 }

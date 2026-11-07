@@ -38,6 +38,13 @@ pub fn now() -> u64 {
         .unwrap_or(0)
 }
 
+/// The max bet a ticket carries at a table whose max bet is `dealer_max_bet` now. The table's
+/// max bet shrinks as sessions reserve its pool, so tickets keep the same headroom as `max_win`,
+/// but never go under the minimum bet: a table priced at the minimum would close.
+pub fn ticket_max_bet(dealer_max_bet: u128) -> u128 {
+    (dealer_max_bet * POOL_FREE_HEADROOM_PCT / 100).max(SESSION_MIN_BET.min(dealer_max_bet))
+}
+
 #[derive(Debug)]
 pub struct ApiError {
     pub status: StatusCode,
@@ -257,10 +264,7 @@ impl<C: Chain> App<C> {
         // contract refuses it.
         let pool_free = dealer.pool_free * POOL_FREE_HEADROOM_PCT / 100;
         let max_win = session_max_win(request.lock, pool_free);
-        // The table's max bet also shrinks as the pool reserves: same headroom.
-        // ... but never under the minimum bet: a table priced at the minimum would close.
-        let max_bet = (dealer.max_bet * POOL_FREE_HEADROOM_PCT / 100)
-            .max(SESSION_MIN_BET.min(dealer.max_bet));
+        let max_bet = ticket_max_bet(dealer.max_bet);
         if !dealer.open || max_bet < SESSION_MIN_BET || max_win == 0 {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
