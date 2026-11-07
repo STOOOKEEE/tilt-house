@@ -519,6 +519,14 @@ fn explain(
             (GamblerReason::Cheapest, text)
         }
         Some(Part::Boost) => (GamblerReason::Boosting, format!("{name} is boosting")),
+        // Every table may cap the stake: then say what this one really takes.
+        Some(Part::Fit) if best.max_bet < stake => (
+            GamblerReason::FitsMyBets,
+            format!(
+                "{name} takes the biggest bets, up to {}",
+                usdc(best.max_bet)
+            ),
+        ),
         Some(Part::Fit) => (
             GamblerReason::FitsMyBets,
             format!("{name} takes my {} bets", usdc(stake)),
@@ -737,6 +745,23 @@ mod tests {
         );
         assert_eq!((d.table, d.reason), (Some(1), GamblerReason::FitsMyBets));
         assert_eq!(d.text, "Big takes my 20.0 bets");
+
+        // Regression: when every table caps the stake, the reason named the stake the gambler
+        // wanted, not what the table takes ("Bruno takes my 2.4 bets" at a 0.8 max bet).
+        let mut capped = table("Big", 4, 300);
+        capped.max_bet = 15 * USDC;
+        let tables = [small, capped];
+        let d = choose_table(
+            Persona::Whale,
+            200 * USDC,
+            20 * USDC,
+            &tables,
+            &Memory::default(),
+            0,
+            &mut rng(5),
+        );
+        assert_eq!((d.table, d.reason), (Some(1), GamblerReason::FitsMyBets));
+        assert_eq!(d.text, "Big takes the biggest bets, up to 15.0");
     }
 
     #[test]
