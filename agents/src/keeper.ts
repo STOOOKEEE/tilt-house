@@ -62,7 +62,9 @@ export function salaryFor(balance: bigint): bigint {
 /**
  * Pays each NPC gambler its hourly salary (docs/tycoon.md), the economy's only outside money.
  * The house only credits the sender of a deposit, so the keeper sends tUSDC to the gambler's
- * wallet and the gambler deposits it with its own key.
+ * wallet and the gambler deposits it with its own key. A deposit that failed before (the
+ * gambler's key was refused) left tUSDC in the wallet: it is deposited first, so a broken
+ * gambler never piles up a salary per hour.
  */
 export async function salaryPass(deps: KeeperDeps): Promise<void> {
   for (const name of GAMBLERS) {
@@ -71,8 +73,11 @@ export async function salaryPass(deps: KeeperDeps): Promise<void> {
       const amount = salaryFor(await deps.house.balance(gambler));
       if (amount === 0n) return { skipped: "at the cap" };
       const token = { receiver: deps.token };
-      await deps.send({ ...token, signer: deps.keeper, method: "storage_deposit", args: { account_id: gambler, registration_only: true }, deposit: STORAGE_DEPOSIT });
-      await deps.send({ ...token, signer: deps.keeper, method: "ft_transfer", args: { receiver_id: gambler, amount: amount.toString() }, deposit: ONE_YOCTO });
+      const inWallet = await deps.house.wallet(gambler);
+      if (inWallet < amount) {
+        await deps.send({ ...token, signer: deps.keeper, method: "storage_deposit", args: { account_id: gambler, registration_only: true }, deposit: STORAGE_DEPOSIT });
+        await deps.send({ ...token, signer: deps.keeper, method: "ft_transfer", args: { receiver_id: gambler, amount: (amount - inWallet).toString() }, deposit: ONE_YOCTO });
+      }
       await deps.send({ ...token, signer: gambler, method: "ft_transfer_call", args: { receiver_id: deps.houseId, amount: amount.toString(), msg: "" }, deposit: ONE_YOCTO });
       return { paid: amount.toString() };
     });
@@ -83,7 +88,7 @@ async function main(): Promise<void> {
   const config = loadConfig(process.env, process.argv);
   const provider = new JsonRpcProvider({ url: config.rpcUrl });
   const deps: KeeperDeps = {
-    house: houseViews(provider, config.house),
+    house: houseViews(provider, config.house, config.token),
     send: sendFor(config.dryRun, provider, config.house, config.keysDir),
     houseId: config.house,
     token: config.token,

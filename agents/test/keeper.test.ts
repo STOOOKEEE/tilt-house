@@ -5,8 +5,8 @@ import { fakeHouse, LOBBY } from "./fixtures.ts";
 
 const KEEPER = "tilthouse.testnet";
 
-function deps(send: Send, log: (line: string) => void = () => {}, balances: Record<string, bigint> = {}): KeeperDeps {
-  return { house: fakeHouse(LOBBY, balances), send, houseId: "floor.tilthouse.testnet", token: "tusdc.tilthouse.testnet", keeper: KEEPER, accountSuffix: "tilthouse.testnet", log };
+function deps(send: Send, log: (line: string) => void = () => {}, balances: Record<string, bigint> = {}, wallets: Record<string, bigint> = {}): KeeperDeps {
+  return { house: fakeHouse(LOBBY, balances, wallets), send, houseId: "floor.tilthouse.testnet", token: "tusdc.tilthouse.testnet", keeper: KEEPER, accountSuffix: "tilthouse.testnet", log };
 }
 
 describe("keeperPass", () => {
@@ -57,5 +57,21 @@ describe("salary", () => {
     ]);
     expect(noah[1]).toMatchObject({ receiver: "tusdc.tilthouse.testnet", deposit: 1n, args: { receiver_id: "floor.tilthouse.testnet", msg: "" } });
     expect(calls.filter((c) => c.method === "ft_transfer_call")).toHaveLength(GAMBLERS.length - 1);
+  });
+
+  // Regression: g-ines' key was refused every hour, so each pass sent it another salary that it
+  // could never deposit (270 tUSDC piled up in its wallet on testnet).
+  it("deposits what an earlier failed deposit left in the wallet before sending more", async () => {
+    const calls: Call[] = [];
+    const wallets = { "g-mia.tilthouse.testnet": 7_000_000n, "g-noah.tilthouse.testnet": 2_000_000n };
+    await salaryPass(deps(async (call) => void calls.push(call), () => {}, {}, wallets));
+    const about = (gambler: string) =>
+      calls.filter((c) => c.signer === gambler || c.args.receiver_id === gambler || c.args.account_id === gambler).map((c) => [c.method, c.args.amount]);
+    expect(about("g-mia.tilthouse.testnet")).toEqual([["ft_transfer_call", "5000000"]]);
+    expect(about("g-noah.tilthouse.testnet")).toEqual([
+      ["storage_deposit", undefined],
+      ["ft_transfer", "3000000"],
+      ["ft_transfer_call", "5000000"],
+    ]);
   });
 });

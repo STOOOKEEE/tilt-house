@@ -42,6 +42,8 @@ export interface House {
   lobby(): Promise<DealerView[]>;
   /** A player's in-contract balance (0 for an unknown player). */
   balance(accountId: string): Promise<bigint>;
+  /** tUSDC held in the account's own wallet (on the token, not in the house). */
+  wallet(accountId: string): Promise<bigint>;
 }
 
 /** `collect_rent` settles every seat and `ft_transfer_call` runs the house's receiver: both need room. */
@@ -106,15 +108,20 @@ export function parseBalance(value: unknown): bigint {
   return BigInt(value.balance);
 }
 
-export function houseViews(provider: JsonRpcProvider, house: string): House {
-  const view = (method: string, args: Record<string, unknown>) =>
-    provider.callFunction({ contractId: house, method, args });
+export function houseViews(provider: JsonRpcProvider, house: string, token: string): House {
+  const view = (method: string, args: Record<string, unknown>, contractId = house) =>
+    provider.callFunction({ contractId, method, args });
   return {
     async lobby() {
       return parseLobby(await view("get_lobby", {}));
     },
     async balance(accountId) {
       return parseBalance(await view("get_player", { account_id: accountId }));
+    },
+    async wallet(accountId) {
+      const balance = await view("ft_balance_of", { account_id: accountId }, token);
+      if (!isDecimal(balance)) throw new Error("ft_balance_of: invalid balance");
+      return BigInt(balance);
     },
   };
 }

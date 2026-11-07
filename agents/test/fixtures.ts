@@ -29,9 +29,10 @@ export const LOBBY: DealerView[] = [
   dealer({ id: "rex", game: "roulette", max_bet: "90000000" }),
 ];
 
-export function fakeHouse(lobby: DealerView[], balances: Record<string, bigint> = {}): House {
+export function fakeHouse(lobby: DealerView[], balances: Record<string, bigint> = {}, wallets: Record<string, bigint> = {}): House {
   return {
     lobby: async () => lobby,
     balance: async (accountId) => balances[accountId] ?? 0n,
+    wallet: async (accountId) => wallets[accountId] ?? 0n,
   };
 }
