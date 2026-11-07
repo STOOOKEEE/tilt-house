@@ -108,32 +108,22 @@ and the reason for its last reprice, e.g.
 Run it again later: the keeper reprices every 60 s, so max bets move as the bots play, and edges and reasons change when a dealer's situation does (idle table, streak, low bankroll…).
 The full shape of `get_lobby`, `get_round`, `get_history` and `get_player` is in `docs/contract-api.md`.
 
-### c. Play a real round from the terminal (CLI demo)
+### c. Play and verify from the terminal (CLI demo, no keys, no login)
 
 ```sh
 pnpm install
-pnpm --filter @tilt-house/cli-demo demo --house house.tilthouse.testnet --token tusdc.tilthouse.testnet --relayer $TILT_HOUSE_RELAYER
+pnpm --filter cli-demo demo                      # ~45 s end to end
+pnpm --filter cli-demo verify-session --player g-mia.tilthouse.testnet   # an NPC gambler's last session
+pnpm --filter cli-demo floor                     # seats, rent, jackpot, tables, gamblers and their reasons
 ```
 
-Add `--dry-run` to print the plan without sending anything (no keys needed). Add `--relayed` to send
-the game key and the dice bet as NEP-366 meta-transactions through the relayer.
-
-The demo creates a throwaway `tilt-demo-….testnet` account through the NEAR faucet helper
-(`helper.nearprotocol.com`, the service behind `near account create-account sponsor-by-faucet-service`).
-The helper is rate-limited; if it refuses, set `FUNDER_ACCOUNT` and `FUNDER_KEY` (a testnet account
-and its `ed25519:…` private key) and the demo account is created as a sub-account of the funder
-with 0.5 NEAR. The throwaway key is stored in `~/.tilt-house/demo-key.json`.
-
-See the 7 steps:
-
-1. account created (explorer link);
-2. 100 tUSDC minted by the relayer faucet;
-3. 20 tUSDC deposited into the house (`ft_transfer_call`);
-4. the lobby (dealers, edges, open/closed);
-5. one dice round on the open dice dealer with the lowest edge: roll, payout, the VRF alpha,
-   signature and output, and `local verification with OutLayer key …: VALID`;
-6. 5 tUSDC invested into that dealer (LP shares received), then half the shares divested;
-7. explorer links for the account and every transaction.
+See: a throwaway implicit account activated gas-free by the public relayer (100 tUSDC), a 20 tUSDC deposit
+into `floor.tilthouse.testnet`, the live floor, then sessions at the cheapest seated tables (12 dice rounds,
+7 multi-spot roulette spins, a blackjack hand) with the latency of every round (tens of ms) and the signed
+state checked each time; after close, every round is replayed from the revealed seed against the commitment
+stored on chain (`get_session`), cross-checked with the `settle_session` tx args, with explorer links for the
+open, settle and close txs, ending in `VERIFIED`. `verify-session <id>` runs that check alone on any session.
+Details and options: `cli-demo/README.md`.
 
 ### d. Read the dealer rules
 

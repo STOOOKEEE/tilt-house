@@ -25,6 +25,7 @@ import {
   str,
   type Bet,
   type BlackjackHand,
+  type DealerView,
   type Game,
   type RouletteBet,
   type RouletteSpot,
@@ -536,6 +537,19 @@ function verifySignature(publicKey: string, message: Uint8Array, signatureHex: s
 
 export function verifyTicket(publicKey: string, ticket: SessionTicket, signatureHex: string): boolean {
   return verifySignature(publicKey, ticketMessage(ticket), signatureHex)
+}
+
+/** Why the server's ticket must not be signed, or null. Protects the player before any money moves. */
+export function ticketProblem(
+  ticket: SessionTicket,
+  expected: { player: string; dealer: Pick<DealerView, 'id' | 'game' | 'rake_bp'>; lock: bigint; clientSeed: string },
+): string | null {
+  if (ticket.player !== expected.player) return 'ticket for another player'
+  if (ticket.dealer_id !== expected.dealer.id || ticket.game !== expected.dealer.game) return 'ticket for another table'
+  if (ticket.lock !== expected.lock.toString()) return 'ticket locks another amount'
+  if (ticket.client_seed !== expected.clientSeed) return 'ticket ignores your client seed'
+  if (ticket.rake_bp > expected.dealer.rake_bp) return `ticket rake ${ticket.rake_bp} bp is above the table's ${expected.dealer.rake_bp} bp`
+  return null
 }
 
 // ---- live checks: one signed state after another ------------------------------------------

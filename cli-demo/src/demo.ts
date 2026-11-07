@@ -1,449 +1,381 @@
-import { randomBytes } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+/**
+ * The judge's tour, end to end on testnet: a throwaway account, a deposit, the live floor, three
+ * provably fair sessions (dice, multi-spot roulette, blackjack) through the public session server,
+ * then every round re-verified from on-chain data.
+ */
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { Account, JsonRpcProvider, KeyPair, KeyPairSigner, nearToYocto, PublicKey, type KeyPairString } from "near-api-js";
+import { handTotal } from "../../web/src/house";
+import { callAction, MOVE_GAS } from "../../web/src/near/delegate";
+import { activate, claimFaucet, relay } from "../../web/src/near/relay";
 import {
-  Account,
-  actions,
-  getTransactionLastResult,
-  JsonRpcProvider,
-  KeyPair,
-  KeyPairSigner,
-  nearToYocto,
-  teraToGas,
-  type KeyPairString,
-} from "near-api-js";
-import { parseOptions, USAGE, type Options } from "./args.ts";
-import { GAME_KEY_ALLOWANCE, GAME_METHODS, relayActions } from "./relay.ts";
-import { verifyVrfProof, type VrfProof } from "./vrf.ts";
+  checkNextState,
+  NOT_OPEN_YET,
+  randomClientSeed,
+  SessionError,
+  sessionClient,
+  ticketProblem,
+  verifySession,
+  verifyTicket,
+  type BjAction,
+  type CompactRound,
+  type RoundReply,
+  type SignedState,
+} from "../../web/src/near/session-client";
+import { amount, parsePlayer, record, str, type Bet, type DealerView, type Game } from "../../web/src/near/views";
+import type { Command, Funder, Targets } from "./args.ts";
+import { getChainSession, view } from "./chain.ts";
+import { printFloor, readFloor } from "./floor.ts";
+import { describeRound, handText } from "./rounds.ts";
+import { accountLink, BAD, color, errorMessage, heading, line, OK, txLink, usdc } from "./ui.ts";
+import { verifySessionById } from "./verify-session.ts";
 
-/** Sponsors a new named `.testnet` account (what `near account create-account sponsor-by-faucet-service` calls). */
-const FAUCET_HELPER = "https://helper.nearprotocol.com/account";
-const EXPLORER = "https://testnet.nearblocks.io";
-const KEY_FILE = join(homedir(), ".tilt-house", "demo-key.json");
+type DemoCommand = Extract<Command, { name: "demo" }>;
 
+const ACCOUNT_FILE = join(homedir(), ".tilt-house", "cli-demo-account.json");
 const TUSDC = 1_000_000n;
+/** Locked per session; the three sessions run one after the other. */
+const LOCK = 5n * TUSDC;
 const DEPOSIT = 20n * TUSDC;
-const STAKE = TUSDC / 10n;
-const INVEST = 5n * TUSDC;
-const CHANCE_BP = 4900;
-const OVER = false;
-/** NEAR the funder gives the sub-account: enough gas for every demo transaction. */
-const FUNDER_GIFT = nearToYocto("0.5");
+const DICE_STAKE = TUSDC / 10n;
+const BJ_STAKE = TUSDC / 5n;
 const ONE_YOCTO = 1n;
-const CALL_GAS = teraToGas(100);
-/** The house asks for ≥ 150 TGas on bets (OutLayer request + callback). */
-const BET_GAS = teraToGas(200);
-const POLL_MS = 2_000;
-const BET_POLL_MS = 400;
-const BET_VISIBLE_TIMEOUT_MS = 30_000;
-const SETTLE_TIMEOUT_MS = 60_000;
-const ACCOUNT_READY_TIMEOUT_MS = 30_000;
+/** What the funder gives the account: gas for every demo tx, sent directly. */
+const FUNDER_NEAR = nearToYocto("1");
+/** `storage_deposit` on the token, NEP-145 minimum for an FT account. */
+const TOKEN_STORAGE = nearToYocto("0.00125");
+// The relayer refuses delegates valid for more than 600 blocks; ~2 minutes is plenty.
+const DELEGATE_TTL_BLOCKS = 120;
+const KEY_VISIBLE_TRIES = 10;
+const OPEN_RETRIES = 30;
+const POLL_MS = 1_500;
+const CHAIN_CLOSE_TIMEOUT_MS = 120_000;
+/** NearBlocks indexes a few seconds behind the chain; the verifier reads the tx list from it. */
+const INDEXER_LAG_MS = 8_000;
 
-const STEPS = [
-  "creating a throwaway testnet account",
-  "getting test tUSDC from the relayer faucet",
-  `depositing ${tusdc(DEPOSIT)} tUSDC into the house`,
-  "reading the lobby",
-  `playing one dice round (chance ${CHANCE_BP / 100}%, ${OVER ? "over" : "under"}, stake ${tusdc(STAKE)} tUSDC)`,
-  `investing ${tusdc(INVEST)} tUSDC into that dealer, then divesting half the shares`,
-  "summarising explorer links",
+const DICE_BETS: readonly { chance_bp: number; over: boolean }[] = [
+  { chance_bp: 4_900, over: false },
+  { chance_bp: 2_500, over: true },
+  { chance_bp: 7_500, over: false },
+  { chance_bp: 9_000, over: true },
 ];
+const DICE_ROUNDS = 12;
+/** One spin per number: a straight up, a split, a corner and red, settled by one draw. */
+const ROULETTE_NUMBERS = [17, 0, 32, 5, 23, 11, 36];
 
-interface Tx {
-  label: string;
-  hash: string;
-}
-
-interface Dealer {
-  id: string;
-  game: string;
-  totalEdgeBp: number;
-  minBet: bigint;
-  maxBet: bigint;
-  open: boolean;
-  reasonText: string;
-  sharePriceBuy: bigint;
-}
-
-interface Round {
-  status: string;
-  roll: number | null;
-  payout: string | null;
-  error: string | null;
-  proofs: (VrfProof & { step: number })[];
-}
-
-function step(n: number): void {
-  console.log(`\nStep ${n}: ${STEPS[n - 1]}`);
-}
-
-function see(what: string): void {
-  console.log(`See: ${what}`);
-}
-
-function tusdc(amount: bigint): string {
-  const whole = amount / TUSDC;
-  const frac = (amount % TUSDC).toString().padStart(6, "0").replace(/0+$/, "");
-  return frac ? `${whole}.${frac}` : `${whole}`;
-}
-
-const txLink = (hash: string) => `${EXPLORER}/txns/${hash}`;
-const accountLink = (id: string) => `${EXPLORER}/address/${id}`;
-const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function str(record: Record<string, unknown>, key: string): string {
-  const value = record[key];
-  if (typeof value !== "string") throw new Error(`unexpected contract response: ${key} is not a string`);
-  return value;
-}
-
-function num(record: Record<string, unknown>, key: string): number {
-  const value = record[key];
-  if (!Number.isSafeInteger(value)) throw new Error(`unexpected contract response: ${key} is not an integer`);
-  return value as number;
-}
-
-function amount(value: unknown, what: string): bigint {
-  if (typeof value !== "string" || !/^\d+$/.test(value)) throw new Error(`unexpected ${what}: ${String(value)}`);
-  return BigInt(value);
-}
-
-function parseDealer(entry: unknown): Dealer {
-  if (!isRecord(entry)) throw new Error("get_lobby: entry is not an object");
-  return {
-    id: str(entry, "id"),
-    game: str(entry, "game"),
-    totalEdgeBp: num(entry, "total_edge_bp"),
-    minBet: amount(entry.min_bet, "min_bet"),
-    maxBet: amount(entry.max_bet, "max_bet"),
-    open: entry.open === true,
-    reasonText: str(entry, "reason_text"),
-    sharePriceBuy: amount(entry.share_price_buy, "share_price_buy"),
-  };
-}
-
-function parseProof(entry: unknown): VrfProof & { step: number } {
-  if (!isRecord(entry)) throw new Error("get_round: proof is not an object");
-  return {
-    step: num(entry, "step"),
-    alpha: str(entry, "alpha"),
-    signature_hex: str(entry, "signature_hex"),
-    output_hex: str(entry, "output_hex"),
-  };
-}
-
-function parseRound(value: unknown): Round {
-  if (!isRecord(value)) throw new Error("get_round: round not found");
-  const proofs = value.proofs;
-  return {
-    status: str(value, "status"),
-    roll: typeof value.roll === "number" ? value.roll : null,
-    payout: typeof value.payout === "string" ? value.payout : null,
-    error: typeof value.error === "string" ? value.error : null,
-    proofs: Array.isArray(proofs) ? proofs.map(parseProof) : [],
-  };
-}
-
-/** Lowest edge first; the stake must fit the table's bet range. */
-export function pickDiceDealer(lobby: readonly Dealer[], stake: bigint): Dealer | undefined {
-  return lobby
-    .filter((d) => d.game === "dice" && d.open && d.minBet <= stake && stake <= d.maxBet)
-    .sort((a, b) => a.totalEdgeBp - b.totalEdgeBp || a.id.localeCompare(b.id))[0];
-}
-
-function printLobby(lobby: readonly Dealer[]): void {
-  const rows = [
-    ["dealer", "game", "edge %", "max bet", "open", "reason"],
-    ...lobby.map((d) => [
-      d.id,
-      d.game,
-      (d.totalEdgeBp / 100).toFixed(2),
-      tusdc(d.maxBet),
-      d.open ? "yes" : "no",
-      d.reasonText,
-    ]),
+function rouletteSpin(straight: number): { bet: Bet; stake: bigint } {
+  const spots = [
+    { bet: { straight }, stake: 100_000n },
+    { bet: { split: [7, 10] as [number, number] }, stake: 100_000n },
+    { bet: { corner: 8 }, stake: 100_000n },
+    { bet: "red" as const, stake: 200_000n },
   ];
-  const widths = rows[0]!.map((_, i) => Math.max(...rows.map((r) => r[i]!.length)));
-  for (const row of rows) console.log("  " + row.map((cell, i) => cell.padEnd(widths[i]!)).join("  ").trimEnd());
+  return {
+    bet: { roulette_spots: spots.map((s) => ({ bet: s.bet, stake: s.stake.toString() })) },
+    stake: spots.reduce((sum, s) => sum + s.stake, 0n),
+  };
 }
 
-function newAccountId(options: Options): string {
-  const tag = `tilt-demo-${Date.now().toString(36)}${randomBytes(3).toString("hex")}`;
-  return options.funder ? `${tag}.${options.funder.accountId}` : `${tag}.testnet`;
+const ROULETTE_STAKE = rouletteSpin(0).stake;
+
+type Send = (receiverId: string, method: string, args: object, deposit: bigint) => Promise<string>;
+
+interface Player {
+  accountId: string;
+  account: Account;
+  send: Send;
+}
+
+interface Played {
+  sessionId: string;
+  game: Game;
+  openTx: string;
+  latencies: number[];
+}
+
+// ---- account ------------------------------------------------------------------------------
+
+async function loadKey(): Promise<{ accountId: string; key: KeyPair } | null> {
+  let text: string;
+  try {
+    text = await readFile(ACCOUNT_FILE, "utf8");
+  } catch {
+    return null;
+  }
+  const file = record(JSON.parse(text) as unknown, ACCOUNT_FILE);
+  return {
+    accountId: str(file.account_id, "account_id"),
+    key: KeyPair.fromString(str(file.private_key, "private_key") as KeyPairString),
+  };
 }
 
 async function saveKey(accountId: string, key: KeyPair): Promise<void> {
-  await mkdir(join(homedir(), ".tilt-house"), { recursive: true, mode: 0o700 });
+  await mkdir(dirname(ACCOUNT_FILE), { recursive: true, mode: 0o700 });
   const file = { account_id: accountId, public_key: key.getPublicKey().toString(), private_key: key.toString() };
-  await writeFile(KEY_FILE, JSON.stringify(file, null, 2) + "\n", { mode: 0o600 });
+  await writeFile(ACCOUNT_FILE, JSON.stringify(file, null, 2) + "\n", { mode: 0o600 });
 }
 
-async function waitForAccount(provider: JsonRpcProvider, accountId: string): Promise<void> {
-  const deadline = Date.now() + ACCOUNT_READY_TIMEOUT_MS;
-  for (;;) {
+/** A just-created account's key reaches `final` a block or two after the funding tx. */
+async function whenKeyVisible<T>(sign: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
     try {
-      await provider.viewAccount({ accountId });
-      return;
+      return await sign();
     } catch (error) {
-      if (Date.now() > deadline) throw new Error(`account ${accountId} not visible after 30 s: ${errorMessage(error)}`);
+      const missing = /access key .* does not exist|does not exist while viewing/i.test(errorMessage(error));
+      if (!missing || attempt >= KEY_VISIBLE_TRIES) throw error;
       await sleep(POLL_MS);
     }
   }
 }
 
-/** Step 1. Returns the transaction hash when the funder created it (the faucet helper returns none). */
-async function createAccount(options: Options, provider: JsonRpcProvider, accountId: string, key: KeyPair) {
-  const publicKey = key.getPublicKey();
-  if (options.funder) {
-    const signer = new KeyPairSigner(KeyPair.fromString(options.funder.key as KeyPairString));
-    const funder = new Account(options.funder.accountId, provider, signer);
-    const outcome = await funder.createAccount({ newAccountId: accountId, publicKey, nearToTransfer: FUNDER_GIFT });
-    return outcome.transaction.hash;
-  }
-  const response = await fetch(FAUCET_HELPER, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ newAccountId: accountId, newAccountPublicKey: publicKey.toString() }),
-  });
-  if (!response.ok) throw new Error(`faucet helper answered ${response.status}: ${await response.text()}`);
-  await waitForAccount(provider, accountId);
-  return undefined;
-}
-
-async function relayerFaucet(relayer: string, accountId: string): Promise<bigint> {
-  const response = await fetch(`${relayer}/faucet`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ accountId }),
-  });
-  const body: unknown = await response.json().catch(() => null);
-  if (!response.ok || !isRecord(body)) {
-    const code = isRecord(body) && typeof body.error === "string" ? body.error : `HTTP ${response.status}`;
-    throw new Error(`relayer faucet refused: ${code}`);
-  }
-  return amount(body.minted, "minted amount");
-}
-
-function printPlan(options: Options): void {
-  const accountId = newAccountId(options);
-  console.log("Dry run: nothing is sent. Plan:");
-  step(1);
-  see(
-    options.funder
-      ? `${options.funder.accountId} would create ${accountId} with ${FUNDER_GIFT} yoctoNEAR`
-      : `POST ${FAUCET_HELPER} {"newAccountId":"${accountId}","newAccountPublicKey":"ed25519:…"}`,
-  );
-  see(`the new key would be stored in ${KEY_FILE}`);
-  step(2);
-  see(options.relayer ? `POST ${options.relayer}/faucet {"accountId":"${accountId}"}` : "skipped: no RELAYER_URL");
-  step(3);
-  const deposit = { receiver_id: options.house, amount: DEPOSIT.toString(), msg: "" };
-  see(`${options.token}.ft_transfer_call(${JSON.stringify(deposit)}), 1 yocto`);
-  step(4);
-  see(`${options.house}.get_lobby()`);
-  step(5);
-  const bet = { dealer_id: "<lowest-edge open dice dealer>", stake: STAKE.toString(), chance_bp: CHANCE_BP, over: OVER };
-  see(`${options.house}.bet_dice(${JSON.stringify(bet)}), then get_round every ${POLL_MS / 1000} s for up to 60 s`);
-  if (options.relayed) {
-    see(`relayed: AddKey (game key for ${GAME_METHODS.join(", ")}) and bet_dice sent as SignedDelegates to ${options.relayer}/relay`);
-  }
-  see(`VRF proof checked locally against ${options.house}.get_config().vrf_pubkey_hex`);
-  step(6);
-  see(`${options.house}.invest({"dealer_id":"<same dealer>","amount":"${INVEST}"}), then divest(half the shares)`);
-  step(7);
-  see(`${accountLink(accountId)} and every transaction on ${EXPLORER}/txns/<hash>`);
-}
-
-async function run(options: Options): Promise<void> {
-  const provider = new JsonRpcProvider({ url: options.rpcUrl });
-  const view = (contractId: string, method: string, args: Record<string, unknown> = {}) =>
-    provider.callFunction({ contractId, method, args });
-  const txs: Tx[] = [];
-
-  step(1);
-  const accountId = newAccountId(options);
-  const key = KeyPair.fromRandom("ed25519");
-  await saveKey(accountId, key);
-  const createdBy = await createAccount(options, provider, accountId, key);
-  if (createdBy) txs.push({ label: "create account", hash: createdBy });
-  const player = new Account(accountId, provider, new KeyPairSigner(key));
-  const call = async (label: string, contractId: string, methodName: string, args: object, deposit = 0n, gas = CALL_GAS) => {
-    const outcome = await player.callFunctionRaw({ contractId, methodName, args, deposit, gas });
-    txs.push({ label, hash: outcome.transaction.hash });
-    return { hash: outcome.transaction.hash, result: getTransactionLastResult(outcome) };
-  };
-  see(accountLink(accountId));
-  see(`throwaway key stored in ${KEY_FILE} (testnet only)`);
-
-  step(2);
-  if (options.relayer) {
-    const minted = await relayerFaucet(options.relayer, accountId);
-    see(`minted ${tusdc(minted)} tUSDC to ${accountId}`);
-  } else {
-    see(`skipped: no RELAYER_URL (or --relayer). Send ≥ ${tusdc(DEPOSIT)} tUSDC to ${accountId} to continue.`);
-  }
-  const wallet = amount(await view(options.token, "ft_balance_of", { account_id: accountId }), "ft_balance_of");
-  see(`wallet balance ${tusdc(wallet)} tUSDC`);
-
-  step(3);
-  if (wallet < DEPOSIT) {
-    throw new Error(`${accountId} holds ${tusdc(wallet)} tUSDC, needs ${tusdc(DEPOSIT)}: run with --relayer <url>`);
-  }
-  const deposit = await call(
-    "deposit",
-    options.token,
-    "ft_transfer_call",
-    { receiver_id: options.house, amount: DEPOSIT.toString(), msg: "" },
-    ONE_YOCTO,
-  );
-  if (amount(deposit.result, "ft_transfer_call result") !== DEPOSIT) throw new Error("the house refused the deposit");
-  const player0 = await view(options.house, "get_player", { account_id: accountId });
-  see(txLink(deposit.hash));
-  see(`house balance ${tusdc(isRecord(player0) ? amount(player0.balance, "balance") : 0n)} tUSDC`);
-
-  step(4);
-  const lobbyRaw = await view(options.house, "get_lobby");
-  if (!Array.isArray(lobbyRaw)) throw new Error("get_lobby: not an array");
-  const lobby = lobbyRaw.map(parseDealer);
-  printLobby(lobby);
-  see(`${lobby.length} dealers, ${lobby.filter((d) => d.open).length} open`);
-
-  step(5);
-  const dealer = pickDiceDealer(lobby, STAKE);
-  if (!dealer) throw new Error(`no open dice table takes a ${tusdc(STAKE)} tUSDC stake`);
-  console.log(`  dealer: ${dealer.id} (edge ${(dealer.totalEdgeBp / 100).toFixed(2)}%)`);
-  const betArgs = { dealer_id: dealer.id, stake: STAKE.toString(), chance_bp: CHANCE_BP, over: OVER };
-  let roundId: unknown;
-  // The contract binds the VRF alpha to the signer of the transaction that placed the bet.
-  let vrfSigner = accountId;
-  if (options.relayed && options.relayer) {
-    // Browser-style session: a function-call key for the house, added and used through the relayer.
-    const gameKey = KeyPair.fromRandom("ed25519");
-    const addKeyAction = actions.addFunctionCallAccessKey(
-      gameKey.getPublicKey(),
-      options.house,
-      [...GAME_METHODS],
-      GAME_KEY_ALLOWANCE,
+/** Gas-free for the player: every tx is a NEP-366 delegate the public relayer pays for. */
+function relayedSend(t: Targets, account: Account): Send {
+  return async (receiverId, method, args, deposit) => {
+    const { signedDelegate } = await whenKeyVisible(() =>
+      account.createSignedMetaTransaction({
+        receiverId,
+        actions: [callAction(method, args, deposit)],
+        blockHeightTtl: DELEGATE_TTL_BLOCKS,
+      }),
     );
-    const addKey = await relayActions(options.relayer, player, accountId, [addKeyAction]);
-    txs.push({ label: "add game key (relayed)", hash: addKey });
-    see(`game key ${gameKey.getPublicKey().toString()} added, relayer tx ${txLink(addKey)}`);
-    const gamePlayer = new Account(accountId, provider, new KeyPairSigner(gameKey));
-    const betAction = actions.functionCall("bet_dice", betArgs, BET_GAS, 0n);
-    const before = lastRound(await view(options.house, "get_player", { account_id: accountId }));
-    const bet = await relayActions(options.relayer, gamePlayer, options.house, [betAction]);
-    txs.push({ label: "dice bet (relayed)", hash: bet });
-    see(`bet signed by the game key, relayer tx ${txLink(bet)}`);
-    const betTx = await provider.viewTransactionStatus({ txHash: bet, accountId, waitUntil: "NONE" });
-    vrfSigner = betTx.transaction.signer_id;
-    see(`outer transaction signed (and gas paid) by ${vrfSigner}`);
-    // The relayer answers a game move once it is in a block, before the bet runs: the new round
-    // is the player's latest one as soon as it shows up.
-    roundId = await waitForNewRound(view, options.house, accountId, before);
+    return (await relay(t.relayer, signedDelegate)).txHash;
+  };
+}
+
+function directSend(account: Account): Send {
+  return async (contractId, methodName, args, deposit) => {
+    const outcome = await whenKeyVisible(() => account.callFunctionRaw({ contractId, methodName, args, deposit, gas: MOVE_GAS }));
+    return outcome.transaction.hash;
+  };
+}
+
+async function fundWithFunder(t: Targets, provider: JsonRpcProvider, funder: Funder, player: Player): Promise<void> {
+  const funderAccount = new Account(funder.accountId, provider, new KeyPairSigner(KeyPair.fromString(funder.key as KeyPairString)));
+  const gift = await funderAccount.transfer({ receiverId: player.accountId, amount: FUNDER_NEAR });
+  line(`${OK} ${funder.accountId} sent 1 NEAR for gas ${color.dim(txLink(gift.transaction.hash))}`);
+  const storage = await player.send(t.token, "storage_deposit", { account_id: player.accountId, registration_only: true }, TOKEN_STORAGE);
+  line(`${OK} registered on ${t.token} ${color.dim(txLink(storage))}`);
+  const held = BigInt(amount(await view(t, t.token, "ft_balance_of", { account_id: funder.accountId }), "ft_balance_of"));
+  if (held < DEPOSIT) return;
+  const sent = await funderAccount.callFunctionRaw({
+    contractId: t.token,
+    methodName: "ft_transfer",
+    args: { receiver_id: player.accountId, amount: DEPOSIT.toString() },
+    deposit: ONE_YOCTO,
+  });
+  line(`${OK} ${funder.accountId} sent ${usdc(DEPOSIT)} ${color.dim(txLink(sent.transaction.hash))}`);
+}
+
+async function accountExists(provider: JsonRpcProvider, accountId: string): Promise<boolean> {
+  try {
+    await provider.viewAccount({ accountId });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function setUpPlayer(cmd: DemoCommand, provider: JsonRpcProvider): Promise<Player> {
+  const t = cmd.targets;
+  heading("Account");
+  const stored = cmd.fresh ? null : await loadKey();
+  const key = stored?.key ?? KeyPair.fromRandom("ed25519");
+  // An implicit account: its id is its public key, so it exists as soon as it holds NEAR.
+  const accountId = stored?.accountId ?? Buffer.from(key.getPublicKey().data).toString("hex");
+  if (!stored) await saveKey(accountId, key);
+  const account = new Account(accountId, provider, new KeyPairSigner(key));
+  const player = { accountId, account, send: cmd.funder ? directSend(account) : relayedSend(t, account) };
+  line(`${stored ? "reusing" : "new"} throwaway account ${color.bold(accountId)}`);
+  line(color.dim(`key in ${ACCOUNT_FILE} (testnet only; --new for a fresh one) · ${accountLink(accountId)}`));
+  if (await accountExists(provider, accountId)) return player;
+  if (cmd.funder) {
+    await fundWithFunder(t, provider, cmd.funder, player);
   } else {
-    const bet = await call("dice bet", options.house, "bet_dice", betArgs, 0n, BET_GAS);
-    roundId = bet.result;
-    see(txLink(bet.hash));
+    await activate(t.relayer, accountId);
+    line(`${OK} the relayer activated it: gas money, token registration, 100 tUSDC ${color.dim(`(POST ${t.relayer}/activate)`)}`);
   }
-  if (typeof roundId !== "number") throw new Error(`no round id after bet_dice: ${String(roundId)}`);
-  const round = await waitForRound(view, options.house, roundId);
-  await reportRound(round, roundId, vrfSigner, options, view, call);
-
-  step(6);
-  const invested = await call("invest", options.house, "invest", { dealer_id: dealer.id, amount: INVEST.toString() });
-  const shares = amount(invested.result, "invest result");
-  console.log(`  share price (buy): ${tusdc(dealer.sharePriceBuy)}× launch price`);
-  console.log(`  LP shares received: ${shares}`);
-  see(txLink(invested.hash));
-  const half = shares / 2n;
-  const divested = await call("divest", options.house, "divest", { dealer_id: dealer.id, shares: half.toString() });
-  console.log(`  divested ${half} shares: ${tusdc(amount(divested.result, "divest result"))} tUSDC back to the balance`);
-  see(txLink(divested.hash));
-
-  step(7);
-  see(accountLink(accountId));
-  for (const tx of txs) see(`${tx.label}: ${txLink(tx.hash)}`);
+  return player;
 }
 
-type View = (contractId: string, method: string, args?: Record<string, unknown>) => Promise<unknown>;
-
-function lastRound(player: unknown): number | null {
-  return isRecord(player) && typeof player.last_round === "number" ? player.last_round : null;
+async function floorBalance(t: Targets, accountId: string): Promise<bigint> {
+  return BigInt(parsePlayer(await view(t, t.floor, "get_player", { account_id: accountId })).balance);
 }
 
-async function waitForNewRound(view: View, house: string, accountId: string, before: number | null): Promise<number> {
-  const deadline = Date.now() + BET_VISIBLE_TIMEOUT_MS;
-  for (;;) {
-    const latest = lastRound(await view(house, "get_player", { account_id: accountId }));
-    if (latest !== null && latest !== before) return latest;
-    if (Date.now() > deadline) throw new Error(`bet_dice made no new round after ${BET_VISIBLE_TIMEOUT_MS / 1000} s`);
-    await sleep(BET_POLL_MS);
+async function ensureBalance(t: Targets, player: Player): Promise<void> {
+  heading("Deposit");
+  const before = await floorBalance(t, player.accountId);
+  if (before >= LOCK) {
+    line(`${OK} floor balance ${usdc(before)}, enough for the sessions`);
+    return;
   }
-}
-
-async function waitForRound(view: View, house: string, roundId: number): Promise<Round> {
-  const deadline = Date.now() + SETTLE_TIMEOUT_MS;
-  for (;;) {
-    const round = parseRound(await view(house, "get_round", { round_id: roundId }));
-    if (round.status !== "waiting_vrf" || Date.now() > deadline) return round;
+  const walletOf = async () => BigInt(amount(await view(t, t.token, "ft_balance_of", { account_id: player.accountId }), "ft_balance_of"));
+  let wallet = await walletOf();
+  if (wallet < LOCK - before) {
+    const minted = await claimFaucet(t.relayer, player.accountId);
+    line(`${OK} faucet: +${usdc(minted)} ${color.dim(`(POST ${t.relayer}/faucet, once an hour)`)}`);
+    wallet = await walletOf();
+  }
+  const deposit = wallet < DEPOSIT ? wallet : DEPOSIT;
+  const hash = await player.send(t.token, "ft_transfer_call", { receiver_id: t.floor, amount: deposit.toString(), msg: "" }, ONE_YOCTO);
+  for (let i = 0; (await floorBalance(t, player.accountId)) < before + deposit; i++) {
+    if (i > 20) throw new Error(`the floor did not credit the deposit ${hash}`);
     await sleep(POLL_MS);
   }
+  line(`${OK} deposited ${usdc(deposit)} into ${t.floor} (ft_transfer_call) ${color.dim(txLink(hash))}`);
 }
 
-async function reportRound(
-  round: Round,
-  roundId: number,
-  vrfSigner: string,
-  options: Options,
-  view: View,
-  call: (label: string, contractId: string, methodName: string, args: object) => Promise<{ hash: string }>,
-): Promise<void> {
-  console.log(`  round ${roundId}: ${round.status}`);
-  if (round.status === "waiting_vrf") {
-    see(`OutLayer has not answered after 60 s; anyone may call refund_stuck_round after 120 s`);
-    return;
-  }
-  if (round.status === "failed") {
-    console.log(`  VRF step failed: ${round.error ?? "unknown"}; refunding the stake`);
-    const refund = await call("refund", options.house, "refund_stuck_round", { round_id: roundId });
-    see(txLink(refund.hash));
-    return;
-  }
-  const config = await view(options.house, "get_config");
-  if (!isRecord(config)) throw new Error("get_config: not an object");
-  const pubkey = str(config, "vrf_pubkey_hex");
-  console.log(`  roll: ${round.roll ?? "?"} (wins ${OVER ? "over" : "under"} ${CHANCE_BP})`);
-  console.log(`  payout: ${round.payout === null ? "?" : tusdc(amount(round.payout, "payout"))} tUSDC`);
-  for (const proof of round.proofs) {
-    const verdict = verifyVrfProof(proof, pubkey, vrfSigner, `round-${roundId}-${proof.step}`);
-    console.log(`  VRF output: ${proof.output_hex}`);
-    console.log(`  alpha: ${proof.alpha}`);
-    console.log(`  signature: ${proof.signature_hex}`);
-    see(`local verification with OutLayer key ${pubkey}: ${verdict.ok ? "VALID" : `INVALID (${verdict.reason})`}`);
-  }
+// ---- sessions ------------------------------------------------------------------------------
+
+function pickTable(dealers: readonly DealerView[], game: Game, stake: bigint): DealerView | undefined {
+  return dealers
+    .filter((d) => d.game === game && d.open && d.seat !== null && BigInt(d.min_bet) <= stake && stake <= BigInt(d.max_bet))
+    .sort((a, b) => a.total_edge_bp - b.total_edge_bp || a.id.localeCompare(b.id))[0];
 }
 
-async function main(): Promise<void> {
-  let options: Options;
-  try {
-    options = parseOptions(process.argv.slice(2), process.env);
-  } catch (error) {
-    console.error(`${errorMessage(error)}\n\n${USAGE}`);
-    process.exitCode = 2;
-    return;
-  }
-  console.log(`Tilt House demo on NEAR testnet: house ${options.house}, token ${options.token}`);
-  if (options.dryRun) return printPlan(options);
-  await run(options);
+function serverKeyHex(publicKey: string): string {
+  return Buffer.from(PublicKey.fromString(publicKey).data).toString("hex");
 }
 
-main().catch((error: unknown) => {
-  console.error(`\nDemo stopped: ${errorMessage(error)}`);
-  process.exitCode = 1;
-});
+/** The basic hit-under-17 player: enough to show a hand played move by move. */
+function nextAction(reply: RoundReply): BjAction {
+  const cards = reply.hand?.state.player ?? [];
+  return handTotal(cards).total < 17 ? "hit" : "stand";
+}
+
+async function playSession(
+  t: Targets,
+  player: Player,
+  dealer: DealerView,
+  serverKey: string,
+  moves: readonly { bet: Bet; stake: bigint }[],
+): Promise<Played> {
+  const client = sessionClient(t.session);
+  heading(`Session at ${dealer.name} (${dealer.game}, seat ${(dealer.seat ?? 0) + 1}, edge ${(dealer.total_edge_bp / 100).toFixed(2)} %)`);
+  const clientSeed = randomClientSeed();
+  const started = await client.start({ player: player.accountId, dealer_id: dealer.id, lock: LOCK, client_seed: clientSeed });
+  // Fail closed before any money moves: right key, right ticket, start state = ticket.
+  if (serverKeyHex(started.server_public_key) !== serverKey) throw new Error("the session server's key is not the one the contract trusts");
+  if (!verifyTicket(started.server_public_key, started.ticket, started.ticket_signature)) throw new Error("bad ticket signature");
+  const problem = ticketProblem(started.ticket, { player: player.accountId, dealer, lock: LOCK, clientSeed });
+  if (problem) throw new Error(problem);
+  if (started.state.nonce !== 0 || started.state.chain !== started.ticket.server_seed_hash || started.state.balance !== started.ticket.lock) {
+    throw new Error("the server's start state does not match its ticket");
+  }
+  line(`${OK} ticket ${color.bold(started.session_id)} signed by the key in the contract config · seed hash ${color.dim(started.ticket.server_seed_hash)}`);
+  const openAt = performance.now();
+  const openTx = await player.send(t.floor, "open_session", { ticket: started.ticket, server_sig: started.ticket_signature }, 0n);
+  line(`${OK} open_session on chain in ${Math.round(performance.now() - openAt)} ms, ${usdc(LOCK)} escrowed ${color.dim(txLink(openTx))}`);
+
+  let state: SignedState = started.state;
+  const rounds: CompactRound[] = [];
+  const latencies: number[] = [];
+  /** One request, timed; retried only while the server has not seen the open tx yet. */
+  const send = async (move: Parameters<typeof client.play>[3]): Promise<RoundReply> => {
+    for (let attempt = 1; ; attempt++) {
+      const at = performance.now();
+      try {
+        const reply = await client.play(started.session_id, started.token, state.nonce + 1, move);
+        latencies.push(performance.now() - at);
+        return reply;
+      } catch (error) {
+        if (!(error instanceof SessionError && error.status === NOT_OPEN_YET) || attempt >= OPEN_RETRIES) throw error;
+        await sleep(POLL_MS / 3);
+      }
+    }
+  };
+  const ms = () => color.dim(`${Math.round(latencies.at(-1) ?? 0)} ms`);
+  const accept = (reply: RoundReply): CompactRound => {
+    if (!reply.done || reply.round === null) throw new Error("the server did not finish the round");
+    const bad = checkNextState(started.server_public_key, state, reply.round, reply.state);
+    if (bad) throw new Error(`round ${reply.round.nonce} refused: ${bad}`);
+    state = reply.state;
+    rounds.push(reply.round);
+    return reply.round;
+  };
+
+  for (const move of moves) {
+    let reply = await send(move);
+    if (move.bet === "blackjack") {
+      while (!reply.done) {
+        if (reply.hand === null || reply.state.nonce !== state.nonce) throw new Error("the server moved the state mid-hand");
+        const action = nextAction(reply);
+        line(color.dim(`   ${handText(reply.hand.state)} → ${action}`) + `  ${ms()}`);
+        reply = await send({ action });
+      }
+    }
+    const round = accept(reply);
+    line(`${describeRound(round)}  ${OK} ${color.dim("signed state checked")}  ${ms()}`);
+  }
+
+  const closed = await client.close(started.session_id, started.token);
+  if (closed.state.nonce !== state.nonce || closed.state.chain !== state.chain) throw new Error("the server closed on a state other than our last one");
+  const local = verifySession(closed.server_seed, started.ticket, rounds, state);
+  if (!local.ok) throw new Error(`revealed seed does not replay: ${local.error}`);
+  line(`${OK} closed: seed revealed, ${rounds.length} rounds replay locally · balance ${usdc(LOCK)} → ${usdc(state.balance)}`);
+  for (let waited = 0; (await getChainSession(t, started.session_id))?.status !== "closed"; waited += POLL_MS) {
+    if (waited > CHAIN_CLOSE_TIMEOUT_MS) throw new Error("the server did not settle and close on chain within 2 minutes");
+    await sleep(POLL_MS);
+  }
+  line(`${OK} the server settled and revealed on chain; the escrow is back in the floor balance`);
+  return { sessionId: started.session_id, game: dealer.game, openTx, latencies };
+}
+
+function percentile(values: readonly number[], p: number): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] ?? 0;
+}
+
+export async function runDemo(cmd: DemoCommand): Promise<boolean> {
+  const t = cmd.targets;
+  console.log(color.title(`Tilt House demo · NEAR testnet · ${t.floor}`));
+  const provider = new JsonRpcProvider({ url: t.rpcUrl });
+  const player = await setUpPlayer(cmd, provider);
+  const open = parsePlayer(await view(t, t.floor, "get_player", { account_id: player.accountId })).open_session;
+  if (open !== null) throw new Error(`session ${open} is still open for this account (a crashed run?): the server closes idle sessions; retry later or use --new`);
+  await ensureBalance(t, player);
+
+  const live = await readFloor(t);
+  printFloor(live);
+  const config = record(await view(t, t.floor, "get_config"), "config");
+  const serverKey = str(config.server_pubkey_hex, "config.server_pubkey_hex").toLowerCase();
+
+  const plans: { game: Game; stake: bigint; moves: { bet: Bet; stake: bigint }[] }[] = [
+    {
+      game: "dice",
+      stake: DICE_STAKE,
+      moves: Array.from({ length: DICE_ROUNDS }, (_, i) => ({ bet: { dice: DICE_BETS[i % DICE_BETS.length]! }, stake: DICE_STAKE })),
+    },
+    { game: "roulette", stake: ROULETTE_STAKE, moves: ROULETTE_NUMBERS.map(rouletteSpin) },
+    { game: "blackjack", stake: BJ_STAKE, moves: [{ bet: "blackjack", stake: BJ_STAKE }] },
+  ];
+  const played: Played[] = [];
+  for (const plan of plans) {
+    const dealer = pickTable(live.dealers, plan.game, plan.stake);
+    if (!dealer) {
+      heading(`No ${plan.game} session`);
+      line(color.warn(`skipped: no seated, open ${plan.game} table takes a ${usdc(plan.stake)} bet right now (tables lose their seat when outbid or short of rent)`));
+      continue;
+    }
+    played.push(await playSession(t, player, dealer, serverKey, plan.moves));
+  }
+
+  heading("Independent verification from on-chain data (same code as verify-session)");
+  await sleep(INDEXER_LAG_MS);
+  const verified: boolean[] = [];
+  for (const p of played) verified.push(await verifySessionById(t, p.sessionId));
+
+  const latencies = played.flatMap((p) => p.latencies);
+  // A game without a seated table is skipped (the economy decides who holds a seat), not failed.
+  const allOk = played.length > 0 && verified.every(Boolean);
+  heading("Summary");
+  line(`${latencies.length} instant requests over ${played.length} sessions: median ${Math.round(percentile(latencies, 0.5))} ms, p90 ${Math.round(percentile(latencies, 0.9))} ms, max ${Math.round(Math.max(...latencies))} ms`);
+  line(`floor balance now ${usdc(await floorBalance(t, player.accountId))} · ${accountLink(player.accountId)}`);
+  for (const [i, p] of played.entries()) {
+    line(`${verified[i] ? OK : BAD} ${p.game.padEnd(9)} ${p.sessionId}  re-check: pnpm --filter cli-demo verify-session ${p.sessionId}`);
+  }
+  console.log(allOk ? `\n  ${OK} ${color.ok("Demo complete: every round verified against the chain.")}` : `\n  ${BAD} ${color.bad("Demo incomplete")}`);
+  return allOk;
+}

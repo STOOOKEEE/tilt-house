@@ -14,6 +14,7 @@ import {
   randomClientSeed,
   SessionError,
   sessionClient,
+  ticketProblem,
   verifySession,
   verifyTicket,
   type BjAction,
@@ -84,19 +85,6 @@ function load(accountId: string, contract: string): StoredSession | null {
   } catch {
     return null
   }
-}
-
-/** Why the server's ticket must not be signed, or null. Protects the player before any money moves. */
-export function ticketProblem(
-  ticket: SessionTicket,
-  expected: { player: string; dealer: DealerView; lock: bigint; clientSeed: string },
-): string | null {
-  if (ticket.player !== expected.player) return 'ticket for another player'
-  if (ticket.dealer_id !== expected.dealer.id || ticket.game !== expected.dealer.game) return 'ticket for another table'
-  if (ticket.lock !== expected.lock.toString()) return 'ticket locks another amount'
-  if (ticket.client_seed !== expected.clientSeed) return 'ticket ignores your client seed'
-  if (ticket.rake_bp > expected.dealer.rake_bp) return `ticket rake ${ticket.rake_bp} bp is above the table's ${expected.dealer.rake_bp} bp`
-  return null
 }
 
 /**
