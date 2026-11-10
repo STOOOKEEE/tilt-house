@@ -34,6 +34,12 @@ const CLOSED_AFTER_MISSES = 3
 /** `open_session` lands in a block or two; the server answers 409 until it sees it. */
 const OPEN_RETRIES = 20
 const OPEN_RETRY_MS = 1_000
+/** What the server answers once it has closed the session (idle timeout, another tab). */
+const SERVER_CLOSED = 'session is closing or closed'
+
+function closedByServer(e: unknown): boolean {
+  return e instanceof SessionError && e.message === SERVER_CLOSED
+}
 
 export type SessionPhase = 'idle' | 'starting' | 'opening' | 'playing' | 'closing' | 'closed'
 
@@ -201,7 +207,14 @@ export function useSession(
   const move = (payload: Parameters<typeof client.play>[3]) =>
     run(async () => {
       if (!session || phase !== 'playing' || broken) throw new Error('no session in play')
-      const reply = await send(session, payload)
+      const reply = await send(session, payload).catch((e: unknown) => {
+        if (closedByServer(e)) return null
+        throw e
+      })
+      if (reply === null) {
+        adoptServerClose(session)
+        return
+      }
       if (!reply.done || reply.round === null) {
         // A blackjack hand in progress: no new state yet, the cards come from the server alone.
         if (reply.state.nonce !== session.state.nonce) {
@@ -237,13 +250,31 @@ export function useSession(
         setVerified(verifySession(closed.server_seed, session.ticket, session.rounds, session.state))
         setPhase('closed')
       } catch (e) {
+        if (closedByServer(e)) {
+          adoptServerClose(session)
+          return
+        }
         setPhase('playing')
         throw e
       }
     })
 
-  // Closed without us (idle timeout, another tab): show the verify view instead of failing on the
-  // next round, with the seed the server revealed when it closed.
+  /** Closed without us (idle timeout, another tab): the verify view, with the seed the server
+   *  revealed when it closed, instead of an error on the next move. */
+  const adoptServerClose = (s: StoredSession) => {
+    setPhase('closed')
+    setHand(null)
+    void client.revealedSeed(s.session_id).then(
+      (seed) => {
+        if (seed === null) return
+        save({ ...s, server_seed: seed })
+        setVerified(verifySession(seed, s.ticket, s.rounds, s.state))
+      },
+      () => setError('the session was closed on chain; its seed could not be fetched yet'),
+    )
+  }
+
+  // The server tells us at the next move; the chain tells us even if the player does nothing.
   const misses = useRef(0)
   const sessionId = session?.session_id
   const stillPlaying = phase === 'playing' && session?.opened === true && !busy
@@ -252,16 +283,7 @@ export function useSession(
     misses.current = chain.open_session === sessionId ? 0 : misses.current + 1
     if (misses.current < CLOSED_AFTER_MISSES || !session) return
     misses.current = 0
-    setPhase('closed')
-    setHand(null)
-    void client.revealedSeed(sessionId).then(
-      (seed) => {
-        if (seed === null) return
-        save({ ...session, server_seed: seed })
-        setVerified(verifySession(seed, session.ticket, session.rounds, session.state))
-      },
-      () => setError('the session was closed on chain; its seed could not be fetched yet'),
-    )
+    adoptServerClose(session)
     // Runs per chain observation; `session` is read at that moment.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chain, stillPlaying, sessionId])
