@@ -37,8 +37,9 @@ const OPEN_RETRY_MS = 1_000
 /** What the server answers once it has closed the session (idle timeout, another tab). */
 const SERVER_CLOSED = 'session is closing or closed'
 
-function closedByServer(e: unknown): boolean {
-  return e instanceof SessionError && e.message === SERVER_CLOSED
+export function closedByServer(e: unknown): boolean {
+  // SessionError prefixes the server's message with "session server: ".
+  return e instanceof SessionError && e.message.endsWith(SERVER_CLOSED)
 }
 
 export type SessionPhase = 'idle' | 'starting' | 'opening' | 'playing' | 'closing' | 'closed'
