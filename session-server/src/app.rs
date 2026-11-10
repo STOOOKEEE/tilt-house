@@ -336,7 +336,7 @@ impl<C: Chain> App<C> {
             hand: session.hand.clone(),
             state: Self::signed(&session),
         };
-        if session.settle_due(now()) && !session.chain_busy {
+        if session.settle_due(now()) && session.chain_ready(now()) {
             let app = Arc::clone(self);
             let shared = Arc::clone(&shared);
             tokio::spawn(async move { app.settle_logged(&shared).await });
@@ -448,6 +448,7 @@ impl<C: Chain> App<C> {
         let result = self.chain.close(&id, &seed).await;
         let mut session = shared.lock().await;
         session.chain_busy = false;
+        session.chain_done(result.is_ok(), now());
         result?;
         self.record(
             &mut session,
@@ -474,6 +475,7 @@ impl<C: Chain> App<C> {
         let result = self.chain.settle(&batch).await;
         let mut session = shared.lock().await;
         session.chain_busy = false;
+        session.chain_done(result.is_ok(), now());
         result?;
         let event = Event::Settled {
             session_id: batch.session_id,
@@ -497,7 +499,7 @@ impl<C: Chain> App<C> {
             let Ok(mut session) = shared.try_lock() else {
                 continue;
             };
-            if session.phase == Phase::Closed || session.chain_busy {
+            if session.phase == Phase::Closed || !session.chain_ready(at) {
                 continue;
             }
             let idle =

@@ -78,6 +78,9 @@ impl std::fmt::Display for PlayError {
     }
 }
 
+/// Longest wait between two tries of a failing settle or close.
+pub const MAX_CHAIN_BACKOFF_SECS: u64 = 300;
+
 pub struct Session {
     pub ticket: SessionTicket,
     pub ticket_sig: [u8; 64],
@@ -97,6 +100,9 @@ pub struct Session {
     pub phase: Phase,
     /// A chain call (settle or close) is in flight; in memory only.
     pub chain_busy: bool,
+    /// Failed chain calls in a row, and when to try again; in memory only.
+    pub chain_failures: u32,
+    pub chain_retry_at: u64,
 }
 
 impl Session {
@@ -130,7 +136,30 @@ impl Session {
             last_activity: at,
             phase: Phase::Open,
             chain_busy: false,
+            chain_failures: 0,
+            chain_retry_at: 0,
         }
+    }
+
+    /// Records a chain call's outcome. Failures back off exponentially: retrying every second
+    /// against a failing RPC (rate limit, empty signer) gets the whole server rate-limited.
+    pub fn chain_done(&mut self, ok: bool, at: u64) {
+        if ok {
+            self.chain_failures = 0;
+            self.chain_retry_at = 0;
+            return;
+        }
+        self.chain_failures = self.chain_failures.saturating_add(1);
+        let wait = 1u64
+            .checked_shl(self.chain_failures)
+            .unwrap_or(u64::MAX)
+            .min(MAX_CHAIN_BACKOFF_SECS);
+        self.chain_retry_at = at.saturating_add(wait);
+    }
+
+    /// Whether a chain call may be sent now.
+    pub fn chain_ready(&self, at: u64) -> bool {
+        !self.chain_busy && at >= self.chain_retry_at
     }
 
     fn public(&self) -> SessionPublic<'_> {
@@ -530,5 +559,28 @@ mod tests {
                 action: BjAction::Double
             }
         );
+    }
+
+    #[test]
+    fn failing_chain_calls_back_off_up_to_five_minutes_and_reset_on_success() {
+        let (mut s, _) = session(Game::Dice, LOCK);
+        assert!(s.chain_ready(0));
+        s.chain_done(false, 1_000);
+        assert!(
+            !s.chain_ready(1_001) && s.chain_ready(1_002),
+            "2 s after the first failure"
+        );
+        for _ in 0..20 {
+            s.chain_done(false, 1_000);
+        }
+        assert!(!s.chain_ready(1_000 + MAX_CHAIN_BACKOFF_SECS - 1));
+        assert!(
+            s.chain_ready(1_000 + MAX_CHAIN_BACKOFF_SECS),
+            "never more than the cap"
+        );
+        s.chain_done(true, 2_000);
+        assert!(s.chain_ready(2_000));
+        s.chain_done(false, 3_000);
+        assert!(s.chain_ready(3_002), "a success starts the backoff over");
     }
 }
