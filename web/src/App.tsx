@@ -1,6 +1,6 @@
 import { PrivyProvider } from '@privy-io/react-auth'
 import { Component, type ReactNode } from 'react'
-import { BrowserRouter, Route, Routes } from 'react-router'
+import { BrowserRouter, Link, Route, Routes } from 'react-router'
 import type { Config } from './config'
 import { NearPrivyProvider, ReadOnlyNearProvider } from './near/provider'
 import { TopBar } from './components/TopBar'
@@ -31,6 +31,9 @@ export default function App({ config }: { config: Config }) {
           <Route path="/dealers" element={<Dealers />} />
           <Route path="/sim" element={<FastForward />} />
         </Routes>
+        <footer className="page-footer">
+          <Link to="/seats">Seats</Link> · <Link to="/dealers">Dealers</Link> · <Link to="/sim">Fast-forward</Link>
+        </footer>
       </main>
     </BrowserRouter>
   )
