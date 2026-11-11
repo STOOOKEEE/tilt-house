@@ -6,10 +6,7 @@ import { usePlayer } from '../near/usePoll'
 const NAV = [
   { to: '/', label: 'Lobby' },
   { to: '/my-table', label: 'My table' },
-  { to: '/seats', label: 'Seats' },
   { to: '/pools', label: 'Pools' },
-  { to: '/dealers', label: 'Dealers' },
-  { to: '/sim', label: 'Fast-forward' },
 ] as const
 
 function shortAccount(accountId: string): string {

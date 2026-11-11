@@ -75,6 +75,19 @@ button:disabled {
   padding: 1.5rem;
 }
 
+.page-footer {
+  margin-top: 2rem;
+  font-size: 0.85rem;
+}
+
+.page-footer a {
+  color: var(--muted);
+}
+
+.page-footer a:hover {
+  color: var(--text);
+}
+
 h1 {
   font-size: 1.1rem;
   font-weight: 700;
