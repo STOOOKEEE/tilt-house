@@ -14,7 +14,11 @@
       "deployed_at": "2026-11-12T16:40:07Z",
       "reproducible": true,
       "commit": "5266c54b8bb9f3fb8e8d1ec5382572065484f6a7",
-      "build_image": "sourcescan/cargo-near:0.21.1-rust-1.96.0@sha256:ccb22bb4e677ed022d8b9d1aa1b32f0af52dd0471ef1c32e48dedbf68ee6ee17"
+      "build_image": "sourcescan/cargo-near:0.21.1-rust-1.96.0@sha256:ccb22bb4e677ed022d8b9d1aa1b32f0af52dd0471ef1c32e48dedbf68ee6ee17",
+      "setup_txs": {
+        "add_dealer_faye": "8vyMYRUiwtfNVw4i33TqmsEFwnCoPsqq9kNrE1dryN1c",
+        "register_npcs": "45LrzCZEfmCMty5s2cTgyxCDtP2cQGcSX5h8BADnQFWK"
+      }
     },
     "token": {
       "account_id": "tusdc.tilthouse.testnet",
@@ -55,7 +59,8 @@
       "bruno.tilthouse.testnet",
       "chloe.tilthouse.testnet",
       "dmitri.tilthouse.testnet",
-      "eve.tilthouse.testnet"
+      "eve.tilthouse.testnet",
+      "faye.tilthouse.testnet"
     ],
     "npc_gamblers": [
       "g-mia.tilthouse.testnet",
