@@ -140,6 +140,21 @@ export async function getArchivedHand(t: Targets, table: string, hand: number): 
   return parseLastHand(body, `hand ${hand}`);
 }
 
+/** Hand numbers a table's first archived hand is looked for among (a void hand is skipped). */
+const FIRST_HANDS = 10;
+
+/**
+ * Unix ms of a table's first archived hand, or null when it has none. The archive numbers each
+ * table's hands from 1, so its oldest hand is among the first few numbers.
+ */
+export async function archiveStart(t: Targets, table: string): Promise<number | null> {
+  const url = `${t.session}/poker/tables/${encodeURIComponent(table)}/hands?before=${FIRST_HANDS + 1}&limit=${FIRST_HANDS}`;
+  const { status, body } = await getJson(url);
+  if (status !== 200) throw new Error(`hand archive: HTTP ${status}`);
+  const oldest = list(body, "hands").at(-1);
+  return oldest === undefined ? null : int(record(oldest, "hands[-1]").ended_at, "hands[-1].ended_at");
+}
+
 // ---- session txs ----------------------------------------------------------------------------
 
 interface ListedTx {

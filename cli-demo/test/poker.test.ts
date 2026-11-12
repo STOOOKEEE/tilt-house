@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseLastHand } from "../../web/src/near/poker-client";
 import vectors from "../../web/src/near/poker-vectors.json";
 import { parseCompactRound, roundBorsh } from "../../web/src/near/session-client";
-import { pokerReplayer } from "../src/verify.ts";
+import { pokerReplayer, unarchivedRounds } from "../src/verify.ts";
 
 // poker-vectors.json is produced by core_rules::poker (Rust): each hand as the table publishes it,
 // with every player's session round as the server records it.
@@ -61,5 +61,28 @@ describe("pokerReplayer", () => {
     const owner = hand.history.start.seats.find((s) => s.seat === rounds[0]!.round.outcome.poker.seat)!.player;
     const forged = { ...hand, history: { ...hand.history, hand_seed: "00".repeat(32) } };
     expect(() => pokerReplayer(new Map([[hand.number, forged]]), hand.history.start.table, owner)(round)).toThrow(/does not replay/);
+  });
+});
+
+describe("unarchivedRounds", () => {
+  const { hand, rounds } = hands[0]!;
+  const round = parseCompactRound(rounds[0]!.round);
+  const ended = 1_000_000;
+  const archived = new Map([[hand.number, { ...hand, ended_at: ended }]]);
+  const other = new Map([[hand.number, { ...hand, commitment: "ab".repeat(32), ended_at: ended }]]);
+
+  it("lists every round of a session closed before the table's archive began", () => {
+    expect(unarchivedRounds([round], new Map(), ended - 1, ended)).toEqual(new Set([round.nonce]));
+    expect(unarchivedRounds([round], new Map(), ended - 1, Infinity)).toEqual(new Set([round.nonce]));
+  });
+
+  it("lists a round whose number a later archived hand reused", () => {
+    expect(unarchivedRounds([round], other, ended - 1, 0)).toEqual(new Set([round.nonce]));
+  });
+
+  it("never excuses a real mismatch: same hand, an older different hand, or a missing one", () => {
+    expect(unarchivedRounds([round], archived, ended + 1, 0).size).toBe(0);
+    expect(unarchivedRounds([round], other, ended + 1, 0).size).toBe(0);
+    expect(unarchivedRounds([round], new Map(), ended + 1, 0).size).toBe(0);
   });
 });

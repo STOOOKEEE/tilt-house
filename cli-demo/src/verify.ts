@@ -88,3 +88,27 @@ export function pokerReplayer(hands: ReadonlyMap<number, LastHand>, tableId: str
     return expectedRound(hand, outcome.poker.seat, round.nonce);
   };
 }
+
+/**
+ * The nonces of a poker session's rounds whose hand was played before the session server kept a
+ * hand archive (2026-11-12), so cannot be replayed: the session closed before the table's first
+ * archived hand (`archiveStartMs`; hand numbers start over at 1 with the archive), or the archive's
+ * hand of that number has another commitment and ended after the session closed (a later hand that
+ * reused the number). Any other missing or different hand is a real mismatch, not listed here.
+ */
+export function unarchivedRounds(
+  rounds: readonly CompactRound[],
+  hands: ReadonlyMap<number, LastHand>,
+  closedMs: number,
+  archiveStartMs: number,
+): Set<number> {
+  const unarchived = new Set<number>();
+  for (const round of rounds) {
+    const { bet, outcome } = round;
+    if (bet === "blackjack" || !("poker" in bet) || !("poker" in outcome)) continue;
+    const archived = hands.get(bet.poker.hand);
+    const reused = archived !== undefined && archived.commitment !== outcome.poker.hand_seed_hash && archived.ended_at > closedMs;
+    if (closedMs < archiveStartMs || reused) unarchived.add(round.nonce);
+  }
+  return unarchived;
+}
