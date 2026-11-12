@@ -278,7 +278,11 @@ fn vectors() -> Value {
 fn web_poker_vectors_match_core() {
     let expected = vectors();
     if std::env::var_os("TILT_WRITE_VECTORS").is_some() {
-        std::fs::write(PATH, serde_json::to_string_pretty(&expected).unwrap() + "\n").unwrap();
+        std::fs::write(
+            PATH,
+            serde_json::to_string_pretty(&expected).unwrap() + "\n",
+        )
+        .unwrap();
     }
     // Compared as values: `cargo test --workspace` turns on serde_json's `preserve_order` (feature
     // unification), which changes key order in the text but not the vectors.
