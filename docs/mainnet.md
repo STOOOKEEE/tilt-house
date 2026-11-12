@@ -49,8 +49,9 @@ sign-with-legacy-keychain send`). Anyone can top up an NPC; nobody can take NEAR
 - `ROOT` exists on mainnet, funded (45 NEAR), its key in `~/.near-credentials/mainnet/ROOT.json`.
 - Floor contract v3 (`credit_npc`, `register_npcs`, NPC refusals) committed: the build is
   reproducible (`deploy-floor.sh` uses Docker; commit first).
-- Session server with `GAMBLER_ACCOUNT_SUFFIX` support (NPC accounts `g-<name><suffix>`; the
-  testnet default is `.tilthouse.testnet`), built to `~/.tilt-house/bin/tilt-house-session-server`.
+- Session server at b36839e or later (`GAMBLER_ACCOUNT_SUFFIX`: NPC accounts `g-<name><suffix>`,
+  testnet default `.tilthouse.testnet`; set `.ROOT` in its env), built to
+  `~/.tilt-house/bin/tilt-house-session-server`.
 - Mainnet NPC keys never leave `~/.near-credentials/mainnet/` (mode 600).
 
 ## 1. Dry run everything
@@ -103,8 +104,8 @@ near account add-key sessions.$ROOT grant-function-call-access --allowance unlim
   use-manually-provided-public-key "$SESSION_PUBKEY" network-config mainnet sign-with-legacy-keychain send
 ```
 
-If the poker server signs more floor methods, list them in `--function-names` too
-(`docs/poker-api.md`).
+The server signs only `settle_session` and `close_session` (poker included, as of b36839e); if
+that ever changes, add the methods to `--function-names`.
 
 ## 4. Floor
 
