@@ -9,8 +9,9 @@ on:
 permissions:
   contents: read
 
+# Every commit on main gets a full run (several people push there); branches keep only their latest.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'latest' }}
   cancel-in-progress: true
 
 env:
