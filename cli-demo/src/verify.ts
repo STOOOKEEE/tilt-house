@@ -30,12 +30,15 @@ const fail = (error: string): ChainVerdict => ({ ok: false, error, nonce: null }
 
 /**
  * `rounds`: the full round list from anywhere (session server, settle txs). `serverSeed`: the seed
- * the session server reveals, cross-checked against the chain's when given.
+ * the session server reveals, cross-checked against the chain's when given. `replayPoker`: what a
+ * poker round must be, from its replayed hand history (poker rounds do not replay from the session
+ * seed).
  */
 export function verifyAgainstChain(
   chain: ChainSession,
   rounds: readonly CompactRound[],
   serverSeed: string | null = null,
+  replayPoker?: (round: CompactRound) => CompactRound,
 ): ChainVerdict {
   if (chain.status !== "closed") return fail(`session is ${chain.status}: its seed is not revealed on chain yet`);
   if (chain.server_seed === null) return fail("closed without a revealed seed");
@@ -45,7 +48,7 @@ export function verifyAgainstChain(
   }
   // Closed from open: the escrow paid out is the signed balance at the last settled round.
   const final = { session_id: chain.id, nonce: chain.settled_nonce, balance: chain.paid_out, chain: chain.chain };
-  const verdict = verifySession(chain.server_seed, chainTicket(chain), rounds, final);
+  const verdict = verifySession(chain.server_seed, chainTicket(chain), rounds, final, replayPoker);
   if (!verdict.ok) return verdict;
   if (verdict.summary.wagered.toString() !== chain.wagered) return fail("total wagered differs from the chain's");
   if (verdict.summary.paid.toString() !== chain.paid) return fail("total paid differs from the chain's");

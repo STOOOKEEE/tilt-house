@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "demo": "node --import tsx src/main.ts demo",
+    "poker": "node --import tsx src/main.ts poker",
     "verify-session": "node --import tsx src/main.ts verify-session",
     "floor": "node --import tsx src/main.ts floor",
     "typecheck": "tsc --noEmit",

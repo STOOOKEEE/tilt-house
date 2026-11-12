@@ -1,5 +1,6 @@
 import { parseCommand, USAGE, type Command } from "./args.ts";
 import { runDemo } from "./demo.ts";
+import { runPoker } from "./poker.ts";
 import { printFloor, readFloor } from "./floor.ts";
 import { BAD, errorMessage } from "./ui.ts";
 import { latestClosedSession, verifySessionById } from "./verify-session.ts";
@@ -11,6 +12,8 @@ async function run(command: Command): Promise<boolean> {
       return true;
     case "demo":
       return runDemo(command);
+    case "poker":
+      return runPoker(command);
     case "floor":
       printFloor(await readFloor(command.targets));
       return true;

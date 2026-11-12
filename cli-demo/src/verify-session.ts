@@ -52,8 +52,15 @@ function printTxs(chain: ChainSession, txs: SessionTxs): void {
   line(color.dim(`player ${accountLink(chain.player)}`));
 }
 
-/** Prints the whole check; true when every round replays against the on-chain commitment. */
-export async function verifySessionById(t: Targets, sessionId: string): Promise<boolean> {
+/**
+ * Prints the whole check; true when every round replays against the on-chain commitment. Poker
+ * rounds need `replayPoker` (see `verifyAgainstChain`).
+ */
+export async function verifySessionById(
+  t: Targets,
+  sessionId: string,
+  replayPoker?: (round: CompactRound) => CompactRound,
+): Promise<boolean> {
   const chain = await getChainSession(t, sessionId);
   if (chain === null) {
     line(`${BAD} no session ${sessionId} on ${t.floor} (a player keeps only its last 20 sessions in storage)`);
@@ -74,7 +81,7 @@ export async function verifySessionById(t: Targets, sessionId: string): Promise<
   }
   line(color.dim(`rounds from ${server ? "the session server (untrusted: they must hash-chain to the chain's value)" : "the settle tx args"}`));
 
-  const verdict = verifyAgainstChain(chain, rounds, server?.server_seed ?? null);
+  const verdict = verifyAgainstChain(chain, rounds, server?.server_seed ?? null, replayPoker);
   const badNonce = verdict.ok ? null : verdict.nonce;
   printRounds(rounds, (r) => (verdict.ok ? OK : r.nonce === badNonce ? BAD : " "));
 
@@ -97,6 +104,10 @@ export async function verifySessionById(t: Targets, sessionId: string): Promise<
     console.log(`\n  ${BAD} ${color.bad("NOT VERIFIED")}: ${settleProblem}`);
     return false;
   }
-  console.log(`\n  ${OK} ${color.ok("VERIFIED")} from on-chain data: every outcome follows from the seed committed before the first bet.`);
+  const why =
+    chain.game === "poker"
+      ? "every round is its hand's replay from a seed committed before the deal"
+      : "every outcome follows from the seed committed before the first bet";
+  console.log(`\n  ${OK} ${color.ok("VERIFIED")} from on-chain data: ${why}.`);
   return true;
 }

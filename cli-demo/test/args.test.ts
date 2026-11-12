@@ -34,6 +34,13 @@ describe("parseCommand", () => {
     expect(parseCommand(["--", "floor"], {})).toMatchObject({ name: "floor" });
   });
 
+  it("plays 3 poker hands by default, 1-20 with --hands", () => {
+    expect(parseCommand(["poker"], {})).toEqual({ name: "poker", targets: DEFAULT_TARGETS, funder: undefined, fresh: false, hands: 3 });
+    expect(parseCommand(["poker", "--hands", "5", "--new"], {})).toMatchObject({ hands: 5, fresh: true });
+    for (const bad of ["0", "21", "2.5", "x"]) expect(() => parseCommand(["poker", "--hands", bad], {})).toThrow(/--hands must be 1-20/);
+    expect(() => parseCommand(["demo", "--hands", "2"], {})).toThrow(/--hands only applies to poker/);
+  });
+
   it("reads a session id or a player for verify-session, exactly one", () => {
     expect(parseCommand(["verify-session", "6746c5e4_x-1"], {})).toMatchObject({ which: { sessionId: "6746c5e4_x-1" } });
     expect(parseCommand(["verify-session", "--player", "g-mia.tilthouse.testnet"], {})).toMatchObject({

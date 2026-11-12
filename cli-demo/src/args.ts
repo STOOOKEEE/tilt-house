@@ -19,6 +19,7 @@ export interface Targets {
 
 export type Command =
   | { name: "demo"; targets: Targets; funder: Funder | undefined; fresh: boolean }
+  | { name: "poker"; targets: Targets; funder: Funder | undefined; fresh: boolean; hands: number }
   | { name: "verify-session"; targets: Targets; which: { sessionId: string } | { player: string } }
   | { name: "floor"; targets: Targets }
   | { name: "help" };
@@ -37,6 +38,9 @@ const ACCOUNT_ID = /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z
 const IMPLICIT_ACCOUNT = /^[0-9a-f]{64}$/;
 /** `open_session`'s rule for session ids. */
 const SESSION_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const DEFAULT_HANDS = 3;
+/** A poker run keeps two sessions open; this bounds its length. */
+const MAX_HANDS = 20;
 
 export const USAGE = `Tilt House on NEAR testnet, from a terminal.
 
@@ -44,11 +48,12 @@ export const USAGE = `Tilt House on NEAR testnet, from a terminal.
   pnpm --filter cli-demo verify-session <id>      replay any closed session against its on-chain commitment
   pnpm --filter cli-demo verify-session --player <account>   … the account's latest closed session
   pnpm --filter cli-demo floor                    live economy: seats, rent, jackpot, tables, NPC gamblers
+  pnpm --filter cli-demo poker [--hands N]        two throwaway accounts play N hold'em hands (default 3) with the bots → verify
 
-Options: --new (demo: a fresh account instead of reusing ~/.tilt-house/cli-demo-account.json)
+Options: --new (demo, poker: fresh accounts instead of reusing the ones in ~/.tilt-house/)
          --floor <account> --token <account> --relayer <url> --session <url> --rpc <url>
 Env:     FLOOR_CONTRACT TOKEN_CONTRACT RELAYER_URL SESSION_URL NEAR_RPC_URL SESSION_SERVER_ACCOUNT
-         FUNDER_ACCOUNT + FUNDER_KEY (demo: fund the throwaway account yourself instead of the relayer)`;
+         FUNDER_ACCOUNT + FUNDER_KEY (demo, poker: fund the throwaway accounts yourself instead of the relayer)`;
 
 export function testnetAccount(value: string, name: string): string {
   if (IMPLICIT_ACCOUNT.test(value)) return value;
@@ -95,6 +100,7 @@ export function parseCommand(argv: readonly string[], env: NodeJS.ProcessEnv): C
       rpc: { type: "string" },
       player: { type: "string" },
       new: { type: "boolean", default: false },
+      hands: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -112,17 +118,26 @@ export function parseCommand(argv: readonly string[], env: NodeJS.ProcessEnv): C
   const noMore = (allowed: number) => {
     if (rest.length > allowed) throw new Error(`unexpected argument: ${rest[allowed]}`);
   };
-  const only = (flag: "player" | "new", command: string) => {
+  const only = (flag: "player" | "new" | "hands", command: string) => {
     if (values[flag]) throw new Error(`--${flag} only applies to ${command}`);
   };
   switch (name) {
     case "demo":
       noMore(0);
       only("player", "verify-session");
+      only("hands", "poker");
       return { name, targets, funder: funder(env), fresh: values.new };
+    case "poker": {
+      noMore(0);
+      only("player", "verify-session");
+      const hands = values.hands === undefined ? DEFAULT_HANDS : Number(values.hands);
+      if (!Number.isInteger(hands) || hands < 1 || hands > MAX_HANDS) throw new Error(`--hands must be 1-${MAX_HANDS}`);
+      return { name, targets, funder: funder(env), fresh: values.new, hands };
+    }
     case "verify-session": {
       noMore(1);
       only("new", "demo");
+      only("hands", "poker");
       const sessionId = rest[0];
       const player = values.player;
       const oneOf = "verify-session needs a session id or --player <account> (one of them)";
@@ -138,6 +153,7 @@ export function parseCommand(argv: readonly string[], env: NodeJS.ProcessEnv): C
       noMore(0);
       only("player", "verify-session");
       only("new", "demo");
+      only("hands", "poker");
       return { name, targets };
     default:
       throw new Error(`unknown command: ${name}`);

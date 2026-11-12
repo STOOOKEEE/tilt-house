@@ -81,9 +81,9 @@ function rouletteSpin(straight: number): { bet: Bet; stake: bigint } {
 
 const ROULETTE_STAKE = rouletteSpin(0).stake;
 
-type Send = (receiverId: string, method: string, args: object, deposit: bigint) => Promise<string>;
+export type Send = (receiverId: string, method: string, args: object, deposit: bigint) => Promise<string>;
 
-interface Player {
+export interface Player {
   accountId: string;
   account: Account;
   send: Send;
@@ -98,24 +98,24 @@ interface Played {
 
 // ---- account ------------------------------------------------------------------------------
 
-async function loadKey(): Promise<{ accountId: string; key: KeyPair } | null> {
+async function loadKey(file: string): Promise<{ accountId: string; key: KeyPair } | null> {
   let text: string;
   try {
-    text = await readFile(ACCOUNT_FILE, "utf8");
+    text = await readFile(file, "utf8");
   } catch {
     return null;
   }
-  const file = record(JSON.parse(text) as unknown, ACCOUNT_FILE);
+  const stored = record(JSON.parse(text) as unknown, file);
   return {
-    accountId: str(file.account_id, "account_id"),
-    key: KeyPair.fromString(str(file.private_key, "private_key") as KeyPairString),
+    accountId: str(stored.account_id, "account_id"),
+    key: KeyPair.fromString(str(stored.private_key, "private_key") as KeyPairString),
   };
 }
 
-async function saveKey(accountId: string, key: KeyPair): Promise<void> {
-  await mkdir(dirname(ACCOUNT_FILE), { recursive: true, mode: 0o700 });
-  const file = { account_id: accountId, public_key: key.getPublicKey().toString(), private_key: key.toString() };
-  await writeFile(ACCOUNT_FILE, JSON.stringify(file, null, 2) + "\n", { mode: 0o600 });
+async function saveKey(file: string, accountId: string, key: KeyPair): Promise<void> {
+  await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+  const stored = { account_id: accountId, public_key: key.getPublicKey().toString(), private_key: key.toString() };
+  await writeFile(file, JSON.stringify(stored, null, 2) + "\n", { mode: 0o600 });
 }
 
 /** A just-created account's key reaches `final` a block or two after the funding tx. */
@@ -178,18 +178,21 @@ async function accountExists(provider: JsonRpcProvider, accountId: string): Prom
   }
 }
 
-async function setUpPlayer(cmd: DemoCommand, provider: JsonRpcProvider): Promise<Player> {
+/** What setting up an account needs from a command. */
+export type AccountOptions = Pick<DemoCommand, "targets" | "funder" | "fresh">;
+
+export async function setUpPlayer(cmd: AccountOptions, provider: JsonRpcProvider, accountFile = ACCOUNT_FILE, label = "Account"): Promise<Player> {
   const t = cmd.targets;
-  heading("Account");
-  const stored = cmd.fresh ? null : await loadKey();
+  heading(label);
+  const stored = cmd.fresh ? null : await loadKey(accountFile);
   const key = stored?.key ?? KeyPair.fromRandom("ed25519");
   // An implicit account: its id is its public key, so it exists as soon as it holds NEAR.
   const accountId = stored?.accountId ?? Buffer.from(key.getPublicKey().data).toString("hex");
-  if (!stored) await saveKey(accountId, key);
+  if (!stored) await saveKey(accountFile, accountId, key);
   const account = new Account(accountId, provider, new KeyPairSigner(key));
   const player = { accountId, account, send: cmd.funder ? directSend(account) : relayedSend(t, account) };
   line(`${stored ? "reusing" : "new"} throwaway account ${color.bold(accountId)}`);
-  line(color.dim(`key in ${ACCOUNT_FILE} (testnet only; --new for a fresh one) · ${accountLink(accountId)}`));
+  line(color.dim(`key in ${accountFile} (testnet only; --new for a fresh one) · ${accountLink(accountId)}`));
   if (await accountExists(provider, accountId)) return player;
   if (cmd.funder) {
     await fundWithFunder(t, provider, cmd.funder, player);
@@ -201,20 +204,21 @@ async function setUpPlayer(cmd: DemoCommand, provider: JsonRpcProvider): Promise
   return player;
 }
 
-async function floorBalance(t: Targets, accountId: string): Promise<bigint> {
+export async function floorBalance(t: Targets, accountId: string): Promise<bigint> {
   return BigInt(parsePlayer(await view(t, t.floor, "get_player", { account_id: accountId })).balance);
 }
 
-async function ensureBalance(t: Targets, player: Player): Promise<void> {
-  heading("Deposit");
+/** Tops the floor balance up to `need` at least (faucet, then a deposit of up to 20 tUSDC). */
+export async function ensureBalance(t: Targets, player: Player, need = LOCK, label = "Deposit"): Promise<void> {
+  heading(label);
   const before = await floorBalance(t, player.accountId);
-  if (before >= LOCK) {
+  if (before >= need) {
     line(`${OK} floor balance ${usdc(before)}, enough for the sessions`);
     return;
   }
   const walletOf = async () => BigInt(amount(await view(t, t.token, "ft_balance_of", { account_id: player.accountId }), "ft_balance_of"));
   let wallet = await walletOf();
-  if (wallet < LOCK - before) {
+  if (wallet < need - before) {
     const minted = await claimFaucet(t.relayer, player.accountId, null);
     line(`${OK} faucet: +${usdc(minted)} ${color.dim(`(POST ${t.relayer}/faucet, once an hour)`)}`);
     wallet = await walletOf();
@@ -236,7 +240,7 @@ function pickTable(dealers: readonly DealerView[], game: Game, stake: bigint): D
     .sort((a, b) => a.total_edge_bp - b.total_edge_bp || a.id.localeCompare(b.id))[0];
 }
 
-function serverKeyHex(publicKey: string): string {
+export function serverKeyHex(publicKey: string): string {
   return Buffer.from(PublicKey.fromString(publicKey).data).toString("hex");
 }
 
