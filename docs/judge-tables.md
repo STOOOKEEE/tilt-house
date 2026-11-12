@@ -8,6 +8,7 @@ all the time, so the numbers you see will differ; the shape and the `✓`/`ok` l
 
 ```markdown
 [![CI](https://github.com/STOOOKEEE/tilt-house/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/STOOOKEEE/tilt-house/actions/workflows/ci.yml)
+[![Verify deployment](https://github.com/STOOOKEEE/tilt-house/actions/workflows/verify-deployment.yml/badge.svg?branch=main)](https://github.com/STOOOKEEE/tilt-house/actions/workflows/verify-deployment.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![NEAR testnet](https://img.shields.io/badge/NEAR%20testnet-floor.tilthouse.testnet-00c08b)](https://testnet.nearblocks.io/address/floor.tilthouse.testnet)
 ```
@@ -15,7 +16,12 @@ all the time, so the numbers you see will differ; the shape and the `✓`/`ok` l
 CI (`.github/workflows/ci.yml`) runs on every push to `main` and every pull request: `cargo fmt
 --check`, `cargo clippy --workspace --all-targets -D warnings`, `cargo test --workspace` (including
 the near-workspaces sandbox tests of the contract and the token), `pnpm -r typecheck`, `pnpm -r
-test` and the production build of the site.
+test` and the production build of the site (~13 min; first green run on `main`:
+https://github.com/STOOOKEEE/tilt-house/actions/runs/43267690373). "Verify deployment"
+(`.github/workflows/verify-deployment.yml`, daily and on every change to `deployments/`) runs
+`scripts/verify-deployment.sh`: GitHub's runner rebuilds the floor reproducibly from the commit
+named on chain and checks the hash against `floor.tilthouse.testnet`
+([first passing run](https://github.com/STOOOKEEE/tilt-house/actions/runs/43262911473)).
 
 ## Track fit (`games`: Games With Real Economies)
 
