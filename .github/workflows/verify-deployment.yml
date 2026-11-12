@@ -1,0 +1,31 @@
+name: Verify deployment
+
+# Rebuilds the reproducible contracts and checks their code hash against the chain
+# (scripts/verify-deployment.sh). Runs when the recorded deployment changes, daily, or by hand.
+on:
+  push:
+    branches: [main]
+    paths: [deployments/**, scripts/verify-deployment.sh]
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Full history: the build checks out the commit the contract names on chain.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-near
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/near/cargo-near/releases/download/cargo-near-v0.22.0/cargo-near-installer.sh | sh
+      - run: scripts/verify-deployment.sh
