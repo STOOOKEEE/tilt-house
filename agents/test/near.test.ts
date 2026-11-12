@@ -15,8 +15,9 @@ describe("views", () => {
     expect(() => parseBalance({ balance: "-1" })).toThrow();
   });
 
-  it("gives collect_rent and deposits more gas than a reprice", () => {
+  it("gives collect_rent more gas, and keeps deposits affordable for small wallets", () => {
     expect(gasFor("collect_rent")).toBeGreaterThan(gasFor("reprice"));
-    expect(gasFor("ft_transfer_call")).toBeGreaterThan(gasFor("ft_transfer"));
+    // A gambler with 0.15 NEAR must still be able to deposit its salary.
+    expect(gasFor("ft_transfer_call")).toBeLessThanOrEqual(100_000_000_000_000n);
   });
 });

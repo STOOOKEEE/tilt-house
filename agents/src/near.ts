@@ -47,11 +47,15 @@ export interface House {
   wallet(accountId: string): Promise<bigint>;
 }
 
-/** `collect_rent` settles every seat and `ft_transfer_call` runs the house's receiver: both need room. */
+/** `collect_rent` settles every seat in one call: it needs room. */
 const BIG_GAS = teraToGas(200);
-/** Enough for `reprice`, `rent_bid` and a plain token transfer. */
+/**
+ * Enough for `reprice`, `rent_bid` and token transfers, `ft_transfer_call` into the house included.
+ * Kept low on purpose: a signer must hold prepaid gas × the maximum gas price (0.1 NEAR at 100 TGas),
+ * and the NPC gamblers who deposit their own salary have small NEAR wallets.
+ */
 export const CALL_GAS = teraToGas(100);
-const BIG_METHODS: readonly string[] = ["collect_rent", "ft_transfer_call"];
+const BIG_METHODS: readonly string[] = ["collect_rent"];
 
 export function gasFor(method: string): bigint {
   return BIG_METHODS.includes(method) ? BIG_GAS : CALL_GAS;
