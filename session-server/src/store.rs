@@ -129,6 +129,27 @@ impl Store {
         Ok(seq)
     }
 
+    /// Writes the rounds of one poker hand (one per player) in a single write, so a crash leaves
+    /// either all of them or a prefix (the caller orders losers first: a cut can only drop wins,
+    /// never let a win stand without the losses that pay it). Returns the last sequence number.
+    pub fn append_rounds(&self, events: &[Event]) -> anyhow::Result<u64> {
+        let mut lines = Vec::new();
+        for event in events {
+            if !matches!(event, Event::Round { .. }) {
+                bail!("append_rounds takes rounds only");
+            }
+            serde_json::to_writer(&mut lines, event)?;
+            lines.push(b'\n');
+        }
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| anyhow!("session log lock poisoned"))?;
+        file.write_all(&lines)?;
+        let count = u64::try_from(events.len())?;
+        Ok(self.written.fetch_add(count, Ordering::SeqCst) + count)
+    }
+
     /// Returns once event `seq` is on disk.
     pub async fn durable(&self, seq: u64) -> anyhow::Result<()> {
         if self.synced.load(Ordering::SeqCst) >= seq {

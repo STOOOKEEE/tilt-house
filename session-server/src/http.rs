@@ -1,5 +1,6 @@
-//! HTTP API: sessions (docs/sessions.md steps 1, 3, 5) and the live gamblers
-//! (docs/gamblers-api.md). JSON in and out; errors are `{"error": "..."}`.
+//! HTTP API: sessions (docs/sessions.md steps 1, 3, 5), the live gamblers
+//! (docs/gamblers-api.md) and the poker tables (docs/poker-api.md). JSON in and out; errors are
+//! `{"error": "..."}`.
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -18,6 +19,10 @@ use crate::app::{ApiError, App, CloseReply, CreateReply, CreateRequest, RoundRep
 use crate::chain::Chain;
 use crate::gamblers::{FootfallReply, GamblerSnapshot, Gamblers};
 use crate::limits::RateLimiter;
+use crate::poker::{
+    ActionRequest, JoinReply, JoinRequest, LeaveReply, Poker, PokerConfig, SeedRequest, TableState,
+    TableSummary,
+};
 use crate::session::RoundRequest;
 
 /// Requests are a few hundred bytes; anything larger is not ours.
@@ -45,15 +50,34 @@ struct Http<C> {
     /// Keyed by (session id, token): the id is public on chain, so strangers with a wrong token
     /// fill their own bucket, never the player's. In-process gamblers are not limited.
     rounds: RateLimiter<(String, String)>,
+    poker: Arc<Poker<C>>,
+    /// Poker seeds and actions, keyed by (table id, token) like rounds.
+    poker_moves: RateLimiter<(String, String)>,
 }
 
+/// The router with poker tables on their production timings.
 pub fn router<C: Chain>(app: Arc<App<C>>, gamblers: Arc<Gamblers<C>>) -> Router {
+    let poker = Arc::new(Poker::new(
+        Arc::clone(&app),
+        Arc::clone(&gamblers),
+        PokerConfig::default(),
+    ));
+    router_with_poker(app, gamblers, poker)
+}
+
+pub fn router_with_poker<C: Chain>(
+    app: Arc<App<C>>,
+    gamblers: Arc<Gamblers<C>>,
+    poker: Arc<Poker<C>>,
+) -> Router {
     let http = Arc::new(Http {
         app,
         gamblers,
         per_ip: RateLimiter::new(IP_PER_SEC, IP_BURST),
         creates: RateLimiter::new(CREATE_PER_SEC, CREATE_BURST),
         rounds: RateLimiter::new(ROUNDS_PER_SEC, ROUNDS_PER_SEC),
+        poker,
+        poker_moves: RateLimiter::new(ROUNDS_PER_SEC, ROUNDS_PER_SEC),
     });
     Router::new()
         .route("/sessions", post(create::<C>))
@@ -62,6 +86,12 @@ pub fn router<C: Chain>(app: Arc<App<C>>, gamblers: Arc<Gamblers<C>>) -> Router 
         .route("/sessions/{id}/close", post(close::<C>))
         .route("/gamblers/floor", get(gamblers_floor::<C>))
         .route("/gamblers/footfall", get(footfall::<C>))
+        .route("/poker/tables", get(poker_tables::<C>))
+        .route("/poker/tables/{id}", get(poker_table::<C>))
+        .route("/poker/tables/{id}/join", post(poker_join::<C>))
+        .route("/poker/tables/{id}/seed", post(poker_seed::<C>))
+        .route("/poker/tables/{id}/action", post(poker_action::<C>))
+        .route("/poker/tables/{id}/leave", post(poker_leave::<C>))
         .layer(middleware::from_fn_with_state(
             Arc::clone(&http),
             limit_ip::<C>,
@@ -167,6 +197,85 @@ async fn footfall<C: Chain>(
     Query(query): Query<FootfallQuery>,
 ) -> Result<Json<FootfallReply>, ApiError> {
     http.gamblers.footfall(&query.dealer_id).await.map(Json)
+}
+
+async fn poker_tables<C: Chain>(
+    State(http): State<Arc<Http<C>>>,
+) -> Result<Json<Vec<TableSummary>>, ApiError> {
+    http.poker.list().await.map(Json)
+}
+
+#[derive(Deserialize)]
+struct PokerQuery {
+    since: Option<u64>,
+}
+
+async fn poker_table<C: Chain>(
+    State(http): State<Arc<Http<C>>>,
+    Path(id): Path<String>,
+    Query(query): Query<PokerQuery>,
+    headers: HeaderMap,
+) -> Result<Json<TableState>, ApiError> {
+    // Anyone may watch; a seated player's token adds its own cards.
+    let token = bearer(&headers).ok();
+    http.poker.state(&id, token, query.since).await.map(Json)
+}
+
+async fn poker_join<C: Chain>(
+    State(http): State<Arc<Http<C>>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<JoinRequest>,
+) -> Result<Json<JoinReply>, ApiError> {
+    let token = bearer(&headers)?;
+    // The chain read a join may make (is the session open?) comes after the token check, so
+    // per-token buckets are enough.
+    poker_move_allowed(&http, &id, token)?;
+    http.poker.join(&id, token, request).await.map(Json)
+}
+
+fn poker_move_allowed<C>(http: &Http<C>, id: &str, token: &str) -> Result<(), ApiError> {
+    if http.poker_moves.allow(&(id.to_string(), token.to_string())) {
+        Ok(())
+    } else {
+        Err(ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many moves",
+        ))
+    }
+}
+
+async fn poker_seed<C: Chain>(
+    State(http): State<Arc<Http<C>>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<SeedRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let token = bearer(&headers)?;
+    poker_move_allowed(&http, &id, token)?;
+    http.poker.seed(&id, token, request).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn poker_action<C: Chain>(
+    State(http): State<Arc<Http<C>>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<ActionRequest>,
+) -> Result<Json<TableState>, ApiError> {
+    let token = bearer(&headers)?;
+    poker_move_allowed(&http, &id, token)?;
+    http.poker.act(&id, token, request).await.map(Json)
+}
+
+async fn poker_leave<C: Chain>(
+    State(http): State<Arc<Http<C>>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<LeaveReply>, ApiError> {
+    let token = bearer(&headers)?;
+    poker_move_allowed(&http, &id, token)?;
+    http.poker.leave(&id, token).await.map(Json)
 }
 
 #[cfg(test)]

@@ -17,7 +17,7 @@ use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tilt_house_session_server::app::{App, CloseReply, CreateReply, RoundReply};
 use tilt_house_session_server::chain::{Chain, DealerInfo, FloorInfo, NoChain};
-use tilt_house_session_server::gamblers::{Clock, Gamblers};
+use tilt_house_session_server::gamblers::{Clock, Gamblers, DEFAULT_ACCOUNT_SUFFIX};
 use tilt_house_session_server::http::router;
 use tilt_house_session_server::keys::Signer;
 use tilt_house_session_server::store::Store;
@@ -44,7 +44,15 @@ fn bare<C: Chain>(dir: &Path, key: &str, chain: C) -> Router {
     let signer = Signer::from_near_secret(key).unwrap();
     let app = Arc::new(App::load(signer, chain, store, events).unwrap());
     // Gamblers not started: these tests drive sessions over HTTP only.
-    let gamblers = Gamblers::new(Arc::clone(&app), Clock::system(), dir, None, [0; 32]).unwrap();
+    let gamblers = Gamblers::new(
+        Arc::clone(&app),
+        Clock::system(),
+        dir,
+        None,
+        DEFAULT_ACCOUNT_SUFFIX,
+        [0; 32],
+    )
+    .unwrap();
     router(app, Arc::new(gamblers))
 }
 

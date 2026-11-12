@@ -13,7 +13,7 @@ use http_body_util::BodyExt;
 use serde_json::Value;
 use tilt_house_session_server::app::App;
 use tilt_house_session_server::chain::NoChain;
-use tilt_house_session_server::gamblers::{Clock, Gamblers};
+use tilt_house_session_server::gamblers::{Clock, Gamblers, DEFAULT_ACCOUNT_SUFFIX};
 use tilt_house_session_server::http::router;
 use tilt_house_session_server::keys::Signer;
 use tilt_house_session_server::store::Store;
@@ -99,8 +99,17 @@ async fn an_evening_hour_of_gamblers() {
     let app =
         Arc::new(App::load(Signer::random().unwrap(), NoChain::default(), store, events).unwrap());
     let clock = Clock::starting_at(EVENING);
-    let gamblers =
-        Arc::new(Gamblers::new(Arc::clone(&app), clock, dir.path(), None, [42; 32]).unwrap());
+    let gamblers = Arc::new(
+        Gamblers::new(
+            Arc::clone(&app),
+            clock,
+            dir.path(),
+            None,
+            DEFAULT_ACCOUNT_SUFFIX,
+            [42; 32],
+        )
+        .unwrap(),
+    );
     gamblers.start();
     let router =
         router(app, gamblers).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));

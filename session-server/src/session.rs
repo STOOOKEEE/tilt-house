@@ -7,7 +7,7 @@ use core_rules::session::{
     CompactRound, Hash32, SessionPublic, SessionState, SessionTicket, SettleBatch, SESSION_MIN_BET,
     SETTLE_EVERY_ROUNDS, SETTLE_EVERY_SECS,
 };
-use core_rules::{Bet, BjError};
+use core_rules::{Bet, BjError, Game};
 use serde::{Deserialize, Serialize};
 
 use crate::keys::Signer;
@@ -103,6 +103,9 @@ pub struct Session {
     /// Failed chain calls in a row, and when to try again; in memory only.
     pub chain_failures: u32,
     pub chain_retry_at: u64,
+    /// Poker table this session sits at; while set, only the table may end it. In memory only:
+    /// after a restart the tables are empty and the player rejoins or closes.
+    pub poker_table: Option<String>,
 }
 
 impl Session {
@@ -138,6 +141,7 @@ impl Session {
             chain_busy: false,
             chain_failures: 0,
             chain_retry_at: 0,
+            poker_table: None,
         }
     }
 
@@ -211,7 +215,8 @@ impl Session {
     /// bounds the loss), never a win past `max_win`. Blackjack's worst case already counts a
     /// winning double, so doubling never needs a new check against `max_win`.
     fn check_bet(&self, bet: &Bet, stake: u128) -> Result<(), PlayError> {
-        if bet.game() != self.ticket.game || !bet.is_valid() {
+        // Poker hands are recorded by the table (`App::record_poker_hand`), never asked for.
+        if bet.game() != self.ticket.game || !bet.is_valid() || self.ticket.game == Game::Poker {
             return Err(PlayError::InvalidBet);
         }
         let max = self.ticket.max_bet;

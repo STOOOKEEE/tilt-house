@@ -96,12 +96,13 @@ const DEMO_POOL_FREE: u128 = 100_000_000_000;
 pub const DEMO_GAMBLER_BALANCE: u128 = 100_000_000;
 
 /// The demo floor: id, name, game, seat, rake, boosting. Rakes within `rake_bounds`.
-const DEMO_TABLES: [(&str, &str, Game, usize, u16, bool); 5] = [
+const DEMO_TABLES: [(&str, &str, Game, usize, u16, bool); 6] = [
     ("dice-demo", "Ada", Game::Dice, 0, 100, false),
     ("roulette-demo", "Bruno", Game::Roulette, 1, 120, false),
     ("blackjack-demo", "Cleo", Game::Blackjack, 2, 150, false),
     ("dice-pricey", "Dario", Game::Dice, 3, 300, false),
     ("roulette-boost", "Elsa", Game::Roulette, 4, 0, true),
+    ("poker-demo", "Faye", Game::Poker, 5, 250, false),
 ];
 
 #[derive(Default)]

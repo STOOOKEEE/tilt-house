@@ -6,12 +6,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail};
 use axum::http::StatusCode;
-use core_rules::rake_bounds;
 use core_rules::session::{
     client_seed_is_valid, hex32, hex64, server_seed_hash, session_max_win, sha256, BjSession,
     CompactRound, SessionState, SessionTicket, SESSION_MIN_BET, SESSION_TIMEOUT_SECS,
     TICKET_TTL_SECS,
 };
+use core_rules::{rake_bounds, Game};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -96,7 +96,7 @@ pub struct CreateRequest {
     pub client_seed: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SignedState {
     #[serde(flatten)]
     pub state: SessionState,
@@ -265,7 +265,19 @@ impl<C: Chain> App<C> {
         let pool_free = dealer.pool_free * POOL_FREE_HEADROOM_PCT / 100;
         let max_win = session_max_win(request.lock, pool_free);
         let max_bet = ticket_max_bet(dealer.max_bet);
-        if !dealer.open || max_bet < SESSION_MIN_BET || max_win == 0 {
+        let poker_buy_in_ok = dealer.game != Game::Poker || {
+            let stakes = crate::poker::table_config();
+            (stakes.min_buy_in()..=stakes.max_buy_in()).contains(&request.lock)
+        };
+        if !poker_buy_in_ok {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "poker buy-in (lock) outside the table's min_buy_in..=max_buy_in",
+            ));
+        }
+        // The contract takes a poker buy-in only up to the ticket's max bet.
+        let poker_too_big = dealer.game == Game::Poker && request.lock > max_bet;
+        if !dealer.open || max_bet < SESSION_MIN_BET || max_win == 0 || poker_too_big {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
                 "this table takes no bets now",
@@ -386,6 +398,12 @@ impl<C: Chain> App<C> {
         {
             let mut session = shared.lock().await;
             authorize(&session, token)?;
+            if let Some(table) = &session.poker_table {
+                return Err(ApiError::new(
+                    StatusCode::CONFLICT,
+                    format!("leave the poker table first: POST /poker/tables/{table}/leave"),
+                ));
+            }
             self.begin_close(&mut session).map_err(ApiError::internal)?;
         }
         // The player leaves at once: no round can be played once closing, so the seed is safe to
@@ -502,8 +520,11 @@ impl<C: Chain> App<C> {
             if session.phase == Phase::Closed || !session.chain_ready(at) {
                 continue;
             }
-            let idle =
-                session.opened && at.saturating_sub(session.last_activity) >= IDLE_CLOSE_SECS;
+            // A seated poker player waits for others between hands; the table stands up the
+            // ones who stop acting.
+            let idle = session.opened
+                && session.poker_table.is_none()
+                && at.saturating_sub(session.last_activity) >= IDLE_CLOSE_SECS;
             let expired =
                 !session.opened && at > session.ticket.expires_at.saturating_add(EXPIRY_GRACE_SECS);
             if idle || expired {
@@ -528,6 +549,209 @@ impl<C: Chain> App<C> {
             }
         }
     }
+
+    /// Seats a session at poker table `table_id` (its dealer id): the token must be the
+    /// session's, the session for that dealer, open on chain and not seated elsewhere.
+    pub async fn poker_seat(
+        &self,
+        id: &str,
+        token: &str,
+        table_id: &str,
+    ) -> Result<PokerSeat, ApiError> {
+        let shared = self.get(id)?;
+        let mut session = shared.lock().await;
+        authorize(&session, token)?;
+        let conflict = |message: &str| Err(ApiError::new(StatusCode::CONFLICT, message));
+        if session.ticket.dealer_id != table_id || session.ticket.game != Game::Poker {
+            return conflict("this session is for another table");
+        }
+        if session.phase != Phase::Open {
+            return conflict("session is closing or closed");
+        }
+        match session.poker_table.as_deref() {
+            Some(table) if table == table_id => return conflict("already seated at this table"),
+            Some(_) => return conflict("already seated at another table"),
+            None => {}
+        }
+        if !session.opened {
+            self.confirm_open(&mut session).await?;
+        }
+        session.poker_table = Some(table_id.to_string());
+        Ok(PokerSeat::of(&session))
+    }
+
+    /// The seat facts of a session seated at a poker table (NPCs: right after their own create).
+    pub async fn poker_seat_of(&self, id: &str) -> Result<PokerSeat, ApiError> {
+        let shared = self.get(id)?;
+        let session = shared.lock().await;
+        Ok(PokerSeat::of(&session))
+    }
+
+    /// Marks an in-process (NPC) session seated, after its own `open_session`.
+    pub async fn poker_seat_npc(&self, id: &str, table_id: &str) -> Result<PokerSeat, ApiError> {
+        let shared = self.get(id)?;
+        let mut session = shared.lock().await;
+        if session.phase != Phase::Open || session.poker_table.is_some() {
+            return Err(ApiError::new(StatusCode::CONFLICT, "session not seatable"));
+        }
+        if !session.opened {
+            self.confirm_open(&mut session).await?;
+        }
+        session.poker_table = Some(table_id.to_string());
+        Ok(PokerSeat::of(&session))
+    }
+
+    /// Stands a session up and starts its close (final settle and reveal run from `tick`).
+    pub async fn poker_unseat_and_close(&self, id: &str) -> Result<(), ApiError> {
+        let shared = self.get(id)?;
+        let mut session = shared.lock().await;
+        session.poker_table = None;
+        self.begin_close(&mut session).map_err(ApiError::internal)
+    }
+
+    /// Stands a session up without closing it (a join the table refused).
+    pub async fn poker_release(&self, id: &str) -> Result<(), ApiError> {
+        let shared = self.get(id)?;
+        shared.lock().await.poker_table = None;
+        Ok(())
+    }
+
+    /// A seated player's latest signed state and last round, for its own proof of the stack.
+    pub async fn poker_signed(
+        &self,
+        id: &str,
+    ) -> Result<(SignedState, Option<CompactRound>), ApiError> {
+        let shared = self.get(id)?;
+        let session = shared.lock().await;
+        Ok((Self::signed(&session), session.rounds.last().cloned()))
+    }
+
+    /// Records one finished poker hand: one round per player, `rounds[i].nonce` ignored (each
+    /// gets its session's next nonce). All or nothing: every session must be open, seated and
+    /// able to take its round (stake within the balance, result within `lock + max_win`), or none
+    /// is written. The caller orders losers first (see `Store::append_rounds`). Returns each
+    /// session's new nonce.
+    pub async fn record_poker_hand(
+        self: &Arc<Self>,
+        table_id: &str,
+        rounds: Vec<(String, CompactRound)>,
+    ) -> Result<Vec<(String, u64)>, ApiError> {
+        let mut ids: Vec<&str> = rounds.iter().map(|(id, _)| id.as_str()).collect();
+        ids.sort_unstable();
+        if ids.windows(2).any(|w| w[0] == w[1]) {
+            return Err(ApiError::internal(anyhow!("a session twice in one hand")));
+        }
+        let mut shared = Vec::with_capacity(rounds.len());
+        for (id, _) in &rounds {
+            shared.push(self.get(id)?);
+        }
+        // Lock in id order so two hands can never wait on each other.
+        let mut order: Vec<usize> = (0..rounds.len()).collect();
+        order.sort_by(|&a, &b| rounds[a].0.cmp(&rounds[b].0));
+        let mut guards = Vec::with_capacity(rounds.len());
+        for &i in &order {
+            guards.push((i, shared[i].lock().await));
+        }
+        guards.sort_by_key(|(i, _)| *i);
+        let at = now();
+        let mut events = Vec::with_capacity(rounds.len());
+        let mut nonces = Vec::with_capacity(rounds.len());
+        for ((_, session), (_, round)) in guards.iter().zip(&rounds) {
+            check_poker_round(session, table_id, round)?;
+            let mut round = round.clone();
+            round.nonce = session.state.nonce + 1;
+            nonces.push((session.ticket.session_id.clone(), round.nonce));
+            events.push(Event::Round {
+                session_id: session.ticket.session_id.clone(),
+                round,
+                at,
+            });
+        }
+        let seq = self
+            .store
+            .append_rounds(&events)
+            .map_err(ApiError::internal)?;
+        self.store.durable(seq).await.map_err(ApiError::internal)?;
+        for ((_, session), event) in guards.iter_mut().zip(&events) {
+            session
+                .apply(event, &self.signer)
+                .map_err(ApiError::internal)?;
+        }
+        for ((i, session), _) in guards.iter().zip(&events) {
+            if session.settle_due(at) && session.chain_ready(at) {
+                let app = Arc::clone(self);
+                let shared = Arc::clone(&shared[*i]);
+                tokio::spawn(async move { app.settle_logged(&shared).await });
+            }
+        }
+        Ok(nonces)
+    }
+}
+
+/// What a poker table needs from a seated session.
+#[derive(Clone, Debug)]
+pub struct PokerSeat {
+    pub session_id: String,
+    pub player: String,
+    pub client_seed: String,
+    /// Session balance: the stack.
+    pub balance: u128,
+    /// `lock + max_win`: the stack may never end a hand above it.
+    pub ceiling: u128,
+    /// The session's last finished round.
+    pub nonce: u64,
+    pub open: bool,
+    /// The ticket's max bet: the most one hand may take from this session.
+    pub max_bet: u128,
+    pub rake_bp: u16,
+}
+
+impl PokerSeat {
+    fn of(session: &Session) -> Self {
+        Self {
+            session_id: session.ticket.session_id.clone(),
+            player: session.ticket.player.clone(),
+            client_seed: session.ticket.client_seed.clone(),
+            balance: session.state.balance,
+            ceiling: session.ticket.lock.saturating_add(session.ticket.max_win),
+            nonce: session.state.nonce,
+            open: session.phase == Phase::Open,
+            max_bet: session.ticket.max_bet,
+            rake_bp: session.ticket.rake_bp,
+        }
+    }
+}
+
+/// The checks the contract makes on a poker round, made before anything is written.
+fn check_poker_round(
+    session: &Session,
+    table_id: &str,
+    round: &CompactRound,
+) -> Result<(), ApiError> {
+    let refuse = |why: &str| {
+        Err(ApiError::internal(anyhow!(
+            "poker hand at {table_id} refused for session {}: {why}",
+            session.ticket.session_id
+        )))
+    };
+    if session.phase != Phase::Open || !session.opened {
+        return refuse("session not open");
+    }
+    if session.poker_table.as_deref() != Some(table_id) {
+        return refuse("session not seated here");
+    }
+    if round.bet.game() != Game::Poker || session.ticket.game != Game::Poker {
+        return refuse("not a poker round");
+    }
+    let wager = round.wager();
+    if wager == 0 || wager > session.state.balance {
+        return refuse("stake not within the balance");
+    }
+    let after = session.state.balance - wager + round.payout;
+    if after > session.ticket.lock.saturating_add(session.ticket.max_win) {
+        return refuse("result above lock + max_win");
+    }
+    Ok(())
 }
 
 fn authorize(session: &Session, token: &str) -> Result<(), ApiError> {

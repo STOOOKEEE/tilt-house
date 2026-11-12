@@ -9,5 +9,6 @@ pub mod http;
 pub mod keys;
 pub mod limits;
 pub mod near;
+pub mod poker;
 pub mod session;
 pub mod store;

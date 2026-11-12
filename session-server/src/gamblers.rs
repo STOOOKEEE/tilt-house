@@ -25,7 +25,7 @@ use core_rules::{Bet, BjMove, BjStrategy, DiceBet, Game, Rng, RouletteBet};
 use serde::{Deserialize, Serialize};
 use tokio::time::{sleep, Instant};
 
-use crate::app::{now, ticket_max_bet, ApiError, App, CreateReply, CreateRequest};
+use crate::app::{is_account_id, now, ticket_max_bet, ApiError, App, CreateReply, CreateRequest};
 use crate::chain::{Chain, FloorInfo, FloorTable};
 use crate::keys::{random_bytes, Signer};
 use crate::session::RoundRequest;
@@ -41,8 +41,8 @@ const BALANCE_REFRESH_SECS: u64 = 900;
 const FOOTFALL_WINDOW_SECS: u64 = 3_600;
 /// The footfall endpoint is public: reuse one floor read for this long.
 const FLOOR_CACHE_SECS: u64 = 5;
-/// `g-<name>` + this is the gambler's NEAR account.
-const ACCOUNT_SUFFIX: &str = ".tilthouse.testnet";
+/// `g-<name>` + this is the gambler's NEAR account on testnet (`GAMBLER_ACCOUNT_SUFFIX` in main).
+pub const DEFAULT_ACCOUNT_SUFFIX: &str = ".tilthouse.testnet";
 const MEMORY_FILE: &str = "gamblers.json";
 
 /// Wall-clock seconds that follow tokio's clock, so tests can run an hour in paused time.
@@ -146,9 +146,9 @@ pub struct Gamblers<C> {
     seed: [u8; 32],
 }
 
-/// The NEAR account of a lineup name: `g-mia.tilthouse.testnet`.
-pub fn account_of(name: &str) -> String {
-    format!("{}{ACCOUNT_SUFFIX}", gambler_id(name))
+/// The NEAR account of a lineup name: `g-mia` + `suffix` (`g-mia.tilthouse.testnet`).
+pub fn account_of(name: &str, suffix: &str) -> String {
+    format!("{}{suffix}", gambler_id(name))
 }
 
 fn gambler_id(name: &str) -> String {
@@ -169,19 +169,37 @@ fn load_key(dir: &Path, account: &str) -> anyhow::Result<String> {
     Ok(file.private_key)
 }
 
+/// A gambler lent to a poker table: it plays there with its own account and key.
+#[derive(Clone, Debug)]
+pub struct PokerNpc {
+    pub index: usize,
+    pub id: String,
+    pub name: String,
+    pub persona: Persona,
+    pub account: String,
+    /// NEAR secret key; `None` in `--no-chain` mode.
+    pub key: Option<String>,
+}
+
 impl<C: Chain> Gamblers<C> {
-    /// The lineup. With `keys_dir`, a gambler whose key is missing or bad sits out (logged);
-    /// without (`--no-chain`), everyone plays. `seed` drives every gambler's draws.
+    /// The lineup, with accounts `g-<name><account_suffix>`. With `keys_dir`, a gambler whose
+    /// key is missing or bad sits out (logged); without (`--no-chain`), everyone plays. `seed`
+    /// drives every gambler's draws.
     pub fn new(
         app: Arc<App<C>>,
         clock: Clock,
         data_dir: &Path,
         keys_dir: Option<&Path>,
+        account_suffix: &str,
         seed: [u8; 32],
     ) -> anyhow::Result<Self> {
         let mut members = Vec::new();
         for &(name, persona) in &LINEUP {
-            let account = account_of(name);
+            let account = account_of(name, account_suffix);
+            anyhow::ensure!(
+                is_account_id(&account),
+                "gambler account {account} is not a NEAR account id (check the suffix)"
+            );
             let key = match keys_dir.map(|dir| load_key(dir, &account)) {
                 None => None,
                 Some(Ok(key)) => Some(key),
@@ -351,6 +369,66 @@ impl<C: Chain> Gamblers<C> {
         });
     }
 
+    /// Moves an away gambler to `state`, atomically: a gambler is in one visit or at one poker
+    /// table at a time, never both.
+    fn claim(&self, index: usize, state: GamblerState) -> bool {
+        let mut snapshots = lock(&self.snapshots);
+        match snapshots.get_mut(index) {
+            Some(s) if s.state == GamblerState::Away => {
+                s.state = state;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Lends an away gambler to a poker table: it shows seated there until `release_from_poker`.
+    /// `pick` chooses among the away ones (the table's own draw).
+    pub fn claim_for_poker(
+        &self,
+        dealer_id: &str,
+        floor_seat: Option<usize>,
+        pick: u32,
+    ) -> Option<PokerNpc> {
+        let mut snapshots = lock(&self.snapshots);
+        let away: Vec<usize> = (0..snapshots.len())
+            .filter(|&i| snapshots[i].state == GamblerState::Away)
+            .collect();
+        let index = *away.get(usize::try_from(pick).ok()? % away.len().max(1))?;
+        let s = &mut snapshots[index];
+        s.state = GamblerState::Seated;
+        s.dealer_id = Some(dealer_id.to_string());
+        s.seat = floor_seat;
+        s.reason_code = Some("poker");
+        s.reason = Some("sitting in at the poker table".to_string());
+        s.session_net = 0;
+        let member = &self.members[index];
+        Some(PokerNpc {
+            index,
+            id: member.id.clone(),
+            name: member.name.clone(),
+            persona: member.persona,
+            account: member.account.clone(),
+            key: member.key.clone(),
+        })
+    }
+
+    /// A poker NPC's result so far, for the floor view.
+    pub fn poker_net(&self, index: usize, net: i128) {
+        self.update(index, |s| s.session_net = net);
+    }
+
+    /// Gives a poker NPC back to the floor: away again, its balance re-read.
+    pub async fn release_from_poker(&self, index: usize) {
+        self.show(index, GamblerState::Away, None);
+        self.read_balance(index).await;
+    }
+
+    /// An NPC's in-contract balance (chain read).
+    pub async fn npc_balance(&self, index: usize) -> Option<u128> {
+        self.read_balance(index).await
+    }
+
     async fn read_balance(&self, index: usize) -> Option<u128> {
         let account = &self.members[index].account;
         match self.app.chain().balance(account).await {
@@ -382,6 +460,10 @@ impl<C: Chain> Gamblers<C> {
             if !arrives(self.members[index].persona, balance, at, &mut rng) {
                 continue;
             }
+            // Away, or lent to a poker table (which shows and plays it until it gives it back).
+            if !self.claim(index, GamblerState::Walking) {
+                continue;
+            }
             if let Err(err) = self.visit(index, balance, &mut rng).await {
                 eprintln!("gambler {}: {err:#}", self.members[index].id);
             }
@@ -410,6 +492,8 @@ impl<C: Chain> Gamblers<C> {
             .tables
             .iter()
             .filter(|t| t.open && t.seat.is_some() && t.max_bet >= SESSION_MIN_BET)
+            // Poker tables call their NPCs in themselves (`Poker`), by the seat rule.
+            .filter(|t| t.game != Game::Poker)
             .collect();
         seated.sort_by_key(|t| t.seat);
         let views: Vec<TableView> = seated.iter().map(|t| self.table_view(t, at)).collect();
@@ -625,6 +709,7 @@ fn modest_bet(bet: &Bet) -> Bet {
         }),
         Bet::Roulette(_) | Bet::RouletteSpots(_) => Bet::Roulette(RouletteBet::Red),
         Bet::Blackjack => Bet::Blackjack,
+        Bet::Poker { .. } => bet.clone(),
     }
 }
 
@@ -667,7 +752,10 @@ mod tests {
 
     #[test]
     fn accounts_and_diffs() {
-        assert_eq!(account_of("Mia"), "g-mia.tilthouse.testnet");
+        assert_eq!(
+            account_of("Mia", DEFAULT_ACCOUNT_SUFFIX),
+            "g-mia.tilthouse.testnet"
+        );
         assert_eq!(signed_diff(5, 3), 2);
         assert_eq!(signed_diff(3, 5), -2);
         assert_eq!(usdc(12_500_000), "12.5");

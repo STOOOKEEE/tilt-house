@@ -5,7 +5,8 @@
 //! behind the contract's `SESSION_SERVER_PUBKEY`; a throwaway key with `--no-chain` if unset), and
 //! on chain `HOUSE_CONTRACT`, `SESSION_SERVER_ACCOUNT`, `NEAR_RPC_URL` and `GAMBLER_KEYS_DIR`
 //! (near-cli legacy keychain holding the NPC gamblers' keys, default `~/.near-credentials/testnet`;
-//! `--no-chain` gamblers need no keys).
+//! `--no-chain` gamblers need no keys). `GAMBLER_ACCOUNT_SUFFIX` (default `.tilthouse.testnet`):
+//! the NPC gamblers' accounts are `g-<name>` + this, e.g. `.tilthouse.near` on mainnet.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -15,7 +16,7 @@ use std::time::Duration;
 use anyhow::{bail, Context};
 use tilt_house_session_server::app::App;
 use tilt_house_session_server::chain::{Chain, NoChain};
-use tilt_house_session_server::gamblers::{Clock, Gamblers};
+use tilt_house_session_server::gamblers::{Clock, Gamblers, DEFAULT_ACCOUNT_SUFFIX};
 use tilt_house_session_server::http::router;
 use tilt_house_session_server::keys::{random_bytes, Signer};
 use tilt_house_session_server::near::NearChain;
@@ -95,6 +96,7 @@ async fn serve<C: Chain>(
         Clock::system(),
         &data_dir,
         keys_dir,
+        &env("GAMBLER_ACCOUNT_SUFFIX").unwrap_or_else(|| DEFAULT_ACCOUNT_SUFFIX.into()),
         random_bytes()?,
     )?);
     gamblers.start();
