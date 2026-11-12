@@ -194,7 +194,8 @@ async function setUpPlayer(cmd: DemoCommand, provider: JsonRpcProvider): Promise
   if (cmd.funder) {
     await fundWithFunder(t, provider, cmd.funder, player);
   } else {
-    await activate(t.relayer, accountId);
+    // No Privy login in a terminal: the testnet relayer activates demo accounts anonymously.
+    await activate(t.relayer, accountId, null);
     line(`${OK} the relayer activated it: gas money, token registration, 100 tUSDC ${color.dim(`(POST ${t.relayer}/activate)`)}`);
   }
   return player;
@@ -214,7 +215,7 @@ async function ensureBalance(t: Targets, player: Player): Promise<void> {
   const walletOf = async () => BigInt(amount(await view(t, t.token, "ft_balance_of", { account_id: player.accountId }), "ft_balance_of"));
   let wallet = await walletOf();
   if (wallet < LOCK - before) {
-    const minted = await claimFaucet(t.relayer, player.accountId);
+    const minted = await claimFaucet(t.relayer, player.accountId, null);
     line(`${OK} faucet: +${usdc(minted)} ${color.dim(`(POST ${t.relayer}/faucet, once an hour)`)}`);
     wallet = await walletOf();
   }

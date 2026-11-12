@@ -16,7 +16,7 @@ from it. near-cli-rs is `~/.cargo/bin/near`: `export PATH=$HOME/.cargo/bin:$PATH
 | NPCs hold **one** key: function-call, floor only, `open_session, close_session, force_close, claim_unrevealed`, 1 NEAR gas allowance; no full-access key | `scripts/create-gamblers.sh` (mainnet) |
 | The floor refuses `withdraw`, `invest`, `divest`, seat and table moves, `mt_transfer` for registered NPCs | contract v3 (`docs/contract-api.md`) |
 | NPC salary goes straight into the NPC's in-contract balance, only from the keeper, capped at 200 chips | floor `credit_npc` + `agents/` `SALARY_MODE=credit_npc` (forced on mainnet) |
-| The relayer activates only Privy-authenticated users (ES256 JWT, JWKS of app `cmw3anyvt021d0hjy746afxqi`), one account per Privy user, persisted | `relayer/src/privy.ts`, `relayer/src/state.ts` |
+| The relayer activates only Privy-authenticated users (ES256 JWT, JWKS of app `cmw3anyvt021d0hjy746afxqi`), one account per Privy user, persisted. Testnet's anonymous activation for the CLI demo (`ANONYMOUS_ACTIVATION`) refuses to start on mainnet | `relayer/src/privy.ts`, `relayer/src/state.ts`, `relayer/src/config.ts` |
 | Activation sends the minimum NEAR (0.01: ~0.0038 of storage for the account and its two keys) | `relayer/src/config.ts` |
 | Daily global NEAR cap on everything the relayer spends | `DAILY_BUDGET_NEAR`, `relayer/src/budget.ts` |
 | Kill switch | `RELAYER_PAUSED=1` (see [Kill switch](#kill-switch)) |

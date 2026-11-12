@@ -35,10 +35,18 @@ export const LIMITS = {
   activateGlobalPerHour: 100,
   faucetPerIp: 5,
   faucetGlobalPerHour: 100,
+  /** Testnet activations without a Privy login (CLI demo), on top of the limits above. */
+  anonymousActivateGlobalPerHour: 20,
 } as const;
 
 export interface AppDeps {
-  config: PolicyConfig & { network: Network; activationYocto: bigint; dailyBudgetYocto: bigint; paused: boolean };
+  config: PolicyConfig & {
+    network: Network;
+    activationYocto: bigint;
+    dailyBudgetYocto: bigint;
+    paused: boolean;
+    anonymousActivation: boolean;
+  };
   chain: Chain;
   verifyToken: VerifyToken;
   store: StateStore;
@@ -83,6 +91,7 @@ export function createApp({ config, chain, verifyToken, store, now = Date.now }:
   const relayGlobal = new RateLimiter(LIMITS.relayGlobal, MINUTE_MS);
   const activateIp = new RateLimiter(LIMITS.activatePerIp, MINUTE_MS);
   const activateGlobal = new RateLimiter(LIMITS.activateGlobalPerHour, HOUR_MS);
+  const anonymousActivateGlobal = new RateLimiter(LIMITS.anonymousActivateGlobalPerHour, HOUR_MS);
   const faucetIp = new RateLimiter(LIMITS.faucetPerIp, MINUTE_MS);
   const faucetGlobal = new RateLimiter(LIMITS.faucetGlobalPerHour, HOUR_MS);
   // One claim per account per hour; the token contract also caps mints per 24 h.
@@ -157,11 +166,20 @@ export function createApp({ config, chain, verifyToken, store, now = Date.now }:
   app.post("/activate", async (c) => {
     const ip = clientIp(c) ?? "unknown";
     if (!activateIp.take(ip, now()) || !activateGlobal.take("*", now())) return fail(c, 429, "rate_limited");
-    const auth = await authenticate(c);
-    if (!auth.ok) return auth.response;
+    // Testnet without a token: an anonymous activation, bound to the account alone. A token that is
+    // sent but fails verification is refused, never downgraded to anonymous.
+    const anonymous = config.anonymousActivation && c.req.header("authorization") === undefined;
+    if (anonymous && !anonymousActivateGlobal.take("*", now())) return fail(c, 429, "rate_limited");
+    let privyUser: string | null = null;
+    if (!anonymous) {
+      const auth = await authenticate(c);
+      if (!auth.ok) return auth.response;
+      privyUser = auth.userId;
+    }
     const accountId = await jsonField(c, "accountId");
     if (accountId === null) return fail(c, 400, "invalid_body");
     if (!IMPLICIT_ACCOUNT.test(accountId)) return fail(c, 403, "not_implicit_account");
+    const userId = privyUser ?? `anonymous:${accountId}`;
     try {
       if (!(await budget.allows(now(), config.activationYocto))) return fail(c, 503, "daily_budget_exhausted");
     } catch (error) {
@@ -170,13 +188,13 @@ export function createApp({ config, chain, verifyToken, store, now = Date.now }:
     }
     // No await between these checks and `bind`: two concurrent requests cannot both pay.
     // One activation per Privy user and one per account, remembered across restarts.
-    if (store.hasUser(auth.userId) || store.hasAccount(accountId)) return fail(c, 409, "already_activated");
-    store.bind(auth.userId, accountId, now());
+    if (store.hasUser(userId) || store.hasAccount(accountId)) return fail(c, 409, "already_activated");
+    store.bind(userId, accountId, now());
     try {
       return c.json(await chain.activate(accountId, config.activationYocto, MINT_AMOUNT));
     } catch (error) {
       // Let the player retry; a retry skips the transfer and registration already done.
-      store.unbind(auth.userId);
+      store.unbind(userId);
       console.error("activation failed", error);
       return fail(c, 502, "rpc_error");
     }

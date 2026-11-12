@@ -34,9 +34,10 @@ export async function relay(relayerUrl: string, signedDelegate: SignedDelegate):
 
 /**
  * Asks the relayer to fund a new implicit account and register it on the token. The relayer pays
- * only for a logged-in Privy user (one account each), so the Privy access token goes along.
+ * only for a logged-in Privy user (one account each), so the site sends the Privy access token;
+ * null is for the testnet CLI demo, which the testnet relayer activates anonymously.
  */
-export async function activate(relayerUrl: string, accountId: string, accessToken: string): Promise<void> {
+export async function activate(relayerUrl: string, accountId: string, accessToken: string | null): Promise<void> {
   try {
     await postJson(`${relayerUrl}/activate`, { accountId }, accessToken)
   } catch (error) {

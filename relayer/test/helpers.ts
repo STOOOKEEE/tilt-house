@@ -28,6 +28,7 @@ export const CONFIG: AppDeps["config"] = {
   activationYocto: NEAR / 50n,
   dailyBudgetYocto: 5n * NEAR,
   paused: false,
+  anonymousActivation: false,
 };
 export const APP_ID = "cmtestapp0000000000000000";
 export const KID = "test-key";

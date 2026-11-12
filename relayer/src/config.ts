@@ -19,6 +19,11 @@ export interface Config {
   dailyBudgetYocto: bigint;
   /** Kill switch: every endpoint that spends NEAR refuses with 503 `paused`. */
   paused: boolean;
+  /**
+   * Testnet only: `/activate` also serves callers without a Privy login (the judges' CLI demo),
+   * one per account, under a tighter global limit. Refused on mainnet.
+   */
+  anonymousActivation: boolean;
   privyAppId: string;
   /** Holds state.json (activations, budget counter). */
   dataDir: string;
@@ -81,6 +86,13 @@ function flag(value: string | undefined, name: string): boolean {
   throw new Error(`env ${name} must be 1/0, true/false or yes/no`);
 }
 
+/** On by default on testnet (the README's CLI demo relies on it); never on mainnet. */
+function anonymousActivation(value: string | undefined, net: Network): boolean {
+  if (net === "testnet") return value === undefined || flag(value, "ANONYMOUS_ACTIVATION");
+  if (value !== undefined && flag(value, "ANONYMOUS_ACTIVATION")) throw new Error("ANONYMOUS_ACTIVATION is testnet only");
+  return false;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const net = network(env.NETWORK);
   const defaults = NETWORKS[net];
@@ -102,6 +114,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     activationYocto: nearAmount(env.ACTIVATION_NEAR ?? defaults.activation, "ACTIVATION_NEAR"),
     dailyBudgetYocto,
     paused: flag(env.RELAYER_PAUSED, "RELAYER_PAUSED"),
+    anonymousActivation: anonymousActivation(env.ANONYMOUS_ACTIVATION, net),
     privyAppId,
     dataDir: env.RELAYER_DATA_DIR ?? join(homedir(), ".tilt-house", `relayer-${net}`),
   };

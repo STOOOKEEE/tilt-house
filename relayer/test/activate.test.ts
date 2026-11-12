@@ -195,3 +195,37 @@ describe("POST /activate: kill switch and daily budget", () => {
     expect(chain.activations).toHaveLength(0);
   });
 });
+
+describe("POST /activate: anonymous testnet activations (CLI demo)", () => {
+  beforeEach(() => {
+    app = testApp({ chain, now: () => clock, config: { ...CONFIG, anonymousActivation: true } });
+  });
+
+  it("activates an account without a login, once per account", async () => {
+    expect((await activate(implicit(1), { as: null })).status).toBe(200);
+    expect(await activate(implicit(1), { as: null, ip: "10.0.0.2" })).toEqual({ status: 409, body: { error: "already_activated" } });
+    expect(await activate(implicit(1), { as: user(1) })).toEqual({ status: 409, body: { error: "already_activated" } });
+    expect(chain.activations).toEqual([implicit(1)]);
+  });
+
+  it("never downgrades a bad token to anonymous", async () => {
+    expect(await activate(implicit(1), { as: { header: "Bearer not.a.token" } })).toEqual({ status: 401, body: { error: "invalid_token" } });
+    expect(await activate(implicit(1), { as: { header: "Basic x" } })).toEqual({ status: 401, body: { error: "missing_token" } });
+    expect(chain.activations).toHaveLength(0);
+  });
+
+  it(`caps anonymous activations at ${LIMITS.anonymousActivateGlobalPerHour} per hour, logged-in users unaffected`, async () => {
+    for (let i = 0; i < LIMITS.anonymousActivateGlobalPerHour; i++) {
+      expect((await activate(implicit(600 + i), { as: null, ip: `10.2.0.${i}` })).status).toBe(200);
+    }
+    expect(await activate(implicit(699), { as: null, ip: "10.2.1.1" })).toEqual({ status: 429, body: { error: "rate_limited" } });
+    expect((await activate(implicit(699), { as: user(699), ip: "10.2.1.2" })).status).toBe(200);
+  });
+
+  it("still respects the kill switch and the daily budget", async () => {
+    app = testApp({ chain, now: () => clock, config: { ...CONFIG, anonymousActivation: true, paused: true } });
+    expect(await activate(implicit(1), { as: null })).toEqual({ status: 503, body: { error: "paused" } });
+    app = testApp({ chain, now: () => clock, config: { ...CONFIG, anonymousActivation: true, dailyBudgetYocto: NEAR / 100n } });
+    expect(await activate(implicit(1), { as: null })).toEqual({ status: 503, body: { error: "daily_budget_exhausted" } });
+  });
+});

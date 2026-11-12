@@ -59,6 +59,10 @@ mints 100 tUSDC. The token is an ES256 JWT checked against the app's JWKS
 (`https://auth.privy.io/api/v1/apps/<PRIVY_APP_ID>/jwks.json`, cached 1 h): signature,
 issuer `privy.io`, audience = the app id, expiry, subject `did:privy:…` (`src/privy.ts`).
 
+On testnet (`ANONYMOUS_ACTIVATION`, default on; refused on mainnet) a request without an
+`Authorization` header is activated anonymously, once per account and at most 20 per hour
+overall, for the CLI demo (`cli-demo/`). A token that is sent must verify.
+
 - `200 { funded, registered, minted: "100000000" }` (`funded`/`registered`: done by this call)
 - `401 missing_token | invalid_token`, `403 not_implicit_account`, `409 already_activated`,
   `429 rate_limited` (5/min per IP, 100/hour overall), `502 rpc_error` (retry is safe),

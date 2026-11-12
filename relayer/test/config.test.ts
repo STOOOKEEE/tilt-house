@@ -33,6 +33,14 @@ describe("loadConfig", () => {
     expect(config.dataDir).toMatch(/relayer-mainnet$/);
   });
 
+  it("anonymous activations: on by default on testnet, can be turned off, refused on mainnet", () => {
+    expect(loadConfig(TESTNET).anonymousActivation).toBe(true);
+    expect(loadConfig({ ...TESTNET, ANONYMOUS_ACTIVATION: "0" }).anonymousActivation).toBe(false);
+    expect(loadConfig(MAINNET).anonymousActivation).toBe(false);
+    expect(loadConfig({ ...MAINNET, ANONYMOUS_ACTIVATION: "0" }).anonymousActivation).toBe(false);
+    expect(() => loadConfig({ ...MAINNET, ANONYMOUS_ACTIVATION: "1" })).toThrow(/testnet only/);
+  });
+
   it("mainnet has no default daily budget", () => {
     expect(() => loadConfig({ ...MAINNET, DAILY_BUDGET_NEAR: undefined })).toThrow(/DAILY_BUDGET_NEAR/);
   });
