@@ -21,6 +21,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::poker::{verify_poker_round, Card, HandHistory};
 use crate::{
     apply_rake, bj_deal, bj_double, bj_gross, bj_hit, bj_stand, bj_wager, dice_gross, dice_roll,
     roulette, roulette_gross, roulette_spin, worst_case_payout, Bet, BjError, BjState, Game, Rng,
@@ -76,7 +77,7 @@ pub fn step_seed(server_seed: &Hash32, client_seed: &str, nonce: u64, step: u32)
 
 /// RFC 2104 HMAC with a 32-byte key (shorter than the block, so it is just zero-padded). Written
 /// out rather than pulled from a crate: it is a few lines and cannot fail.
-fn hmac_sha256(key: &Hash32, message: &[u8]) -> Hash32 {
+pub(crate) fn hmac_sha256(key: &Hash32, message: &[u8]) -> Hash32 {
     let mut ipad = [0x36u8; BLOCK];
     let mut opad = [0x5cu8; BLOCK];
     for (i, byte) in key.iter().enumerate() {
@@ -136,9 +137,23 @@ pub enum BjAction {
 #[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
-    Dice { roll: u32 },
-    Roulette { pocket: u8 },
+    Dice {
+        roll: u32,
+    },
+    Roulette {
+        pocket: u8,
+    },
     Blackjack(BjState),
+    /// A player's view of a poker hand: the hand's commitment, the hash of its full public
+    /// history (`poker::HandHistory::hash`, which replays it), the player's seat and the board.
+    Poker {
+        #[serde(with = "hex32")]
+        hand_seed_hash: Hash32,
+        #[serde(with = "hex32")]
+        history_hash: Hash32,
+        seat: u8,
+        board: Vec<Card>,
+    },
 }
 
 /// One finished round as published in the settle tx args and hashed into the chain.
@@ -180,6 +195,8 @@ pub enum RoundError {
     /// Blackjack is played step by step with `BjSession`.
     MultiStep,
     Blackjack(BjError),
+    /// A poker round replays from its hand history (`poker::verify_poker_round`).
+    PokerHand,
 }
 
 impl fmt::Display for RoundError {
@@ -188,6 +205,7 @@ impl fmt::Display for RoundError {
             Self::InvalidBet => f.write_str("invalid bet for this game"),
             Self::MultiStep => f.write_str("blackjack is played step by step"),
             Self::Blackjack(err) => err.fmt(f),
+            Self::PokerHand => f.write_str("a poker round replays from its hand history"),
         }
     }
 }
@@ -199,6 +217,11 @@ impl std::error::Error for RoundError {}
 /// `SESSION_MIN_BET` (each is raked alone, and the minimum keeps that rounding within the edge
 /// bounds) and the spots adding up to exactly `stake`.
 pub fn stake_is_valid(bet: &Bet, stake: u128, max_bet: u128) -> bool {
+    if let Bet::Poker { .. } = bet {
+        // A hand's stake is what the player put in: nothing after a fold without a blind, and
+        // blinds may be under `SESSION_MIN_BET`. The rake is of the pot, so no rounding bound.
+        return stake <= max_bet;
+    }
     if !(SESSION_MIN_BET..=max_bet).contains(&stake) {
         return false;
     }
@@ -247,6 +270,7 @@ pub fn resolve_round(
             (Outcome::Roulette { pocket }, payout)
         }
         Bet::Blackjack => return Err(RoundError::MultiStep),
+        Bet::Poker { .. } => return Err(RoundError::PokerHand),
     };
     Ok(RoundOutcome { outcome, payout })
 }
@@ -502,6 +526,50 @@ pub fn verify_session(
     session: &SessionPublic<'_>,
     batches: &[SettleBatch],
 ) -> Result<Summary, VerifyError> {
+    verify_batches(server_seed, session, batches, |round| {
+        replay_round(
+            server_seed,
+            session,
+            round.nonce,
+            &round.bet,
+            round.stake,
+            &round.actions,
+        )
+        .ok()
+    })
+}
+
+/// `verify_session` for a poker session of `player`: each round must be the player's line of
+/// one of the published `hands` (`poker::verify_poker_round`), which replay from their seeds.
+pub fn verify_poker_session(
+    server_seed: &Hash32,
+    session: &SessionPublic<'_>,
+    player: &str,
+    batches: &[SettleBatch],
+    hands: &[HandHistory],
+) -> Result<Summary, VerifyError> {
+    verify_batches(server_seed, session, batches, |round| {
+        let Bet::Poker { table, hand } = &round.bet else {
+            return None;
+        };
+        if session.game != Game::Poker {
+            return None;
+        }
+        let history = hands
+            .iter()
+            .find(|h| h.start.table == *table && h.start.hand == *hand)?;
+        verify_poker_round(round, history, player).ok()?;
+        Some(round.clone())
+    })
+}
+
+/// The bookkeeping shared by the verifiers; `replay` gives what a round should have been.
+fn verify_batches(
+    server_seed: &Hash32,
+    session: &SessionPublic<'_>,
+    batches: &[SettleBatch],
+    replay: impl Fn(&CompactRound) -> Option<CompactRound>,
+) -> Result<Summary, VerifyError> {
     if server_seed_hash(server_seed) != session.server_seed_hash {
         return Err(VerifyError::WrongSeed);
     }
@@ -514,7 +582,7 @@ pub fn verify_session(
     };
     for batch in batches {
         for round in &batch.rounds {
-            verify_round(server_seed, session, round, &mut summary, batch.upto_nonce)?;
+            verify_round(&replay, round, &mut summary, batch.upto_nonce)?;
         }
         if summary.rounds != batch.upto_nonce {
             return Err(VerifyError::NonceGap {
@@ -537,8 +605,7 @@ pub fn verify_session(
 }
 
 fn verify_round(
-    server_seed: &Hash32,
-    session: &SessionPublic<'_>,
+    replay: &impl Fn(&CompactRound) -> Option<CompactRound>,
     round: &CompactRound,
     summary: &mut Summary,
     upto_nonce: u64,
@@ -550,15 +617,7 @@ fn verify_round(
             got: round.nonce,
         });
     }
-    let replayed = replay_round(
-        server_seed,
-        session,
-        round.nonce,
-        &round.bet,
-        round.stake,
-        &round.actions,
-    )
-    .map_err(|_| VerifyError::TamperedRound { nonce: round.nonce })?;
+    let replayed = replay(round).ok_or(VerifyError::TamperedRound { nonce: round.nonce })?;
     if replayed != *round {
         return Err(VerifyError::TamperedRound { nonce: round.nonce });
     }

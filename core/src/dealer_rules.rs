@@ -1267,7 +1267,8 @@ mod tests {
     fn reprice_always_within_bounds() {
         let mut rng = Rng::new(*b"reprice property test seed 00001");
         for _ in 0..200_000 {
-            let game = [Game::Dice, Game::Roulette, Game::Blackjack][rng.below(3) as usize];
+            let game =
+                [Game::Dice, Game::Roulette, Game::Blackjack, Game::Poker][rng.below(4) as usize];
             let bankroll = random_u128(&mut rng);
             let reserved = random_u128(&mut rng).min(bankroll);
             let pool = Pool {

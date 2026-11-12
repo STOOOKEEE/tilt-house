@@ -49,6 +49,10 @@ use crate::{Bet, Game, Rng, BP};
 
 /// How many NPC gamblers walk the floor.
 pub const GAMBLERS: usize = 24;
+/// Most NPC gambler accounts the floor contract registers (`register_npcs`). Registered NPCs
+/// can only play sessions: their money never leaves the floor except into tables.
+pub const MAX_NPC_GAMBLERS: usize = 24;
+const _: () = assert!(GAMBLERS <= MAX_NPC_GAMBLERS);
 
 /// The house pays each gambler 5 USDC an hour...
 pub const GAMBLER_SALARY_PER_HOUR: u128 = 5_000_000;
@@ -616,6 +620,12 @@ pub fn pick_bet(persona: Persona, game: Game, rng: &mut Rng) -> Bet {
             })
         }
         Game::Blackjack => Bet::Blackjack,
+        // Poker bets come from the hand (`poker::Hand::round_for`), never from this pick: an
+        // empty table name is an invalid bet that every session refuses.
+        Game::Poker => Bet::Poker {
+            table: String::new(),
+            hand: 0,
+        },
     }
 }
 

@@ -238,6 +238,7 @@ fn game_name(game: Game) -> &'static str {
         Game::Dice => "dice",
         Game::Roulette => "roulette",
         Game::Blackjack => "blackjack",
+        Game::Poker => "poker",
     }
 }
 

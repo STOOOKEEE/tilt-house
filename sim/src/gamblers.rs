@@ -284,6 +284,7 @@ fn safe_bet(game: Game) -> Bet {
         }),
         Game::Roulette => Bet::Roulette(RouletteBet::Red),
         Game::Blackjack => Bet::Blackjack,
+        Game::Poker => unreachable!("the simulation has no poker tables"),
     }
 }
 

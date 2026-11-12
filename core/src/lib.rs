@@ -10,6 +10,8 @@ pub mod dice;
 pub mod floor;
 pub mod gambler_rules;
 pub mod jackpot;
+pub mod poker;
+pub mod poker_npc;
 pub mod pool;
 pub mod rng;
 pub mod roulette;
@@ -58,6 +60,8 @@ pub enum Game {
     Dice,
     Roulette,
     Blackjack,
+    /// No-limit hold'em between players (`poker`); the table only takes a rake.
+    Poker,
 }
 
 /// What the player chose for a round. Blackjack has no choice at the deal.
@@ -73,6 +77,12 @@ pub enum Bet {
     /// Several roulette bets settled by one spin, like chips spread on a real felt. The round's
     /// stake is their total; each spot pays (and is raked) as if played alone.
     RouletteSpots(Vec<RouletteSpot>),
+    /// One hand at a poker table: the round's stake is what the player put in the pot, its
+    /// payout what the player won after rake (`poker::Hand::round_for`).
+    Poker {
+        table: String,
+        hand: u64,
+    },
 }
 
 impl Bet {
@@ -81,6 +91,7 @@ impl Bet {
             Self::Dice(_) => Game::Dice,
             Self::Roulette(_) | Self::RouletteSpots(_) => Game::Roulette,
             Self::Blackjack => Game::Blackjack,
+            Self::Poker { .. } => Game::Poker,
         }
     }
 
@@ -90,6 +101,7 @@ impl Bet {
             Self::Roulette(bet) => bet.is_valid(),
             Self::Blackjack => true,
             Self::RouletteSpots(spots) => roulette::spots_are_valid(spots),
+            Self::Poker { table, .. } => !table.is_empty() && table.len() <= poker::MAX_TABLE_LEN,
         }
     }
 }
@@ -109,6 +121,8 @@ pub fn base_edge_bp(game: Game) -> u16 {
         Game::Dice => 0,
         Game::Roulette => ROULETTE_BASE_EDGE_BP,
         Game::Blackjack => BLACKJACK_BASE_EDGE_BP,
+        // Players play each other: the table's whole cut is the rake of the pot.
+        Game::Poker => 0,
     }
 }
 
@@ -128,6 +142,8 @@ pub fn rake_bounds(game: Game) -> (u16, u16) {
         Game::Roulette => (0, 230),
         // Total edge = 116.8 + rake × ~0.97 (exact play under each rake): 117 to 495 bp.
         Game::Blackjack => (0, 389),
+        // Of the pot, capped per hand (`poker::rake_for`); not an edge against the player.
+        Game::Poker => (0, poker::MAX_RAKE_BP),
     }
 }
 
@@ -165,6 +181,9 @@ pub fn worst_case_multiple(game: Game) -> u128 {
         Game::Roulette => 36,
         // A doubled win: 2 × (2 × stake). A natural pays only 2.5×.
         Game::Blackjack => 4,
+        // A player wins at most its own contribution from each player in the hand, its own
+        // included: the pool never pays, the other players do.
+        Game::Poker => u128::from(poker::MAX_SEATS),
     }
 }
 
@@ -185,6 +204,7 @@ pub fn worst_case_payout(game: Game, stake: u128, bet: &Bet) -> u128 {
             roulette::spots_worst_gross(spots)
         }
         Bet::RouletteSpots(_) => u128::MAX,
+        Bet::Poker { .. } => stake.saturating_mul(worst_case_multiple(Game::Poker)),
     }
 }
 
