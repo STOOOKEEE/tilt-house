@@ -1378,6 +1378,12 @@ impl<C: Chain> Poker<C> {
                 let recorded = self.app.record_poker_hand(&id, rounds).await;
                 let mut table = cell.table.lock().await;
                 table.end_hand(recorded, Instant::now());
+                for s in table.seats.iter().flatten() {
+                    if let Some(npc) = &s.npc {
+                        self.gamblers
+                            .poker_net(npc.npc.index, signed_diff(s.stack, s.buy_in));
+                    }
+                }
                 cell.publish(&table);
                 continue;
             }
@@ -1430,6 +1436,8 @@ impl<C: Chain> Poker<C> {
                 return;
             }
         };
+        // The floor shows its wallet without the buy-in now in escrow.
+        self.gamblers.npc_balance(npc.index).await;
         let info = match self.app.poker_seat_npc(&session, id).await {
             Ok(info) => info,
             Err(err) => {
