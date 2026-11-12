@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Account, JsonRpcProvider, KeyPair, KeyPairSigner, teraToGas, type KeyPairString } from "near-api-js";
+import { AccountDoesNotExistError } from "near-api-js/rpc-errors";
 
 export type GameKind = "dice" | "roulette" | "blackjack";
 
@@ -45,7 +46,14 @@ export interface House {
   balance(accountId: string): Promise<bigint>;
   /** tUSDC held in the account's own wallet (on the token, not in the house). */
   wallet(accountId: string): Promise<bigint>;
+  /** NPC gamblers registered in the floor (contract v3 `get_npcs`). */
+  npcs(): Promise<string[]>;
+  /** NEAR the account can spend (balance minus what its storage locks), yocto; null if it does not exist. */
+  nearBalance(accountId: string): Promise<bigint | null>;
 }
+
+/** NEAR locked per byte of account storage (protocol storage staking cost). */
+const YOCTO_PER_BYTE = 10_000_000_000_000_000_000n;
 
 /** `collect_rent` settles every seat in one call: it needs room. */
 const BIG_GAS = teraToGas(200);
@@ -114,6 +122,11 @@ export function parseBalance(value: unknown): bigint {
   return BigInt(value.balance);
 }
 
+export function parseNpcs(value: unknown): string[] {
+  if (!Array.isArray(value) || !value.every(isString)) throw new Error("get_npcs: not a list of accounts");
+  return value;
+}
+
 export function houseViews(provider: JsonRpcProvider, house: string, token: string): House {
   const view = (method: string, args: Record<string, unknown>, contractId = house) =>
     provider.callFunction({ contractId, method, args });
@@ -128,6 +141,19 @@ export function houseViews(provider: JsonRpcProvider, house: string, token: stri
       const balance = await view("ft_balance_of", { account_id: accountId }, token);
       if (!isDecimal(balance)) throw new Error("ft_balance_of: invalid balance");
       return BigInt(balance);
+    },
+    async npcs() {
+      return parseNpcs(await view("get_npcs", {}));
+    },
+    async nearBalance(accountId) {
+      try {
+        const account = await provider.viewAccount({ accountId });
+        const locked = BigInt(account.storage_usage) * YOCTO_PER_BYTE;
+        return account.amount > locked ? account.amount - locked : 0n;
+      } catch (error) {
+        if (error instanceof AccountDoesNotExistError) return null;
+        throw error;
+      }
     },
   };
 }

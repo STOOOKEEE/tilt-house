@@ -4,8 +4,10 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { TransactionTimeoutError } from "near-api-js/rpc-errors";
+import { DailyBudget } from "./budget.ts";
 import type { Chain } from "./chain.ts";
-import { ACCOUNT_ID } from "./config.ts";
+import { ACCOUNT_ID, type Network } from "./config.ts";
+import { isRecord } from "./guards.ts";
 import {
   checkDelegate,
   checkExpiry,
@@ -15,7 +17,9 @@ import {
   signerPublicKey,
   type PolicyConfig,
 } from "./policy.ts";
+import type { VerifyToken } from "./privy.ts";
 import { RateLimiter } from "./rateLimit.ts";
+import type { StateStore } from "./state.ts";
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -34,10 +38,14 @@ export const LIMITS = {
 } as const;
 
 export interface AppDeps {
-  config: PolicyConfig & { activationYocto: bigint };
+  config: PolicyConfig & { network: Network; activationYocto: bigint; dailyBudgetYocto: bigint; paused: boolean };
   chain: Chain;
+  verifyToken: VerifyToken;
+  store: StateStore;
   now?: () => number;
 }
+
+const BEARER = /^Bearer ([A-Za-z0-9._-]+)$/;
 
 function fail(c: Context, status: ContentfulStatusCode, error: string) {
   return c.json({ error }, status);
@@ -45,8 +53,8 @@ function fail(c: Context, status: ContentfulStatusCode, error: string) {
 
 async function jsonField(c: Context, field: string): Promise<string | null> {
   const body: unknown = await c.req.json().catch(() => null);
-  if (typeof body !== "object" || body === null) return null;
-  const value = (body as Record<string, unknown>)[field];
+  if (!isRecord(body)) return null;
+  const value = body[field];
   return typeof value === "string" ? value : null;
 }
 
@@ -68,7 +76,9 @@ function clientIp(c: Context): string | undefined {
   return peer !== undefined && LOOPBACK[peer] === true && forwarded ? forwarded : peer;
 }
 
-export function createApp({ config, chain, now = Date.now }: AppDeps): Hono {
+type Auth = { ok: true; userId: string } | { ok: false; response: Response };
+
+export function createApp({ config, chain, verifyToken, store, now = Date.now }: AppDeps): Hono {
   const relaySender = new RateLimiter(LIMITS.relayPerSender, MINUTE_MS);
   const relayGlobal = new RateLimiter(LIMITS.relayGlobal, MINUTE_MS);
   const activateIp = new RateLimiter(LIMITS.activatePerIp, MINUTE_MS);
@@ -77,15 +87,35 @@ export function createApp({ config, chain, now = Date.now }: AppDeps): Hono {
   const faucetGlobal = new RateLimiter(LIMITS.faucetGlobalPerHour, HOUR_MS);
   // One claim per account per hour; the token contract also caps mints per 24 h.
   const faucetAccount = new RateLimiter(1, HOUR_MS);
-  // Accounts this process already funded; an in-flight activation counts too, so
-  // two concurrent requests cannot both pay.
-  const activated = new Set<string>();
+  const budget = new DailyBudget(config.dailyBudgetYocto, store, () => chain.relayerBalance());
+  // Testnet keeps an open faucet (judges with their own CLI accounts use it); on mainnet only a
+  // Privy user may claim, for the account the relayer activated for them.
+  const faucetNeedsLogin = config.network === "mainnet";
+
+  /** A Privy-authenticated caller, or the refusal to send. Key fetch errors fail closed. */
+  async function authenticate(c: Context): Promise<Auth> {
+    const token = BEARER.exec(c.req.header("authorization") ?? "")?.[1];
+    if (!token) return { ok: false, response: fail(c, 401, "missing_token") };
+    try {
+      const check = await verifyToken(token, now());
+      if (check.ok) return check;
+      return { ok: false, response: fail(c, 401, "invalid_token") };
+    } catch (error) {
+      console.error("privy keys unavailable", error);
+      return { ok: false, response: fail(c, 503, "auth_unavailable") };
+    }
+  }
 
   const app = new Hono();
   app.use("*", cors());
   app.use("*", bodyLimit({ maxSize: MAX_BODY_BYTES, onError: (c) => fail(c, 413, "body_too_large") }));
+  // Kill switch: nothing that spends NEAR runs while paused; /health stays up to report it.
+  app.use("*", async (c, next) => {
+    if (config.paused && c.req.method === "POST") return fail(c, 503, "paused");
+    await next();
+  });
 
-  app.get("/health", (c) => c.json({ ok: true }));
+  app.get("/health", (c) => c.json({ ok: true, network: config.network, paused: config.paused }));
 
   app.post("/relay", async (c) => {
     if (!relayGlobal.take("*", now())) return fail(c, 429, "rate_limited");
@@ -113,6 +143,7 @@ export function createApp({ config, chain, now = Date.now }: AppDeps): Hono {
       // Counted only once the key is proven to belong to the sender, so nobody can
       // burn another account's quota with forged payloads.
       if (!relaySender.take(delegate.senderId, now())) return fail(c, 429, "rate_limited");
+      if (!(await budget.allows(now(), 0n))) return fail(c, 503, "daily_budget_exhausted");
       // A game move's result shows up in the round the page polls: answering at inclusion saves
       // the whole execution (VRF included). Money and key moves wait for their outcome.
       return c.json(await chain.relay(signed, isGameOnly(delegate, config) ? "included" : "executed"));
@@ -126,16 +157,26 @@ export function createApp({ config, chain, now = Date.now }: AppDeps): Hono {
   app.post("/activate", async (c) => {
     const ip = clientIp(c) ?? "unknown";
     if (!activateIp.take(ip, now()) || !activateGlobal.take("*", now())) return fail(c, 429, "rate_limited");
+    const auth = await authenticate(c);
+    if (!auth.ok) return auth.response;
     const accountId = await jsonField(c, "accountId");
     if (accountId === null) return fail(c, 400, "invalid_body");
     if (!IMPLICIT_ACCOUNT.test(accountId)) return fail(c, 403, "not_implicit_account");
-    if (activated.has(accountId)) return fail(c, 409, "already_activated");
-    activated.add(accountId);
+    try {
+      if (!(await budget.allows(now(), config.activationYocto))) return fail(c, 503, "daily_budget_exhausted");
+    } catch (error) {
+      console.error("budget check failed", error);
+      return fail(c, 502, "rpc_error");
+    }
+    // No await between these checks and `bind`: two concurrent requests cannot both pay.
+    // One activation per Privy user and one per account, remembered across restarts.
+    if (store.hasUser(auth.userId) || store.hasAccount(accountId)) return fail(c, 409, "already_activated");
+    store.bind(auth.userId, accountId, now());
     try {
       return c.json(await chain.activate(accountId, config.activationYocto, MINT_AMOUNT));
     } catch (error) {
       // Let the player retry; a retry skips the transfer and registration already done.
-      activated.delete(accountId);
+      store.unbind(auth.userId);
       console.error("activation failed", error);
       return fail(c, 502, "rpc_error");
     }
@@ -147,8 +188,21 @@ export function createApp({ config, chain, now = Date.now }: AppDeps): Hono {
     const accountId = await jsonField(c, "accountId");
     if (accountId === null) return fail(c, 400, "invalid_body");
     if (!ACCOUNT_ID.test(accountId)) return fail(c, 403, "invalid_account");
+    let claimant = accountId;
+    if (faucetNeedsLogin) {
+      const auth = await authenticate(c);
+      if (!auth.ok) return auth.response;
+      if (store.state.activations[auth.userId]?.accountId !== accountId) return fail(c, 403, "not_your_account");
+      claimant = auth.userId;
+    }
+    try {
+      if (!(await budget.allows(now(), 0n))) return fail(c, 503, "daily_budget_exhausted");
+    } catch (error) {
+      console.error("budget check failed", error);
+      return fail(c, 502, "rpc_error");
+    }
     // The claim is spent even if the mint fails: fail closed, the player retries in an hour.
-    if (!faucetAccount.take(accountId, now())) return fail(c, 429, "already_claimed");
+    if (!faucetAccount.take(claimant, now())) return fail(c, 429, "already_claimed");
     try {
       await chain.mint(accountId, MINT_AMOUNT);
       return c.json({ minted: MINT_AMOUNT.toString() });

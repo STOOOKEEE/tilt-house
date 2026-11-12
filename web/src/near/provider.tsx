@@ -1,4 +1,4 @@
-import { useLogin, useLogout, usePrivy } from '@privy-io/react-auth'
+import { getAccessToken, useLogin, useLogout, usePrivy } from '@privy-io/react-auth'
 import { useCreateWallet, useSignRawHash } from '@privy-io/react-auth/extended-chains'
 import { Account, JsonRpcProvider } from 'near-api-js'
 import { useEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react'
@@ -51,7 +51,8 @@ export function NearPrivyProvider({ config, children }: PropsWithChildren<{ conf
     }
     let cancelled = false
     setGameKey({ state: 'pending' })
-    ensureGameKey(nearAccount, config)
+    // Privy's standalone getAccessToken: a stable function, so it needs no place in the deps.
+    ensureGameKey(nearAccount, config, getAccessToken)
       .then(() => !cancelled && setGameKey({ state: 'ready' }))
       .catch((error: unknown) => {
         if (cancelled) return
@@ -67,7 +68,7 @@ export function NearPrivyProvider({ config, children }: PropsWithChildren<{ conf
     [ready, authenticated, login, logout],
   )
   const value = useMemo(
-    () => ({ auth, config, provider, nearAccount, walletId, gameKey }),
+    () => ({ auth, config, provider, nearAccount, walletId, gameKey, getAccessToken }),
     [auth, config, provider, nearAccount, walletId, gameKey],
   )
   return <NearContext.Provider value={value}>{children}</NearContext.Provider>
@@ -83,6 +84,7 @@ export function ReadOnlyNearProvider({ config, reason, children }: PropsWithChil
       nearAccount: null,
       walletId: '',
       gameKey: { state: 'none' },
+      getAccessToken: async () => null,
     }),
     [config, reason],
   )

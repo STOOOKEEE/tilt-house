@@ -3,7 +3,7 @@ import { TransactionTimeoutError } from "near-api-js/rpc-errors";
 import { serialize } from "borsh";
 import type { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
-import { LIMITS, createApp } from "../src/app.ts";
+import { LIMITS } from "../src/app.ts";
 import { GAME_METHODS, MONEY_METHODS, decodeSignedDelegate, delegateHash } from "../src/policy.ts";
 import {
   CONFIG,
@@ -15,6 +15,7 @@ import {
   gameCall,
   keySetup,
   signDelegate,
+  testApp,
   toBase64,
   type DelegateOptions,
 } from "./helpers.ts";
@@ -26,7 +27,7 @@ let app: Hono;
 beforeEach(() => {
   chain = new FakeChain();
   clock = 0;
-  app = createApp({ config: CONFIG, chain, now: () => clock });
+  app = testApp({ chain, now: () => clock });
 });
 
 async function post(body: unknown) {
@@ -252,9 +253,34 @@ describe("chain errors", () => {
   });
 });
 
+describe("kill switch and daily budget", () => {
+  it("refuses every relay while paused, and /health says so", async () => {
+    app = testApp({ chain, now: () => clock, config: { ...CONFIG, paused: true } });
+    expect(await relay([gameCall("close_session")])).toEqual({ status: 503, body: { error: "paused" } });
+    expect(chain.relayed).toHaveLength(0);
+    expect(await (await app.request("/health")).json()).toEqual({ ok: true, network: "testnet", paused: true });
+  });
+
+  it("stops paying gas once today's spending reached the budget, until the next UTC day", async () => {
+    expect((await relay([gameCall("close_session")])).status).toBe(200);
+    chain.balance -= CONFIG.dailyBudgetYocto;
+    clock += 10_000;
+    expect(await relay([gameCall("close_session")])).toEqual({ status: 503, body: { error: "daily_budget_exhausted" } });
+    expect(chain.relayed).toHaveLength(1);
+    clock += 24 * 60 * 60_000;
+    expect((await relay([gameCall("close_session")])).status).toBe(200);
+  });
+
+  it("fails closed when the relayer balance cannot be read", async () => {
+    chain.balanceError = new Error("rpc down");
+    expect(await relay([gameCall("close_session")])).toEqual({ status: 502, body: { error: "rpc_error" } });
+    expect(chain.relayed).toHaveLength(0);
+  });
+});
+
 describe("health", () => {
-  it("answers", async () => {
+  it("answers with the network and the kill switch", async () => {
     const res = await app.request("/health");
-    expect(await res.json()).toEqual({ ok: true });
+    expect(await res.json()).toEqual({ ok: true, network: "testnet", paused: false });
   });
 });

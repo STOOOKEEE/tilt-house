@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gasFor, parseBalance, parseLobby } from "../src/near.ts";
+import { gasFor, parseBalance, parseLobby, parseNpcs } from "../src/near.ts";
 import { LOBBY } from "./fixtures.ts";
 
 describe("views", () => {
@@ -19,5 +19,13 @@ describe("views", () => {
     expect(gasFor("collect_rent")).toBeGreaterThan(gasFor("reprice"));
     // A gambler with 0.15 NEAR must still be able to deposit its salary.
     expect(gasFor("ft_transfer_call")).toBeLessThanOrEqual(100_000_000_000_000n);
+  });
+});
+
+describe("get_npcs", () => {
+  it("accepts a list of account ids and rejects anything else", () => {
+    expect(parseNpcs(["g-mia.tilthouse.near"])).toEqual(["g-mia.tilthouse.near"]);
+    expect(() => parseNpcs([1])).toThrow();
+    expect(() => parseNpcs({})).toThrow();
   });
 });

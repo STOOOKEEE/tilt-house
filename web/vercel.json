@@ -2,6 +2,8 @@
   "rewrites": [
     { "source": "/relayer/:path*", "destination": "https://debian-docker.tail8b5861.ts.net:10000/relayer/:path*" },
     { "source": "/session/:path*", "destination": "https://debian-docker.tail8b5861.ts.net:10000/session/:path*" },
+    { "source": "/mainnet/relayer/:path*", "destination": "https://debian-docker.tail8b5861.ts.net:10000/mainnet/relayer/:path*" },
+    { "source": "/mainnet/session/:path*", "destination": "https://debian-docker.tail8b5861.ts.net:10000/mainnet/session/:path*" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

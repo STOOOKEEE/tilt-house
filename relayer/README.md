@@ -1,7 +1,8 @@
 # relayer
 
 Pays gas for Tilt House players (NEP-366 meta-transactions), activates new Privy
-accounts and runs the tUSDC faucet. Testnet only.
+accounts and runs the tUSDC faucet. One process per network (`NETWORK=testnet|mainnet`);
+the mainnet runbook is `docs/mainnet.md`.
 
 ```sh
 cp .env.example .env   # fill RELAYER_PRIVATE_KEY
@@ -9,8 +10,21 @@ pnpm --filter @tilt-house/relayer start
 pnpm --filter @tilt-house/relayer test
 ```
 
-The relayer account pays for every transaction, the 0.02 NEAR activations and token
-storage deposits, and must be the minter of `TOKEN_CONTRACT` (`mint_to`).
+The relayer account pays for every transaction, the activations (0.02 NEAR on testnet,
+0.01 on mainnet) and token storage deposits, and must be the minter of `TOKEN_CONTRACT`
+(`mint_to`). Settings: `.env.example`.
+
+## Spending guards
+
+- **Kill switch**: `RELAYER_PAUSED=1` makes every `POST` answer `503 paused`; `/health`
+  reports it.
+- **Daily budget**: `DAILY_BUDGET_NEAR` (default 5 on testnet, required on mainnet) caps what
+  the relayer spends per UTC day. It watches its own balance (every drop counts, top-ups are
+  ignored), so activations, storage deposits and gas are all counted; once spent, spending
+  endpoints answer `503 daily_budget_exhausted` until 00:00 UTC.
+- **State**: activated Privy users and the budget counter live in
+  `$RELAYER_DATA_DIR/state.json` (default `~/.tilt-house/relayer-<network>/`) and survive
+  restarts. Rate limits live in memory.
 
 ## Endpoints
 
@@ -23,40 +37,45 @@ near-api-js). Only these shapes are relayed (`src/policy.ts`):
 
 | receiver | actions | signing key |
 | --- | --- | --- |
-| `HOUSE_CONTRACT` | FunctionCall `bet_dice`, `bet_roulette`, `bj_deal`, `bj_hit`, `bj_double`, `bj_stand`, `refund_stuck_round`, deposit 0 | any |
-| `HOUSE_CONTRACT` | FunctionCall `withdraw`, `invest`, `divest`, `mt_transfer`, deposit 0 or 1 yocto | full access |
+| `HOUSE_CONTRACT` | FunctionCall `open_session`, `close_session`, `force_close`, `claim_unrevealed` (`GAME_METHODS`), deposit 0 | any |
+| `HOUSE_CONTRACT` | FunctionCall `MONEY_METHODS` (`withdraw`, `invest`, `divest`, table and seat owner actions, `set_table_name`, `retire_table`), deposit 0 or 1 yocto | full access |
 | `TOKEN_CONTRACT` | one `ft_transfer_call`, 1 yocto, `receiver_id` = house | full access |
-| the sender | one AddKey: function-call key for the house, exactly the 7 game methods, allowance null or ≤ 0.25 NEAR | full access |
+| the sender | one AddKey: function-call key for the house, exactly the 4 game methods, allowance null or ≤ 0.25 NEAR | full access |
 
 Also: at most 4 actions and 300 Tgas in total, valid ed25519 signature, the key exists
 on chain with a nonce below the delegate's, `maxBlockHeight` in (now, now + 600].
 
-- `200 { txHash, status: "success" | "failure", failure? }`
+- `200 { txHash, status: "success" | "failure" | "pending", failure? }`
 - `400 invalid_body | invalid_encoding`, `403 <reason>` (see `RefusalReason`),
+  `503 paused | daily_budget_exhausted`,
   `429 rate_limited` (30/min per sender, 600/min overall), `502 rpc_error`,
   `504 rpc_timeout` (the transaction may still land)
 
-### `POST /activate` `{ accountId }`
+### `POST /activate` `{ accountId }`, header `Authorization: Bearer <Privy access token>`
 
-For a 64-hex implicit account (Privy wallet), once per account: sends `ACTIVATION_NEAR`
-if it holds less, registers it on the token (`storage_deposit`) and mints 100 tUSDC.
+For a 64-hex implicit account (Privy wallet), once per Privy user and once per account:
+sends `ACTIVATION_NEAR` if it holds less, registers it on the token (`storage_deposit`) and
+mints 100 tUSDC. The token is an ES256 JWT checked against the app's JWKS
+(`https://auth.privy.io/api/v1/apps/<PRIVY_APP_ID>/jwks.json`, cached 1 h): signature,
+issuer `privy.io`, audience = the app id, expiry, subject `did:privy:…` (`src/privy.ts`).
 
 - `200 { funded, registered, minted: "100000000" }` (`funded`/`registered`: done by this call)
-- `403 not_implicit_account`, `409 already_activated`, `429 rate_limited`
-  (5/min per IP, 100/hour overall), `502 rpc_error` (retry is safe)
+- `401 missing_token | invalid_token`, `403 not_implicit_account`, `409 already_activated`,
+  `429 rate_limited` (5/min per IP, 100/hour overall), `502 rpc_error` (retry is safe),
+  `503 paused | daily_budget_exhausted | auth_unavailable` (Privy keys unreachable)
 
 ### `POST /faucet` `{ accountId }`
 
 Mints 100 tUSDC to any valid account id (attaching the storage deposit if the account
 is not registered). One claim per account per hour; the token contract caps mints at
-1,000 tUSDC per 24 h.
+1,000 tUSDC per 24 h. On mainnet it also needs the Privy bearer token and mints only to the
+account activated for that user, one claim per user per hour.
 
 - `200 { minted: "100000000" }`
-- `403 invalid_account`, `429 already_claimed | rate_limited` (5/min per IP,
-  100/hour overall), `502 mint_failed` (the claim stays spent for the hour)
+- `401 missing_token | invalid_token` (mainnet), `403 invalid_account | not_your_account`,
+  `429 already_claimed | rate_limited` (5/min per IP, 100/hour overall),
+  `502 mint_failed` (the claim stays spent for the hour), `503 paused | daily_budget_exhausted`
 
 ### `GET /health`
 
-`{ ok: true }`
-
-Limits and the activated/claimed sets live in memory and reset on restart.
+`{ ok: true, network, paused }`

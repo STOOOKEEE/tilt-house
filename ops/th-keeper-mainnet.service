@@ -1,0 +1,17 @@
+# Mainnet keeper: rent, repricing, NPC salaries (credit_npc), low-NEAR alerts.
+# Install: cp ops/th-keeper-mainnet.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+# Env: ~/.tilt-house/keeper-mainnet.env (template: ops/keeper-mainnet.env.example).
+[Unit]
+Description=Tilt House keeper, MAINNET
+After=network-online.target
+
+[Service]
+Restart=always
+RestartSec=5
+Environment=PATH=%h/.local/bin:/usr/bin:/bin
+WorkingDirectory=%h/dev/STOOOKEEE/tilt-house/agents
+EnvironmentFile=%h/.tilt-house/keeper-mainnet.env
+ExecStart=/usr/bin/node src/keeper.ts
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,17 @@
+# Mainnet gas relayer, loopback 8798 (gateway prefix /mainnet/relayer).
+# Install: cp ops/th-relayer-mainnet.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+# Env: ~/.tilt-house/relayer-mainnet.env (template: ops/relayer-mainnet.env.example, mode 600).
+[Unit]
+Description=Tilt House relayer, MAINNET (loopback 8798)
+After=network-online.target
+
+[Service]
+Restart=always
+RestartSec=5
+Environment=PATH=%h/.local/bin:/usr/bin:/bin
+WorkingDirectory=%h/dev/STOOOKEEE/tilt-house/relayer
+EnvironmentFile=%h/.tilt-house/relayer-mainnet.env
+ExecStart=/usr/bin/node src/main.ts
+
+[Install]
+WantedBy=default.target

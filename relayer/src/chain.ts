@@ -45,6 +45,8 @@ export interface Chain {
   activate(accountId: string, near: bigint, tokens: bigint): Promise<Activation>;
   /** Mints `tokens` tUSDC to the account (relayer is the token's minter). */
   mint(accountId: string, tokens: bigint): Promise<void>;
+  /** The relayer account's own NEAR balance, yocto (the daily budget watches it). */
+  relayerBalance(): Promise<bigint>;
 }
 
 const STORAGE_DEPOSIT_GAS = teraToGas(30);
@@ -174,5 +176,7 @@ export function nearChain(config: Config): Chain {
     },
 
     mint,
+
+    relayerBalance: () => balanceOf(config.relayerAccount),
   };
 }

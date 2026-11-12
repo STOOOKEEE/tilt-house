@@ -1,0 +1,16 @@
+# Mainnet session server, loopback 8792 (gateway prefix /mainnet/session).
+# Install: cp ops/th-sessions-mainnet.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+# Env: ~/.tilt-house/session-server-mainnet.env (template: ops/session-server-mainnet.env.example, mode 600).
+[Unit]
+Description=Tilt House session server, MAINNET (loopback 8792)
+After=network-online.target
+
+[Service]
+Restart=always
+RestartSec=5
+Environment=PATH=%h/.local/bin:/usr/bin:/bin
+EnvironmentFile=%h/.tilt-house/session-server-mainnet.env
+ExecStart=%h/.tilt-house/bin/tilt-house-session-server
+
+[Install]
+WantedBy=default.target

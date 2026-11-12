@@ -29,6 +29,8 @@ export const MONEY_METHODS = [
   "set_temperament",
   "list_seat",
   "buy_seat",
+  "set_table_name",
+  "retire_table",
 ] as const;
 
 export const DEPOSIT_METHOD = "ft_transfer_call";

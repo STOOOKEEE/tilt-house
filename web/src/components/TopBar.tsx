@@ -1,4 +1,5 @@
 import { Link, NavLink } from 'react-router'
+import { saveNetworkChoice, type NetworkId } from '../config'
 import { formatUsdc } from '../format'
 import { useNear, type GameKeyStatus } from '../near/useNear'
 import { usePlayer } from '../near/usePoll'
@@ -26,6 +27,44 @@ function keyLabel(status: GameKeyStatus): string {
   }
 }
 
+const NETWORKS: readonly { id: NetworkId; label: string }[] = [
+  { id: 'testnet', label: 'Testnet' },
+  { id: 'mainnet', label: 'Mainnet' },
+]
+
+/**
+ * Testnet / mainnet toggle. Every provider, poll and game key derives from the config, so a
+ * switch stores the choice and reloads the page. Mainnet stays disabled until it is configured.
+ */
+function NetworkSwitch() {
+  const { config } = useNear()
+  const pick = (network: NetworkId) => {
+    if (network === config.network) return
+    saveNetworkChoice(localStorage, network)
+    window.location.reload()
+  }
+  return (
+    <div className="network-switch" role="group" aria-label="Network">
+      {NETWORKS.map(({ id, label }) => {
+        const soon = id === 'mainnet' && !config.mainnetReady
+        return (
+          <button
+            key={id}
+            type="button"
+            className={config.network === id ? 'active' : 'ghost'}
+            aria-pressed={config.network === id}
+            disabled={soon}
+            title={soon ? 'Mainnet: coming soon' : id === 'mainnet' ? 'NEAR mainnet, play money (no value)' : 'NEAR testnet'}
+            onClick={() => pick(id)}
+          >
+            {soon ? `${label} · soon` : label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export function TopBar() {
   const { auth, walletId, gameKey } = useNear()
   const authenticated = auth.available && auth.authenticated
@@ -44,6 +83,7 @@ export function TopBar() {
       <Link className="button ghost tour-link" to="/?tour=1">
         How the house works
       </Link>
+      <NetworkSwitch />
       <div className="account">
         {authenticated && walletId ? (
           <>

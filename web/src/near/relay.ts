@@ -32,10 +32,13 @@ export async function relay(relayerUrl: string, signedDelegate: SignedDelegate):
   return { txHash: body.txHash }
 }
 
-/** Asks the relayer to fund a new implicit account and register it on the token. */
-export async function activate(relayerUrl: string, accountId: string): Promise<void> {
+/**
+ * Asks the relayer to fund a new implicit account and register it on the token. The relayer pays
+ * only for a logged-in Privy user (one account each), so the Privy access token goes along.
+ */
+export async function activate(relayerUrl: string, accountId: string, accessToken: string): Promise<void> {
   try {
-    await postJson(`${relayerUrl}/activate`, { accountId })
+    await postJson(`${relayerUrl}/activate`, { accountId }, accessToken)
   } catch (error) {
     // Activation is one-time per account: a repeat (e.g. new browser) is fine.
     if (error instanceof RelayError && error.code === 'already_activated') return
@@ -43,17 +46,22 @@ export async function activate(relayerUrl: string, accountId: string): Promise<v
   }
 }
 
-/** Claims free testnet tUSDC (once per hour per account); returns the minted base units. */
-export async function claimFaucet(relayerUrl: string, accountId: string): Promise<string> {
-  const body = await postJson(`${relayerUrl}/faucet`, { accountId })
+/**
+ * Claims free tUSDC (once per hour per account; on mainnet once per hour per Privy user, who must
+ * send their access token); returns the minted base units.
+ */
+export async function claimFaucet(relayerUrl: string, accountId: string, accessToken: string | null): Promise<string> {
+  const body = await postJson(`${relayerUrl}/faucet`, { accountId }, accessToken)
   if (!isRecord(body) || typeof body.minted !== 'string') throw new RelayError('relayer sent an unexpected reply', 'bad_reply')
   return body.minted
 }
 
-async function postJson(url: string, payload: object): Promise<unknown> {
+async function postJson(url: string, payload: object, accessToken: string | null = null): Promise<unknown> {
+  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  if (accessToken) headers.authorization = `Bearer ${accessToken}`
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify(payload),
   })
   const body: unknown = await response.json().catch(() => null)

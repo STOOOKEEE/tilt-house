@@ -11,6 +11,7 @@ vi.mock('./relay', () => ({
 }))
 
 const { ensureGameKey } = await import('./session')
+const { activate } = await import('./relay')
 
 const store: Record<string, string> = {}
 beforeEach(() => {
@@ -23,6 +24,7 @@ beforeEach(() => {
 })
 
 const config = { houseContract: 'floor.tilthouse.testnet', relayerUrl: '/relayer' }
+const token = async () => 'privy-token'
 
 function fakeAccount(): Account {
   const signing = { createSignedMetaTransaction: async () => ({ signedDelegate: { nonce: 1 } }) }
@@ -31,14 +33,26 @@ function fakeAccount(): Account {
 
 describe('ensureGameKey', () => {
   it('signs one AddKey when the provider asks twice at once', async () => {
-    const [first, second] = await Promise.all([ensureGameKey(fakeAccount(), config), ensureGameKey(fakeAccount(), config)])
+    const [first, second] = await Promise.all([ensureGameKey(fakeAccount(), config, token), ensureGameKey(fakeAccount(), config, token)])
     expect(relayed).toHaveLength(1)
     expect(second.toString()).toBe(first.toString())
   })
 
   it('reuses the stored key afterwards', async () => {
-    const key = await ensureGameKey(fakeAccount(), config)
-    expect((await ensureGameKey(fakeAccount(), config)).toString()).toBe(key.toString())
+    const key = await ensureGameKey(fakeAccount(), config, token)
+    expect((await ensureGameKey(fakeAccount(), config, token)).toString()).toBe(key.toString())
     expect(relayed).toHaveLength(1)
+  })
+
+  it('sends the Privy access token with the activation', async () => {
+    await ensureGameKey(fakeAccount(), config, token)
+    expect(vi.mocked(activate)).toHaveBeenLastCalledWith('/relayer', 'a'.repeat(64), 'privy-token')
+  })
+
+  it('stops before activating when the login is gone', async () => {
+    vi.mocked(activate).mockClear()
+    await expect(ensureGameKey(fakeAccount(), config, async () => null)).rejects.toThrow(/log in again/)
+    expect(vi.mocked(activate)).not.toHaveBeenCalled()
+    expect(relayed).toHaveLength(0)
   })
 })

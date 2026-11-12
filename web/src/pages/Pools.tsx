@@ -143,7 +143,7 @@ interface WalletProps {
 }
 
 function Wallet({ player, busy, onDeposit, onWithdraw }: WalletProps) {
-  const { config, walletId } = useNear()
+  const { config, walletId, getAccessToken } = useNear()
   const wallet = usePoll(
     useCallback(() => getTokenBalance(config.rpcUrl, config.tokenContract, walletId), [config, walletId]),
     5_000,
@@ -152,7 +152,7 @@ function Wallet({ player, busy, onDeposit, onWithdraw }: WalletProps) {
   const claim = async () => {
     setFaucet('claiming…')
     try {
-      setFaucet(`+${formatUsdc(await claimFaucet(config.relayerUrl, walletId))} tUSDC in your wallet`)
+      setFaucet(`+${formatUsdc(await claimFaucet(config.relayerUrl, walletId, await getAccessToken()))} tUSDC in your wallet`)
       wallet.refresh()
     } catch (error) {
       setFaucet(error instanceof Error ? error.message : String(error))

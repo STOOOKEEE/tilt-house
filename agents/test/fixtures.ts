@@ -31,10 +31,20 @@ export const LOBBY: DealerView[] = [
   dealer({ id: "otto", game: "dice", seated: false }),
 ];
 
-export function fakeHouse(lobby: DealerView[], balances: Record<string, bigint> = {}, wallets: Record<string, bigint> = {}): House {
+export interface FakeChainState {
+  balances?: Record<string, bigint>;
+  wallets?: Record<string, bigint>;
+  npcs?: string[];
+  /** NEAR per account; missing = the account does not exist. */
+  near?: Record<string, bigint>;
+}
+
+export function fakeHouse(lobby: DealerView[], { balances = {}, wallets = {}, npcs = [], near = {} }: FakeChainState = {}): House {
   return {
     lobby: async () => lobby,
     balance: async (accountId) => balances[accountId] ?? 0n,
     wallet: async (accountId) => wallets[accountId] ?? 0n,
+    npcs: async () => npcs,
+    nearBalance: async (accountId) => near[accountId] ?? null,
   };
 }

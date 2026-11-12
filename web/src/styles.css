@@ -854,3 +854,18 @@ input.number {
   border-radius: 50%;
   background: rgba(12, 11, 13, 0.78);
 }
+
+/* Testnet / mainnet toggle in the top bar. */
+.network-switch {
+  display: flex;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.network-switch button {
+  padding: 0.25rem 0.6rem;
+}
+
+.network-switch button.active {
+  cursor: default;
+}

@@ -17,6 +17,8 @@ export interface NearContextValue {
   nearAccount: Account | null
   walletId: string
   gameKey: GameKeyStatus
+  /** The Privy access token the relayer asks for (activation, mainnet faucet); null when logged out. */
+  getAccessToken: () => Promise<string | null>
 }
 
 export const NearContext = createContext<NearContextValue | undefined>(undefined)

@@ -1,7 +1,11 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
-import { LIMITS, createApp } from "../src/app.ts";
-import { CONFIG, FakeChain } from "./helpers.ts";
+import { LIMITS } from "../src/app.ts";
+import { StateStore } from "../src/state.ts";
+import { CONFIG, FakeChain, NEAR, privyToken, testApp } from "./helpers.ts";
 
 let chain: FakeChain;
 let clock: number;
@@ -10,14 +14,26 @@ let app: Hono;
 beforeEach(() => {
   chain = new FakeChain();
   clock = 0;
-  app = createApp({ config: CONFIG, chain, now: () => clock });
+  app = testApp({ chain, now: () => clock });
 });
 
 const implicit = (n: number) => n.toString(16).padStart(64, "0");
+const user = (n: number) => `did:privy:user${n.toString().padStart(20, "0")}`;
 
-async function activate(accountId: unknown, ip = "10.0.0.1", forwardedFor?: string) {
+interface Caller {
+  ip?: string;
+  forwardedFor?: string;
+  /** A Privy user id to sign a token for, a raw Authorization header, or null for none. */
+  as?: string | { header: string } | null;
+}
+
+/** Each account is activated by its own Privy user unless the test says otherwise. */
+async function activate(accountId: unknown, { ip = "10.0.0.1", forwardedFor, as }: Caller = {}) {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (forwardedFor !== undefined) headers["x-forwarded-for"] = forwardedFor;
+  const who = as === undefined ? `did:privy:for${String(accountId).replace(/[^A-Za-z0-9]/g, "").slice(-20)}` : as;
+  if (typeof who === "string") headers.authorization = `Bearer ${await privyToken(who, clock)}`;
+  else if (who !== null) headers.authorization = who.header;
   const res = await app.request(
     "/activate",
     { method: "POST", headers, body: JSON.stringify({ accountId }) },
@@ -48,30 +64,30 @@ describe("POST /activate", () => {
 
   it("lets the player retry after a chain failure", async () => {
     chain.activateError = new Error("rpc down");
-    expect(await activate(implicit(2))).toEqual({ status: 502, body: { error: "rpc_error" } });
+    expect(await activate(implicit(2), { as: user(2) })).toEqual({ status: 502, body: { error: "rpc_error" } });
     chain.activateError = null;
-    expect((await activate(implicit(2))).status).toBe(200);
+    expect((await activate(implicit(2), { as: user(2) })).status).toBe(200);
   });
 
   it(`allows ${LIMITS.activatePerIp} requests per IP per minute`, async () => {
     for (let i = 0; i < LIMITS.activatePerIp; i++) expect((await activate(implicit(10 + i))).status).toBe(200);
     expect(await activate(implicit(99))).toEqual({ status: 429, body: { error: "rate_limited" } });
-    expect((await activate(implicit(99), "10.0.0.2")).status).toBe(200);
+    expect((await activate(implicit(99), { ip: "10.0.0.2" })).status).toBe(200);
     clock += 60_000;
     expect((await activate(implicit(100))).status).toBe(200);
   });
 
   it(`caps activations at ${LIMITS.activateGlobalPerHour} per hour`, async () => {
     for (let i = 0; i < LIMITS.activateGlobalPerHour; i++) {
-      expect((await activate(implicit(1000 + i), `10.1.${Math.floor(i / 100)}.${i % 100}`)).status).toBe(200);
+      expect((await activate(implicit(1000 + i), { ip: `10.1.${Math.floor(i / 100)}.${i % 100}` })).status).toBe(200);
     }
-    expect(await activate(implicit(5000), "10.9.9.9")).toEqual({ status: 429, body: { error: "rate_limited" } });
+    expect(await activate(implicit(5000), { ip: "10.9.9.9" })).toEqual({ status: 429, body: { error: "rate_limited" } });
     clock += 60 * 60_000;
-    expect((await activate(implicit(5000), "10.9.9.9")).status).toBe(200);
+    expect((await activate(implicit(5000), { ip: "10.9.9.9" })).status).toBe(200);
   });
 
   it("behind the local proxy, limits the client it names last, not a forged earlier entry", async () => {
-    const viaProxy = (n: number, forwarded: string) => activate(implicit(n), "127.0.0.1", forwarded);
+    const viaProxy = (n: number, forwardedFor: string) => activate(implicit(n), { ip: "127.0.0.1", forwardedFor });
     for (let i = 0; i < LIMITS.activatePerIp; i++) {
       expect((await viaProxy(200 + i, `6.6.6.${i}, 203.0.113.7`)).status).toBe(200);
     }
@@ -81,8 +97,101 @@ describe("POST /activate", () => {
 
   it("ignores X-Forwarded-For from a non-loopback peer", async () => {
     for (let i = 0; i < LIMITS.activatePerIp; i++) {
-      expect((await activate(implicit(400 + i), "10.0.0.9", `198.51.100.${i}`)).status).toBe(200);
+      expect((await activate(implicit(400 + i), { ip: "10.0.0.9", forwardedFor: `198.51.100.${i}` })).status).toBe(200);
     }
-    expect((await activate(implicit(499), "10.0.0.9", "198.51.100.200")).status).toBe(429);
+    expect((await activate(implicit(499), { ip: "10.0.0.9", forwardedFor: "198.51.100.200" })).status).toBe(429);
+  });
+});
+
+describe("POST /activate: Privy login", () => {
+  it("refuses a request without a token", async () => {
+    expect(await activate(implicit(1), { as: null })).toEqual({ status: 401, body: { error: "missing_token" } });
+    expect(await activate(implicit(1), { as: { header: "Basic abc" } })).toEqual({ status: 401, body: { error: "missing_token" } });
+    expect(chain.activations).toHaveLength(0);
+  });
+
+  it("refuses a token that does not verify", async () => {
+    const forged = (await privyToken(user(1), clock)).replace(/\.[^.]+$/, ".AAAA");
+    expect(await activate(implicit(1), { as: { header: `Bearer ${forged}` } })).toEqual({ status: 401, body: { error: "invalid_token" } });
+    const expired = await privyToken(user(1), clock - 2 * 3_600_000);
+    expect(await activate(implicit(1), { as: { header: `Bearer ${expired}` } })).toEqual({ status: 401, body: { error: "invalid_token" } });
+    expect(chain.activations).toHaveLength(0);
+  });
+
+  it("fails closed when Privy's keys cannot be fetched", async () => {
+    app = testApp({
+      chain,
+      now: () => clock,
+      verifyToken: () => Promise.reject(new Error("jwks down")),
+    });
+    expect(await activate(implicit(1))).toEqual({ status: 503, body: { error: "auth_unavailable" } });
+    expect(chain.activations).toHaveLength(0);
+  });
+
+  it("activates one account per Privy user", async () => {
+    expect((await activate(implicit(1), { as: user(1) })).status).toBe(200);
+    expect(await activate(implicit(2), { as: user(1) })).toEqual({ status: 409, body: { error: "already_activated" } });
+    expect(chain.activations).toEqual([implicit(1)]);
+  });
+
+  it("activates an account once, whoever asks", async () => {
+    expect((await activate(implicit(1), { as: user(1) })).status).toBe(200);
+    expect(await activate(implicit(1), { as: user(2) })).toEqual({ status: 409, body: { error: "already_activated" } });
+    expect(chain.activations).toHaveLength(1);
+  });
+
+  it("pays once when the same user sends two requests at the same time", async () => {
+    const results = await Promise.all([activate(implicit(1), { as: user(1) }), activate(implicit(2), { as: user(1) })]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect(chain.activations).toHaveLength(1);
+  });
+
+  it("remembers activations across a restart", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), "relayer-")), "state.json");
+    app = testApp({ chain, now: () => clock, store: new StateStore(file) });
+    expect((await activate(implicit(1), { as: user(1) })).status).toBe(200);
+    app = testApp({ chain, now: () => clock, store: new StateStore(file) });
+    expect(await activate(implicit(2), { as: user(1) })).toEqual({ status: 409, body: { error: "already_activated" } });
+    expect(await activate(implicit(1), { as: user(2) })).toEqual({ status: 409, body: { error: "already_activated" } });
+    expect(chain.activations).toHaveLength(1);
+  });
+});
+
+describe("POST /activate: kill switch and daily budget", () => {
+  it("refuses while paused", async () => {
+    app = testApp({ chain, now: () => clock, config: { ...CONFIG, paused: true } });
+    expect(await activate(implicit(1))).toEqual({ status: 503, body: { error: "paused" } });
+    expect(chain.activations).toHaveLength(0);
+  });
+
+  it("refuses an activation that would overshoot today's budget", async () => {
+    app = testApp({ chain, now: () => clock, config: { ...CONFIG, dailyBudgetYocto: NEAR / 10n } });
+    expect((await activate(implicit(1))).status).toBe(200);
+    // The relayer spent 0.09 NEAR since the first look: 0.01 left, an activation costs 0.02.
+    chain.balance -= (NEAR * 9n) / 100n;
+    clock += 10_000;
+    expect(await activate(implicit(2))).toEqual({ status: 503, body: { error: "daily_budget_exhausted" } });
+    expect(chain.activations).toHaveLength(1);
+    // The refused user was not bound: they can activate tomorrow.
+    clock += 24 * 60 * 60_000;
+    expect((await activate(implicit(2))).status).toBe(200);
+  });
+
+  it("keeps counting today's spending across a restart", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), "relayer-")), "state.json");
+    const config = { ...CONFIG, dailyBudgetYocto: NEAR / 10n };
+    app = testApp({ chain, now: () => clock, config, store: new StateStore(file) });
+    expect((await activate(implicit(1))).status).toBe(200);
+    chain.balance -= NEAR / 10n;
+    clock += 10_000;
+    expect((await activate(implicit(2))).status).toBe(503);
+    app = testApp({ chain, now: () => clock, config, store: new StateStore(file) });
+    expect(await activate(implicit(3))).toEqual({ status: 503, body: { error: "daily_budget_exhausted" } });
+  });
+
+  it("fails closed when the relayer balance cannot be read", async () => {
+    chain.balanceError = new Error("rpc down");
+    expect(await activate(implicit(1))).toEqual({ status: 502, body: { error: "rpc_error" } });
+    expect(chain.activations).toHaveLength(0);
   });
 });

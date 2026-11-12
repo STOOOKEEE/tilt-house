@@ -4,6 +4,8 @@ import { callAction, gameKeyAction, type GameMethod } from './delegate'
 import { activate, relay, type RelayResult } from './relay'
 
 type SessionConfig = Pick<Config, 'houseContract' | 'relayerUrl'>
+/** Privy's `getAccessToken`: null when the login session is gone. */
+export type GetAccessToken = () => Promise<string | null>
 
 // The relayer refuses delegates valid for more than 600 blocks; ~2 minutes is plenty.
 const DELEGATE_TTL_BLOCKS = 120
@@ -45,19 +47,21 @@ function loadGameKey(accountId: string, houseContract: string): KeyPair | null {
 // concurrent setups sign AddKey delegates with the same nonce and the second one fails on chain.
 const pendingSetups = new Map<string, Promise<KeyPair>>()
 
-export function ensureGameKey(account: Account, config: SessionConfig): Promise<KeyPair> {
+export function ensureGameKey(account: Account, config: SessionConfig, getAccessToken: GetAccessToken): Promise<KeyPair> {
   const existing = loadGameKey(account.accountId, config.houseContract)
   if (existing) return Promise.resolve(existing)
   const id = storageKey(account.accountId, config.houseContract)
   const pending = pendingSetups.get(id)
   if (pending) return pending
-  const setup = setUpGameKey(account, config).finally(() => pendingSetups.delete(id))
+  const setup = setUpGameKey(account, config, getAccessToken).finally(() => pendingSetups.delete(id))
   pendingSetups.set(id, setup)
   return setup
 }
 
-async function setUpGameKey(account: Account, config: SessionConfig): Promise<KeyPair> {
-  await activate(config.relayerUrl, account.accountId)
+async function setUpGameKey(account: Account, config: SessionConfig, getAccessToken: GetAccessToken): Promise<KeyPair> {
+  const accessToken = await getAccessToken()
+  if (!accessToken) throw new Error('Login expired: log in again')
+  await activate(config.relayerUrl, account.accountId, accessToken)
   const gameKey = KeyPair.fromRandom('ed25519')
   // AddKey acts on the delegate's receiver, so it targets the player's own account.
   const { signedDelegate } = await whenKeyVisible(() =>
