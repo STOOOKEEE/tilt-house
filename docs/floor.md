@@ -49,7 +49,7 @@ Tables that earn attract LPs and can afford higher rent; tables that don't lose 
    → promo-weighted counter-boost). Reason codes `undercut`, `match_boost`.
 7. **Jackpot.** A global pot. Fed by rent only. Every settled round has a chance to win the whole
    pot: `p = stake / JACKPOT_ODDS_UNIT` with `JACKPOT_ODDS_UNIT = 2_000 tUSDC` (a 1 tUSDC bet has a
-   1/2000 chance), decided from extra bits of the round's own last VRF output (no extra draw), paid
+   1/2000 chance), decided from the round's hash-chain value in the session (no extra draw), paid
    to the player's balance (event `jackpot`). Pot never pays below `MIN_JACKPOT = 10 tUSDC`
    (below that the drop is skipped). Shown live everywhere.
 
