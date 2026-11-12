@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Account, JsonRpcProvider, KeyPair, KeyPairSigner, teraToGas, type KeyPairString } from "near-api-js";
 import { AccountDoesNotExistError } from "near-api-js/rpc-errors";
 
-export type GameKind = "dice" | "roulette" | "blackjack";
+export type GameKind = "dice" | "roulette" | "blackjack" | "poker";
 
 /** One entry of the house `get_lobby()` view. Amounts are token base units as decimal strings. */
 export interface DealerView {
@@ -69,7 +69,7 @@ export function gasFor(method: string): bigint {
   return BIG_METHODS.includes(method) ? BIG_GAS : CALL_GAS;
 }
 
-const GAMES: readonly string[] = ["dice", "roulette", "blackjack"];
+const GAMES: readonly string[] = ["dice", "roulette", "blackjack", "poker"];
 const DECIMAL = /^\d+$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

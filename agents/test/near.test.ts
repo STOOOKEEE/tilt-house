@@ -8,6 +8,9 @@ describe("views", () => {
     expect(() => parseLobby([{ ...LOBBY[0], max_bet: 5 }])).toThrow(/max_bet/);
     expect(() => parseLobby([{ ...LOBBY[0], npc: "yes" }])).toThrow(/npc/);
     expect(() => parseLobby({})).toThrow();
+    // A poker table on the floor must not stop the keeper from reading the lobby.
+    expect(parseLobby([{ ...LOBBY[0], game: "poker" }])[0]?.game).toBe("poker");
+    expect(() => parseLobby([{ ...LOBBY[0], game: "craps" }])).toThrow(/game/);
   });
 
   it("reads a player's balance", () => {
