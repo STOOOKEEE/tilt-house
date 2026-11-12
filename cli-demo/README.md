@@ -55,8 +55,8 @@ Multiplayer No-Limit Hold'em (docs/poker-api.md) with two players you control an
    both sessions, with each poker round rebuilt from its replayed hand (`Hand::round_for`): the rounds must be
    byte for byte the ones the chain settled, hash-chain to its value, and pay out exactly what it paid.
 
-The hand histories come from this run: `verify-session` on a poker session alone cannot replay its rounds (the
-session server publishes only the latest hand of a table).
+Every hand is also checked against the session server's hand archive (`GET /session/poker/tables/:id/hands/:n`),
+and the final check reads the hands from there, exactly as `verify-session` does for anyone later.
 
 ## `verify-session`
 
@@ -69,6 +69,12 @@ final hash chain, wagered/paid totals and the payout. The round list comes from 
 - every round replays bit for bit from `HMAC-SHA256(seed, client_seed:nonce)` (dice roll, roulette pocket, cards);
 - the rounds hash-chain to exactly the `chain` the contract accepted, and balance, wagered and paid match;
 - the rounds read back from the `settle_session` txs (found through NearBlocks, args read from RPC) are the same bytes.
+
+A poker round does not replay from the session seed: it names its hand (`bet.poker`), and its outcome commits to the
+hand's seed hash and history hash. The check reads each hand from the session server's archive
+(`GET /session/poker/tables/:table/hands/:hand`, untrusted), replays it from its revealed hand seed and the players'
+client seeds (seed against commitment, deck, every action legal, pots and rake by the rules), checks the seat is the
+session's player, and rebuilds the round (`Hand::round_for`), which must be byte for byte the one the chain settled.
 
 It prints NearBlocks links for the open, settle and close txs (looked up over the last ~10 pages of txs).
 

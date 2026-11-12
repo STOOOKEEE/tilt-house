@@ -1,6 +1,6 @@
 //! `tilt-house-session-server [--no-chain]`
 //!
-//! Env: `SESSION_SERVER_ADDR` (default 127.0.0.1:8790), `SESSION_DATA_DIR` (event log; default
+//! Env: `SESSION_SERVER_ADDR` (default 127.0.0.1:8790), `SESSION_DATA_DIR` (event log and poker hand archive; default
 //! `target/session-data` with `--no-chain`), `SESSION_SERVER_PRIVATE_KEY` (`ed25519:...`, the key
 //! behind the contract's `SESSION_SERVER_PUBKEY`; a throwaway key with `--no-chain` if unset), and
 //! on chain `HOUSE_CONTRACT`, `SESSION_SERVER_ACCOUNT`, `NEAR_RPC_URL` and `GAMBLER_KEYS_DIR`
@@ -20,6 +20,8 @@ use tilt_house_session_server::gamblers::{Clock, Gamblers, DEFAULT_ACCOUNT_SUFFI
 use tilt_house_session_server::http::router;
 use tilt_house_session_server::keys::{random_bytes, Signer};
 use tilt_house_session_server::near::NearChain;
+use tilt_house_session_server::poker::{Poker, PokerConfig};
+use tilt_house_session_server::poker_hands::HandLog;
 use tilt_house_session_server::store::Store;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:8790";
@@ -108,10 +110,16 @@ async fn serve<C: Chain>(
             ticker.tick().await;
         }
     });
+    let poker = Arc::new(Poker::new(
+        Arc::clone(&app),
+        Arc::clone(&gamblers),
+        HandLog::open(&data_dir)?,
+        PokerConfig::default(),
+    ));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(
         listener,
-        router(app, gamblers).into_make_service_with_connect_info::<SocketAddr>(),
+        router(app, gamblers, poker).into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async {
         let _ = tokio::signal::ctrl_c().await;

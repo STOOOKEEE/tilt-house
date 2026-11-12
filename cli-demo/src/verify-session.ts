@@ -1,10 +1,11 @@
 import type { CompactRound } from "../../web/src/near/session-client";
 import { parsePlayer } from "../../web/src/near/views";
 import type { Targets } from "./args.ts";
-import { findSessionTxs, getChainSession, getServerSession, view, type ChainSession, type SessionTxs } from "./chain.ts";
+import type { LastHand } from "../../web/src/near/poker-client";
+import { findSessionTxs, getArchivedHand, getChainSession, getServerSession, view, type ChainSession, type SessionTxs } from "./chain.ts";
 import { describeRound } from "./rounds.ts";
 import { accountLink, BAD, color, heading, line, OK, txLink, usdc } from "./ui.ts";
-import { settledRoundsProblem, verifyAgainstChain } from "./verify.ts";
+import { pokerReplayer, settledRoundsProblem, verifyAgainstChain } from "./verify.ts";
 
 /** Beyond this, the round list is shortened to its head and tail. */
 const ROUNDS_SHOWN = 24;
@@ -24,6 +25,17 @@ export async function latestClosedSession(t: Targets, player: string): Promise<s
   }
   if (emptyOne !== null) return emptyOne;
   throw new Error(`${player} has no closed session on ${t.floor}`);
+}
+
+/** The hands a poker session's rounds name, from the session server's archive. */
+async function archivedHands(t: Targets, chain: ChainSession, rounds: readonly CompactRound[]): Promise<Map<number, LastHand>> {
+  const hands = new Map<number, LastHand>();
+  for (const { bet } of rounds) {
+    if (bet === "blackjack" || !("poker" in bet) || hands.has(bet.poker.hand)) continue;
+    const hand = await getArchivedHand(t, chain.dealer_id, bet.poker.hand);
+    if (hand !== null) hands.set(bet.poker.hand, hand);
+  }
+  return hands;
 }
 
 /** Settle txs cover every round once, in order: then they alone are a full round list. */
@@ -54,7 +66,7 @@ function printTxs(chain: ChainSession, txs: SessionTxs): void {
 
 /**
  * Prints the whole check; true when every round replays against the on-chain commitment. Poker
- * rounds need `replayPoker` (see `verifyAgainstChain`).
+ * rounds replay from their hands (`replayPoker`; by default the session server's hand archive).
  */
 export async function verifySessionById(
   t: Targets,
@@ -81,7 +93,13 @@ export async function verifySessionById(
   }
   line(color.dim(`rounds from ${server ? "the session server (untrusted: they must hash-chain to the chain's value)" : "the settle tx args"}`));
 
-  const verdict = verifyAgainstChain(chain, rounds, server?.server_seed ?? null, replayPoker);
+  let replay = replayPoker;
+  if (chain.game === "poker" && replay === undefined) {
+    const hands = await archivedHands(t, chain, rounds);
+    line(color.dim(`${hands.size} hands from the server's archive (untrusted: each must replay from its revealed seed into its round)`));
+    replay = pokerReplayer(hands, chain.dealer_id, chain.player);
+  }
+  const verdict = verifyAgainstChain(chain, rounds, server?.server_seed ?? null, replay);
   const badNonce = verdict.ok ? null : verdict.nonce;
   printRounds(rounds, (r) => (verdict.ok ? OK : r.nonce === badNonce ? BAD : " "));
 

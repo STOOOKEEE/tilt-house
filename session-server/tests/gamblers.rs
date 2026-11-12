@@ -16,6 +16,8 @@ use tilt_house_session_server::chain::NoChain;
 use tilt_house_session_server::gamblers::{Clock, Gamblers, DEFAULT_ACCOUNT_SUFFIX};
 use tilt_house_session_server::http::router;
 use tilt_house_session_server::keys::Signer;
+use tilt_house_session_server::poker::{Poker, PokerConfig};
+use tilt_house_session_server::poker_hands::HandLog;
 use tilt_house_session_server::store::Store;
 use tower::ServiceExt;
 
@@ -111,8 +113,14 @@ async fn an_evening_hour_of_gamblers() {
         .unwrap(),
     );
     gamblers.start();
+    let poker = Arc::new(Poker::new(
+        Arc::clone(&app),
+        Arc::clone(&gamblers),
+        HandLog::open(dir.path()).unwrap(),
+        PokerConfig::default(),
+    ));
     let router =
-        router(app, gamblers).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
+        router(app, gamblers, poker).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
 
     let mut seen_seated = false;
     let mut seen = 0;

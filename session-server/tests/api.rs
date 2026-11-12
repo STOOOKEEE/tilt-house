@@ -20,6 +20,8 @@ use tilt_house_session_server::chain::{Chain, DealerInfo, FloorInfo, NoChain};
 use tilt_house_session_server::gamblers::{Clock, Gamblers, DEFAULT_ACCOUNT_SUFFIX};
 use tilt_house_session_server::http::router;
 use tilt_house_session_server::keys::Signer;
+use tilt_house_session_server::poker::{Poker, PokerConfig};
+use tilt_house_session_server::poker_hands::HandLog;
 use tilt_house_session_server::store::Store;
 use tower::ServiceExt;
 
@@ -53,7 +55,14 @@ fn bare<C: Chain>(dir: &Path, key: &str, chain: C) -> Router {
         [0; 32],
     )
     .unwrap();
-    router(app, Arc::new(gamblers))
+    let gamblers = Arc::new(gamblers);
+    let poker = Arc::new(Poker::new(
+        Arc::clone(&app),
+        Arc::clone(&gamblers),
+        HandLog::open(dir).unwrap(),
+        PokerConfig::default(),
+    ));
+    router(app, gamblers, poker)
 }
 
 /// Requests through this router come from peer `10.0.x.y`; rate limits are per IP.

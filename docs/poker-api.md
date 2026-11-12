@@ -57,7 +57,7 @@ interface TableSummary {
   min_buy_in: string
   max_buy_in: string       // capped at the ticket's max bet (refreshed on this call); below min_buy_in: no buy-in now
   rake_bp: number          // the dealer's rake when the table was first used
-  hand_number: number      // hands dealt since the server started (0: none yet)
+  hand_number: number      // the table's last hand number (0: none yet); goes on across restarts
 }
 type TablesReply = TableSummary[]
 ```
@@ -187,6 +187,36 @@ Bearer token. Body `{"hand": <number>, "action": PokerAction}`, e.g. `{"hand": 7
 Bearer token, no body. Reply `{"left": boolean}`: `true` when unseated at once (not in a hand, or
 queued), `false` when unseated at the end of the current hand (you fold at your turn). The server then
 closes the session; read `GET /sessions/{session_id}` for its rounds and, once closing, its seed.
+
+### `GET /poker/tables/{id}/hands/{hand}`
+
+A finished hand from the archive: the same `HandRecord` as `last_hand` (below), for any hand the table
+ever dealt and recorded, including tables no longer on the floor. `404` for a hand not over yet, never
+dealt, or void (its rounds were refused). Public, no token.
+
+### `GET /poker/tables/{id}/hands?before=<hand>&limit=<n>`
+
+The latest archived hands, newest first (`before` exclusive; `limit` 20 by default, at most 100):
+
+```ts
+interface HandSummary {
+  number: number
+  ended_at: number         // Unix ms
+  board: Card[]
+  rake: string
+  players: { seat: number; player: string; name: string; npc: boolean; session_id: string
+             stake: string; payout: string; nonce: number | null }[]
+}
+```
+
+## Hand archive
+
+Every finished hand's public record is appended to `SESSION_DATA_DIR/poker-hands.jsonl` and synced to
+disk **before** its rounds go into the sessions, so every poker round on chain has its history; a hand
+whose rounds are then refused gets a `void` line and is no longer served. Nothing about a hand is written
+before it ends. Hand numbers go on across restarts, so `(table, hand)` in a round's `bet` names one hand
+for good. `pnpm --filter cli-demo verify-session <poker session id>` replays a closed session's rounds
+from this archive.
 
 ## Provably fair hands
 

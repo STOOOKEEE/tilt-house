@@ -10,7 +10,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { JsonRpcProvider } from "near-api-js";
 import {
   actionProblem,
-  expectedRound,
   pokerClient,
   verifyHand,
   type LastHand,
@@ -25,12 +24,11 @@ import {
   sessionClient,
   ticketProblem,
   verifyTicket,
-  type CompactRound,
   type SignedState,
 } from "../../web/src/near/session-client";
 import { parsePlayer, record, str, type DealerView } from "../../web/src/near/views";
 import type { Command, Targets } from "./args.ts";
-import { getChainSession, view } from "./chain.ts";
+import { getArchivedHand, getChainSession, view } from "./chain.ts";
 import { ensureBalance, floorBalance, serverKeyHex, setUpPlayer, type Player } from "./demo.ts";
 import { readFloor } from "./floor.ts";
 import { accountLink, BAD, color, heading, line, OK, txLink, usdc } from "./ui.ts";
@@ -238,20 +236,6 @@ function printHand(hand: LastHand, ours: readonly Seated[]): boolean {
   return true;
 }
 
-/** What a session's poker round must be, from the hands this run saw (core `Hand::round_for`). */
-export function pokerReplayer(hands: ReadonlyMap<number, LastHand>, tableId: string, player: string): (round: CompactRound) => CompactRound {
-  return (round) => {
-    const { bet, outcome } = round;
-    if (bet === "blackjack" || !("poker" in bet) || !("poker" in outcome)) throw new Error("not a poker round");
-    const hand = hands.get(bet.poker.hand);
-    if (!hand || bet.poker.table !== tableId) throw new Error(`hand ${bet.poker.hand} was not seen`);
-    if (!verifyHand(hand).ok) throw new Error(`hand ${hand.number} does not replay`);
-    const seat = hand.history.start.seats.find((s) => s.seat === outcome.poker.seat);
-    if (seat?.player !== player) throw new Error(`seat ${outcome.poker.seat + 1} of hand ${hand.number} is not ${player}'s`);
-    return expectedRound(hand, outcome.poker.seat, round.nonce);
-  };
-}
-
 async function waitClosedOnChain(t: Targets, seated: readonly Seated[]): Promise<void> {
   const deadline = Date.now() + CHAIN_CLOSE_TIMEOUT_MS;
   for (const s of seated) {
@@ -318,19 +302,27 @@ export async function runPoker(cmd: PokerCommand): Promise<boolean> {
   heading("Settle and reveal on chain");
   await waitClosedOnChain(t, seated);
 
-  heading("Independent verification from on-chain data");
-  await sleep(INDEXER_LAG_MS);
-  const verified: boolean[] = [];
-  for (const s of seated) {
-    verified.push(await verifySessionById(t, s.sessionId, pokerReplayer(hands, dealer.id, s.player.accountId)));
+  heading("The server's hand archive");
+  // What anyone can replay later must be the hands as they were played here.
+  let archiveOk = true;
+  for (const hand of [...hands.values()].filter(ours)) {
+    const archived = await getArchivedHand(t, dealer.id, hand.number);
+    const same = archived !== null && archived.history_hash === hand.history_hash;
+    archiveOk &&= same;
+    line(`${same ? OK : BAD} hand ${hand.number} ${same ? "archived as played" : "missing or different"} ${color.dim(`${t.session}/poker/tables/${dealer.id}/hands/${hand.number}`)}`);
   }
 
+  heading("Independent verification from on-chain data (same code as verify-session)");
+  await sleep(INDEXER_LAG_MS);
+  const verified: boolean[] = [];
+  for (const s of seated) verified.push(await verifySessionById(t, s.sessionId));
+
   heading("Summary");
-  const allOk = verifiedHands && verified.every(Boolean) && played >= cmd.hands;
+  const allOk = verifiedHands && archiveOk && verified.every(Boolean) && played >= cmd.hands;
   line(`${played} hands played at ${dealer.name}, ${[...hands.values()].filter(ours).length} revealed and replayed`);
   for (const [i, s] of seated.entries()) {
     line(`${verified[i] ? OK : BAD} ${s.label} ${s.sessionId} · open ${txLink(s.openTx)}`);
-    line(color.dim(`   ${accountLink(s.player.accountId)}`));
+    line(color.dim(`   ${accountLink(s.player.accountId)} · re-check: pnpm --filter cli-demo verify-session ${s.sessionId}`));
   }
   console.log(allOk ? `\n  ${OK} ${color.ok("VERIFIED: every hand replays from its revealed seed and every round matches the chain.")}` : `\n  ${BAD} ${color.bad("NOT VERIFIED")}`);
   return allOk;

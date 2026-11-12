@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseLastHand } from "../../web/src/near/poker-client";
 import vectors from "../../web/src/near/poker-vectors.json";
 import { parseCompactRound, roundBorsh } from "../../web/src/near/session-client";
-import { pokerReplayer } from "../src/poker.ts";
+import { pokerReplayer } from "../src/verify.ts";
 
 // poker-vectors.json is produced by core_rules::poker (Rust): each hand as the table publishes it,
 // with every player's session round as the server records it.
@@ -50,8 +50,8 @@ describe("pokerReplayer", () => {
     const round = parseCompactRound(rounds[0]!.round);
     const owner = hand.history.start.seats.find((s) => s.seat === rounds[0]!.round.outcome.poker.seat)!.player;
     const seen = new Map([[hand.number, hand]]);
-    expect(() => pokerReplayer(new Map(), hand.history.start.table, owner)(round)).toThrow(/not seen/);
-    expect(() => pokerReplayer(seen, "another-table", owner)(round)).toThrow(/not seen/);
+    expect(() => pokerReplayer(new Map(), hand.history.start.table, owner)(round)).toThrow(/not available/);
+    expect(() => pokerReplayer(seen, "another-table", owner)(round)).toThrow(/not available/);
     expect(() => pokerReplayer(seen, hand.history.start.table, "someone-else.testnet")(round)).toThrow(/is not/);
   });
 

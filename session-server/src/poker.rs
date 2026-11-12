@@ -31,6 +31,7 @@ use crate::app::{ApiError, App, CreateRequest, PokerSeat, SignedState};
 use crate::chain::Chain;
 use crate::gamblers::{Gamblers, PokerNpc};
 use crate::keys::random_bytes;
+use crate::poker_hands::HandLog;
 
 const SEATS: usize = MAX_SEATS as usize;
 /// Blinds of every poker table: 0.1 / 0.2 chips, so buy-ins of 4 to 20 chips (core's 20-100 BB).
@@ -44,6 +45,9 @@ const DRIVER_IDLE: Duration = Duration::from_secs(1);
 /// After an NPC fails to sit (chain refusal, empty wallet, RPC limit), wait this long before
 /// calling one in again: retrying at once floods the RPC (every try reads the chain).
 const NPC_RETRY: Duration = Duration::from_secs(30);
+/// Hands per page of `GET /poker/tables/{id}/hands`, by default and at most.
+const HANDS_PAGE: usize = 20;
+const HANDS_PAGE_MAX: usize = 100;
 
 /// The biggest buy-in at a dealer whose max bet is `dealer_max_bet`: the contract takes a poker
 /// lock only up to the ticket's max bet.
@@ -259,6 +263,56 @@ pub struct HandRecord {
     pub ended_at: u64,
 }
 
+/// One line of the hand list: who played, who won.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HandSummary {
+    pub number: u64,
+    pub ended_at: u64,
+    pub board: Vec<Card>,
+    #[serde(with = "core_rules::amount_str")]
+    pub rake: u128,
+    pub players: Vec<SummaryPlayer>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SummaryPlayer {
+    pub seat: usize,
+    pub player: String,
+    pub name: String,
+    pub npc: bool,
+    pub session_id: String,
+    #[serde(with = "core_rules::amount_str")]
+    pub stake: u128,
+    #[serde(with = "core_rules::amount_str")]
+    pub payout: u128,
+    pub nonce: Option<u64>,
+}
+
+impl HandSummary {
+    fn of(hand: &HandRecord) -> Self {
+        Self {
+            number: hand.number,
+            ended_at: hand.ended_at,
+            board: hand.result.board.clone(),
+            rake: hand.result.rake,
+            players: hand
+                .players
+                .iter()
+                .map(|p| SummaryPlayer {
+                    seat: p.seat,
+                    player: p.player.clone(),
+                    name: p.name.clone(),
+                    npc: p.npc,
+                    session_id: p.session_id.clone(),
+                    stake: p.stake,
+                    payout: p.payout,
+                    nonce: p.nonce,
+                })
+                .collect(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JoinReply {
     pub seat: Option<usize>,
@@ -323,6 +377,8 @@ struct Seat {
     timeouts: u8,
     /// Balance when seated, for the NPC's result on the floor.
     buy_in: u128,
+    /// The session's last round: the table records each hand at the next one.
+    nonce: u64,
 }
 
 impl Seat {
@@ -342,6 +398,7 @@ impl Seat {
             leaving: false,
             timeouts: 0,
             buy_in: info.balance,
+            nonce: info.nonce,
         }
     }
 
@@ -384,6 +441,8 @@ impl Live {
 }
 
 type Close = (String, Option<PokerNpc>, i128);
+/// A hand's rounds, by session id.
+type Rounds = Vec<(String, CompactRound)>;
 
 /// What the driver does outside the table lock.
 #[derive(Default)]
@@ -391,7 +450,7 @@ struct Effects {
     /// Sessions to stand up and close (with the NPC to give back and its result).
     close: Vec<Close>,
     npc_joins: usize,
-    record: Option<Vec<(String, CompactRound)>>,
+    record: Option<(Arc<HandRecord>, Rounds)>,
 }
 
 struct Table {
@@ -743,7 +802,8 @@ impl Table {
         self.finish_if_done(effects);
     }
 
-    /// A finished hand moves to recording with the round of each player who put chips in.
+    /// A finished hand moves to recording: its public record, and the round of each player who
+    /// put chips in, at that session's next nonce (only the table plays a poker session).
     fn finish_if_done(&mut self, effects: &mut Effects) {
         let Some(live) = self.hand.as_mut() else {
             return;
@@ -751,66 +811,25 @@ impl Table {
         let Stage::Playing(hand) = &live.stage else {
             return;
         };
-        let Some(result) = hand.result() else {
-            return;
-        };
-        let mut rounds: Vec<(String, CompactRound)> = Vec::new();
-        for line in result.seats.iter().filter(|line| line.put_in > 0) {
-            let (Some(s), Some(round)) = (
-                self.seats[usize::from(line.seat)].as_ref(),
-                hand.round_for(line.seat, 0),
-            ) else {
-                continue;
-            };
-            rounds.push((s.session_id.clone(), round));
-        }
-        // Losers first (see `Store::append_rounds`).
-        rounds.sort_by_key(|(_, round)| round.payout >= round.stake);
-        effects.record = Some(rounds);
-        let Stage::Playing(hand) = std::mem::replace(&mut live.stage, Stage::Seeding) else {
-            return;
-        };
-        live.stage = Stage::Recording(hand);
-        self.changed();
-    }
-
-    /// After the write: stacks move to the recorded balances (or, if refused, the hand is void
-    /// and nobody's stack moves), the history is published, the pause starts.
-    fn end_hand(&mut self, recorded: Result<Vec<(String, u64)>, ApiError>, now: Instant) {
-        let Some(live) = self.hand.take() else {
-            return;
-        };
-        self.next_hand_at = now + self.config.pause;
-        self.changed();
-        let Stage::Recording(hand) = live.stage else {
-            return;
-        };
         let (Some(result), Some(history)) = (hand.result().cloned(), hand.history()) else {
             return;
         };
-        let nonces: HashMap<String, u64> = match recorded {
-            Ok(nonces) => nonces.into_iter().collect(),
-            Err(err) => {
-                eprintln!(
-                    "poker {}: hand {} void, not recorded: {}",
-                    self.id, live.number, err.message
-                );
-                return;
-            }
-        };
+        let mut rounds: Vec<(String, CompactRound)> = Vec::new();
         let mut players = Vec::new();
         for line in &result.seats {
-            let i = usize::from(line.seat);
-            // Every seat of the result was dealt, so has hole cards.
-            let (Some(s), Some(hole)) = (self.seats[i].as_mut(), hand.hole(line.seat)) else {
+            // Every seat of the result was dealt, so is seated and has hole cards.
+            let (Some(s), Some(hole)) = (
+                self.seats[usize::from(line.seat)].as_ref(),
+                hand.hole(line.seat),
+            ) else {
                 continue;
             };
-            s.stack = s.stack - line.put_in + line.won;
-            if s.stack < self.stakes.big_blind {
-                s.leaving = true;
+            let nonce = (line.put_in > 0).then_some(s.nonce + 1);
+            if let Some(round) = nonce.and_then(|n| hand.round_for(line.seat, n)) {
+                rounds.push((s.session_id.clone(), round));
             }
             players.push(PlayerResult {
-                seat: i,
+                seat: usize::from(line.seat),
                 player: s.player.clone(),
                 name: s.name.clone(),
                 npc: s.npc.is_some(),
@@ -818,16 +837,18 @@ impl Table {
                 hole,
                 stake: line.put_in,
                 payout: line.won,
-                nonce: nonces.get(&s.session_id).copied(),
+                nonce,
             });
         }
+        // Losers first (see `Store::append_rounds`).
+        rounds.sort_by_key(|(_, round)| round.payout >= round.stake);
         let seeds: Vec<&str> = history
             .start
             .seats
             .iter()
             .map(|s| s.client_seed.as_str())
             .collect();
-        self.last_hand = Some(Arc::new(HandRecord {
+        let record = HandRecord {
             number: live.number,
             commitment: live.commitment,
             hand_seed: live.seed,
@@ -837,7 +858,41 @@ impl Table {
             players,
             result,
             ended_at: unix_ms(),
-        }));
+        };
+        effects.record = Some((Arc::new(record), rounds));
+        let Stage::Playing(hand) = std::mem::replace(&mut live.stage, Stage::Seeding) else {
+            return;
+        };
+        live.stage = Stage::Recording(hand);
+        self.changed();
+    }
+
+    /// After the write: stacks move to the recorded balances and the record is published; or,
+    /// if refused, the hand is void and nobody's stack moves. Then the pause starts.
+    fn end_hand(&mut self, record: Arc<HandRecord>, recorded: Result<(), ApiError>, now: Instant) {
+        self.hand = None;
+        self.next_hand_at = now + self.config.pause;
+        self.changed();
+        if let Err(err) = recorded {
+            eprintln!(
+                "poker {}: hand {} void, not recorded: {}",
+                self.id, record.number, err.message
+            );
+            return;
+        }
+        for line in &record.players {
+            let Some(s) = self.seats[line.seat].as_mut() else {
+                continue;
+            };
+            s.stack = s.stack - line.stake + line.payout;
+            if line.nonce.is_some() {
+                s.nonce += 1;
+            }
+            if s.stack < self.stakes.big_blind {
+                s.leaving = true;
+            }
+        }
+        self.last_hand = Some(record);
     }
 
     /// When the clock needs the driver next.
@@ -1078,6 +1133,7 @@ type Dealers = Vec<(String, String, Option<usize>, u128)>;
 pub struct Poker<C> {
     app: Arc<App<C>>,
     gamblers: Arc<Gamblers<C>>,
+    hands: HandLog,
     config: PokerConfig,
     tables: Mutex<HashMap<String, Arc<Cell>>>,
     floor_cache: AsyncMutex<Option<(Instant, Dealers)>>,
@@ -1104,10 +1160,16 @@ fn chain_down(err: anyhow::Error) -> ApiError {
 }
 
 impl<C: Chain> Poker<C> {
-    pub fn new(app: Arc<App<C>>, gamblers: Arc<Gamblers<C>>, config: PokerConfig) -> Self {
+    pub fn new(
+        app: Arc<App<C>>,
+        gamblers: Arc<Gamblers<C>>,
+        hands: HandLog,
+        config: PokerConfig,
+    ) -> Self {
         Self {
             app,
             gamblers,
+            hands,
             config,
             tables: Mutex::new(HashMap::new()),
             floor_cache: AsyncMutex::new(None),
@@ -1170,7 +1232,7 @@ impl<C: Chain> Poker<C> {
             queue: VecDeque::new(),
             hand: None,
             last_hand: None,
-            hand_number: 0,
+            hand_number: self.hands.last_number(id),
             button: None,
             next_hand_at: Instant::now(),
             npc_joining: 0,
@@ -1377,6 +1439,61 @@ impl<C: Chain> Poker<C> {
         Ok(LeaveReply { left: true })
     }
 
+    /// Archives the finished hand, then records its rounds; a refusal voids the archived hand.
+    /// A hand that cannot be archived is not recorded (no round without its history).
+    async fn record_hand(
+        self: &Arc<Self>,
+        table: &str,
+        record: &HandRecord,
+        rounds: Vec<(String, CompactRound)>,
+    ) -> Result<(), ApiError> {
+        if let Err(err) = self.hands.record(table, record) {
+            return Err(ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("hand archive: {err:#}"),
+            ));
+        }
+        let recorded = self.app.record_poker_hand(table, rounds).await;
+        if recorded.is_err() {
+            if let Err(err) = self.hands.void(table, record.number) {
+                eprintln!(
+                    "poker {table}: hand {} void not archived: {err:#}",
+                    record.number
+                );
+            }
+        }
+        recorded
+    }
+
+    /// `GET /poker/tables/{id}/hands/{hand}`: an archived hand, from any table that ever dealt.
+    pub fn archived_hand(&self, table: &str, number: u64) -> Result<HandRecord, ApiError> {
+        self.hands
+            .get(table, number)
+            .map_err(|err| {
+                eprintln!("poker hand archive read: {err:#}");
+                ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
+            })?
+            .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "no such hand"))
+    }
+
+    /// `GET /poker/tables/{id}/hands?before=&limit=`: the latest archived hands, newest first.
+    pub fn archived_hands(
+        &self,
+        table: &str,
+        before: Option<u64>,
+        limit: Option<usize>,
+    ) -> Result<Vec<HandSummary>, ApiError> {
+        let limit = limit.unwrap_or(HANDS_PAGE).clamp(1, HANDS_PAGE_MAX);
+        self.hands
+            .numbers(table, before.unwrap_or(u64::MAX), limit)
+            .into_iter()
+            .map(|number| {
+                self.archived_hand(table, number)
+                    .map(|h| HandSummary::of(&h))
+            })
+            .collect()
+    }
+
     async fn close_seat(&self, (session_id, npc, net): Close) {
         if let Err(err) = self.app.poker_unseat_and_close(&session_id).await {
             eprintln!("poker close {session_id}: {}", err.message);
@@ -1398,10 +1515,10 @@ impl<C: Chain> Poker<C> {
                 cell.publish(&table);
                 (table.id.clone(), table.next_wake(now))
             };
-            if let Some(rounds) = effects.record.take() {
-                let recorded = self.app.record_poker_hand(&id, rounds).await;
+            if let Some((record, rounds)) = effects.record.take() {
+                let recorded = self.record_hand(&id, &record, rounds).await;
                 let mut table = cell.table.lock().await;
-                table.end_hand(recorded, Instant::now());
+                table.end_hand(record, recorded, Instant::now());
                 for s in table.seats.iter().flatten() {
                     if let Some(npc) = &s.npc {
                         self.gamblers

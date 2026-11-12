@@ -633,16 +633,15 @@ impl<C: Chain> App<C> {
         Ok((Self::signed(&session), session.rounds.last().cloned()))
     }
 
-    /// Records one finished poker hand: one round per player, `rounds[i].nonce` ignored (each
-    /// gets its session's next nonce). All or nothing: every session must be open, seated and
-    /// able to take its round (stake within the balance, result within `lock + max_win`), or none
-    /// is written. The caller orders losers first (see `Store::append_rounds`). Returns each
-    /// session's new nonce.
+    /// Records one finished poker hand: one round per player, each at its session's next nonce.
+    /// All or nothing: every session must be open, seated and able to take its round (right
+    /// nonce, stake within the balance, result within `lock + max_win`), or none is written.
+    /// The caller orders losers first (see `Store::append_rounds`).
     pub async fn record_poker_hand(
         self: &Arc<Self>,
         table_id: &str,
         rounds: Vec<(String, CompactRound)>,
-    ) -> Result<Vec<(String, u64)>, ApiError> {
+    ) -> Result<(), ApiError> {
         let mut ids: Vec<&str> = rounds.iter().map(|(id, _)| id.as_str()).collect();
         ids.sort_unstable();
         if ids.windows(2).any(|w| w[0] == w[1]) {
@@ -662,15 +661,11 @@ impl<C: Chain> App<C> {
         guards.sort_by_key(|(i, _)| *i);
         let at = now();
         let mut events = Vec::with_capacity(rounds.len());
-        let mut nonces = Vec::with_capacity(rounds.len());
         for ((_, session), (_, round)) in guards.iter().zip(&rounds) {
             check_poker_round(session, table_id, round)?;
-            let mut round = round.clone();
-            round.nonce = session.state.nonce + 1;
-            nonces.push((session.ticket.session_id.clone(), round.nonce));
             events.push(Event::Round {
                 session_id: session.ticket.session_id.clone(),
-                round,
+                round: round.clone(),
                 at,
             });
         }
@@ -691,7 +686,7 @@ impl<C: Chain> App<C> {
                 tokio::spawn(async move { app.settle_logged(&shared).await });
             }
         }
-        Ok(nonces)
+        Ok(())
     }
 }
 
@@ -746,6 +741,9 @@ fn check_poker_round(
     }
     if session.poker_table.as_deref() != Some(table_id) {
         return refuse("session not seated here");
+    }
+    if round.nonce != session.state.nonce + 1 {
+        return refuse("round not at the session's next nonce");
     }
     if round.bet.game() != Game::Poker || session.ticket.game != Game::Poker {
         return refuse("not a poker round");

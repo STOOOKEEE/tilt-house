@@ -3,6 +3,7 @@
  * view, and the txs of a session (listed by NearBlocks, their args read back from RPC).
  */
 import { setTimeout as sleep } from "node:timers/promises";
+import { parseLastHand, type LastHand } from "../../web/src/near/poker-client";
 import { parseCompactRound, parseTicket, type CompactRound, type SessionTicket } from "../../web/src/near/session-client";
 import {
   amount,
@@ -126,6 +127,17 @@ export async function getServerSession(t: Targets, sessionId: string): Promise<S
     rounds: list(v.rounds, "view.rounds").map((r, i) => parseCompactRound(r, `view.rounds[${i}]`)),
     server_seed: optional(v.server_seed, (s) => str(s, "view.server_seed").toLowerCase()),
   };
+}
+
+// ---- poker hand archive (GET /poker/tables/:id/hands/:hand) --------------------------------
+
+/** A finished hand as the session server archived it (untrusted: it must replay and match). */
+export async function getArchivedHand(t: Targets, table: string, hand: number): Promise<LastHand | null> {
+  const url = `${t.session}/poker/tables/${encodeURIComponent(table)}/hands/${hand}`;
+  const { status, body } = await getJson(url);
+  if (status === 404) return null;
+  if (status !== 200) throw new Error(`hand archive: HTTP ${status}`);
+  return parseLastHand(body, `hand ${hand}`);
 }
 
 // ---- session txs ----------------------------------------------------------------------------

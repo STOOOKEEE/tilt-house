@@ -20,8 +20,8 @@ use crate::chain::Chain;
 use crate::gamblers::{FootfallReply, GamblerSnapshot, Gamblers};
 use crate::limits::RateLimiter;
 use crate::poker::{
-    ActionRequest, JoinReply, JoinRequest, LeaveReply, Poker, PokerConfig, SeedRequest, TableState,
-    TableSummary,
+    ActionRequest, HandRecord, HandSummary, JoinReply, JoinRequest, LeaveReply, Poker, SeedRequest,
+    TableState, TableSummary,
 };
 use crate::session::RoundRequest;
 
@@ -55,17 +55,7 @@ struct Http<C> {
     poker_moves: RateLimiter<(String, String)>,
 }
 
-/// The router with poker tables on their production timings.
-pub fn router<C: Chain>(app: Arc<App<C>>, gamblers: Arc<Gamblers<C>>) -> Router {
-    let poker = Arc::new(Poker::new(
-        Arc::clone(&app),
-        Arc::clone(&gamblers),
-        PokerConfig::default(),
-    ));
-    router_with_poker(app, gamblers, poker)
-}
-
-pub fn router_with_poker<C: Chain>(
+pub fn router<C: Chain>(
     app: Arc<App<C>>,
     gamblers: Arc<Gamblers<C>>,
     poker: Arc<Poker<C>>,
@@ -92,6 +82,8 @@ pub fn router_with_poker<C: Chain>(
         .route("/poker/tables/{id}/seed", post(poker_seed::<C>))
         .route("/poker/tables/{id}/action", post(poker_action::<C>))
         .route("/poker/tables/{id}/leave", post(poker_leave::<C>))
+        .route("/poker/tables/{id}/hands", get(poker_hands::<C>))
+        .route("/poker/tables/{id}/hands/{hand}", get(poker_hand::<C>))
         .layer(middleware::from_fn_with_state(
             Arc::clone(&http),
             limit_ip::<C>,
@@ -276,6 +268,29 @@ async fn poker_leave<C: Chain>(
     let token = bearer(&headers)?;
     poker_move_allowed(&http, &id, token)?;
     http.poker.leave(&id, token).await.map(Json)
+}
+
+#[derive(Deserialize)]
+struct HandsQuery {
+    before: Option<u64>,
+    limit: Option<usize>,
+}
+
+async fn poker_hands<C: Chain>(
+    State(http): State<Arc<Http<C>>>,
+    Path(id): Path<String>,
+    Query(query): Query<HandsQuery>,
+) -> Result<Json<Vec<HandSummary>>, ApiError> {
+    http.poker
+        .archived_hands(&id, query.before, query.limit)
+        .map(Json)
+}
+
+async fn poker_hand<C: Chain>(
+    State(http): State<Arc<Http<C>>>,
+    Path((id, hand)): Path<(String, u64)>,
+) -> Result<Json<HandRecord>, ApiError> {
+    http.poker.archived_hand(&id, hand).map(Json)
 }
 
 #[cfg(test)]

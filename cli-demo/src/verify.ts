@@ -4,6 +4,7 @@
  * to hash-chain to the `chain` the contract accepted at settle, and the seed is the one revealed on
  * chain. The replay itself is the web client's (`verifySession`), which mirrors `core_rules`.
  */
+import { expectedRound, verifyHand, type LastHand } from "../../web/src/near/poker-client";
 import { roundBorsh, verifySession, type CompactRound, type SessionSummary, type SessionTicket } from "../../web/src/near/session-client";
 import type { ChainSession } from "./chain.ts";
 
@@ -67,4 +68,23 @@ export function settledRoundsProblem(rounds: readonly CompactRound[], settled: r
     if (theirs !== Buffer.from(roundBorsh(round)).toString("hex")) return `round ${round.nonce} differs from its settle tx`;
   }
   return null;
+}
+
+/**
+ * What a session's poker round must be (core `Hand::round_for`), from the hands given (seen while
+ * playing, or read from the session server's archive: untrusted either way). The hand must replay
+ * from its revealed seed and the seat be the player's; the caller compares the result, byte for
+ * byte, with the round the chain settled, whose outcome commits to the history hash.
+ */
+export function pokerReplayer(hands: ReadonlyMap<number, LastHand>, tableId: string, player: string): (round: CompactRound) => CompactRound {
+  return (round) => {
+    const { bet, outcome } = round;
+    if (bet === "blackjack" || !("poker" in bet) || !("poker" in outcome)) throw new Error("not a poker round");
+    const hand = hands.get(bet.poker.hand);
+    if (!hand || bet.poker.table !== tableId) throw new Error(`hand ${bet.poker.hand} of ${bet.poker.table} is not available`);
+    if (!verifyHand(hand).ok) throw new Error(`hand ${hand.number} does not replay`);
+    const seat = hand.history.start.seats.find((s) => s.seat === outcome.poker.seat);
+    if (seat?.player !== player) throw new Error(`seat ${outcome.poker.seat + 1} of hand ${hand.number} is not ${player}'s`);
+    return expectedRound(hand, outcome.poker.seat, round.nonce);
+  };
 }

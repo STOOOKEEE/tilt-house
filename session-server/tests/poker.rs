@@ -18,9 +18,12 @@ use serde_json::{json, Value};
 use tilt_house_session_server::app::{App, CreateReply};
 use tilt_house_session_server::chain::{Chain, DealerInfo, FloorInfo, NoChain};
 use tilt_house_session_server::gamblers::{Clock, Gamblers, DEFAULT_ACCOUNT_SUFFIX};
-use tilt_house_session_server::http::router_with_poker;
+use tilt_house_session_server::http::router;
 use tilt_house_session_server::keys::Signer;
-use tilt_house_session_server::poker::{HandRecord, Poker, PokerConfig, TableState, BIG_BLIND};
+use tilt_house_session_server::poker::{
+    HandPhase, HandRecord, Poker, PokerConfig, TableState, BIG_BLIND,
+};
+use tilt_house_session_server::poker_hands::HandLog;
 use tilt_house_session_server::store::Store;
 use tower::ServiceExt;
 
@@ -61,9 +64,10 @@ fn serve_on<C: Chain>(dir: &std::path::Path, chain: C) -> Router {
     let poker = Arc::new(Poker::new(
         Arc::clone(&app),
         Arc::clone(&gamblers),
+        HandLog::open(dir).unwrap(),
         config(),
     ));
-    router_with_poker(app, gamblers, poker)
+    router(app, gamblers, poker)
 }
 
 /// Requests through this router come from peer `10.0.0.i`: rate limits are per IP, and a
@@ -188,10 +192,21 @@ async fn play_hand(router: &Router, humans: &[(&Human, Plan)], number: u64) -> (
             tokio::time::Instant::now() < deadline,
             "hand {number} never ended"
         );
+        // Asked before the state: a hand still being played then was being played here too.
+        let uri = format!("/poker/tables/{TABLE}/hands/{number}");
+        let (archived, _) = call(router, "GET", &uri, None, None).await;
         let public = state(router, None).await;
         assert!(
             public.you.is_none(),
             "an anonymous watcher has no private view"
+        );
+        let live = public.hand.as_ref().is_some_and(|h| {
+            h.number == number && (h.to_act.is_some() || h.phase == HandPhase::Seeding)
+        });
+        // Nothing about a hand is archived before it ends.
+        assert!(
+            !live || archived == StatusCode::NOT_FOUND,
+            "hand {number} archived while live"
         );
         if let Some(last) = public.last_hand.as_ref().filter(|h| h.number == number) {
             return ((**last).clone(), seen);
@@ -233,7 +248,7 @@ async fn play_hand(router: &Router, humans: &[(&Human, Plan)], number: u64) -> (
                 seen.holes.insert(seat, hole);
             }
             let uri = |what: &str| format!("/poker/tables/{TABLE}/{what}");
-            if hand.phase == tilt_house_session_server::poker::HandPhase::Seeding
+            if hand.phase == HandPhase::Seeding
                 && hand.seats.contains(&seat)
                 && !hand.seeds_in.contains(&seat)
             {
@@ -306,6 +321,18 @@ async fn play_hand(router: &Router, humans: &[(&Human, Plan)], number: u64) -> (
 
 /// The revealed hand replays: commitment, deck, results, chips, and each player's round.
 async fn check_record(router: &Router, record: &HandRecord, seen: &Seen) {
+    // The archive serves exactly the published record, and lists it.
+    let uri = format!("/poker/tables/{TABLE}/hands/{}", record.number);
+    let (status, archived) = call(router, "GET", &uri, None, None).await;
+    assert_eq!(status, StatusCode::OK, "{archived}");
+    assert_eq!(archived, serde_json::to_value(record).unwrap());
+    let uri = format!(
+        "/poker/tables/{TABLE}/hands?before={}&limit=1",
+        record.number + 1
+    );
+    let (status, list) = call(router, "GET", &uri, None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list[0]["number"], record.number, "{list}");
     assert_eq!(sha256(&record.hand_seed), record.commitment);
     assert_eq!(record.history.hand_seed, record.hand_seed);
     assert_eq!(record.history.start.hand_seed_hash, record.commitment);
@@ -686,4 +713,38 @@ async fn failing_npcs_are_not_called_in_a_loop() {
     assert!(reads <= 12, "{reads} chain reads in 3 s");
     let table = state(&alice.router, Some(alice.token())).await;
     assert!(table.seats.iter().flatten().all(|s| !s.npc));
+}
+
+/// The archive outlives the server: a restarted server still serves every hand, and goes on
+/// numbering after the last one, so a (table, hand) in a session round names one hand for good.
+#[tokio::test]
+async fn hands_are_archived_across_restarts() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let bare = serve(dir.path());
+    let alice = sit(&bare, 2, "alice.testnet").await;
+    let bob = sit(&bare, 3, "bob.testnet").await;
+    let plans = [(&alice, Plan::Passive), (&bob, Plan::Passive)];
+    let (first, _) = play_hand(&alice.router, &plans, 1).await;
+    drop((alice, bob, bare));
+
+    let bare = serve(dir.path());
+    let router = with_peer(&bare, 1);
+    let uri = format!("/poker/tables/{TABLE}/hands/1");
+    let (status, archived) = call(&router, "GET", &uri, None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(archived, serde_json::to_value(&first).unwrap());
+    // (The first server's table may still deal on in the background: compare with the archive.)
+    let (_, list) = call(
+        &router,
+        "GET",
+        &format!("/poker/tables/{TABLE}/hands"),
+        None,
+        None,
+    )
+    .await;
+    let (_, tables) = call(&router, "GET", "/poker/tables", None, None).await;
+    assert_eq!(
+        tables[0]["hand_number"], list[0]["number"],
+        "numbering goes on: {tables} {list}"
+    );
 }
