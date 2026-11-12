@@ -7,8 +7,8 @@
 # For each contract in deployments/<network>.json it reads the account's `code_hash` over RPC and
 # compares it with the recorded one. For contracts marked "reproducible": true it also builds the
 # wasm with `cargo near build reproducible-wasm` (docker, pinned toolchain image) from a clean
-# checkout of the recorded "commit" (else the commit the contract names in its NEP-330
-# `contract_source_metadata`) and compares base58(sha256(wasm)), the same encoding as NEAR's
+# checkout of the commit the contract names in its NEP-330 `contract_source_metadata` (which must
+# match the recorded "commit") and compares base58(sha256(wasm)), the same encoding as NEAR's
 # `code_hash`.
 # Prints PASS/FAIL per check and exits 1 if anything fails.
 #
@@ -58,7 +58,7 @@ code_hash_of_file() {
 }
 
 # Prints one line per contract: name, account, recorded hash, chain hash, reproducible, source,
-# commit to build ("-" if unknown).
+# recorded commit, commit named on chain ("-" if none).
 contracts_of() {
   node -e '
     const deployment = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))
@@ -92,8 +92,8 @@ contracts_of() {
     ;(async () => {
       for (const [name, c] of Object.entries(deployment.contracts)) {
         const reproducible = c.reproducible === true
-        const commit = c.commit ?? (reproducible ? await sourceRev(c.account_id) : "-")
-        console.log([name, c.account_id, c.code_hash, await codeHash(c.account_id), reproducible, c.source, commit].join(" "))
+        const chainRev = reproducible ? await sourceRev(c.account_id) : "-"
+        console.log([name, c.account_id, c.code_hash, await codeHash(c.account_id), reproducible, c.source, c.commit ?? "-", chainRev].join(" "))
       }
     })()
   ' "$1"
@@ -109,7 +109,7 @@ for network in "${networks[@]}"; do
   file="deployments/$network.json"
   [[ -f $file ]] || { report FAIL "$network: no $file"; continue; }
   echo "== $network ($file)"
-  while read -r name account recorded chain reproducible source commit; do
+  while read -r name account recorded chain reproducible source commit chain_rev; do
     if [[ $chain == "$recorded" ]]; then
       report PASS "$name $account: chain code_hash $chain = recorded"
     else
@@ -119,11 +119,14 @@ for network in "${networks[@]}"; do
       report SKIP "$name $account: not built reproducibly, no source build to compare"
       continue
     fi
-    if [[ $commit == - ]] || ! git cat-file -e "$commit^{commit}" 2>/dev/null; then
-      report FAIL "$name $account: source commit '$commit' unknown or not in this clone (git fetch)"
+    if [[ $chain_rev == - ]] || ! git cat-file -e "$chain_rev^{commit}" 2>/dev/null; then
+      report FAIL "$name $account: source commit '$chain_rev' named on chain unknown or not in this clone (git fetch)"
       continue
     fi
-    commit=$(git rev-parse --short "$commit")
+    if [[ $commit != - && $(git rev-parse "$commit^{commit}" 2>/dev/null) != "$(git rev-parse "$chain_rev")" ]]; then
+      report FAIL "$name $account: chain names commit $chain_rev, $file records $commit"
+    fi
+    commit=$(git rev-parse --short "$chain_rev")
     built=$(code_hash_of_file "$(build_wasm "$source" "$commit")")
     if [[ $built == "$chain" ]]; then
       report PASS "$name $account: reproducible build of $source/ at $commit = chain ($built)"
