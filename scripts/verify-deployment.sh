@@ -7,8 +7,9 @@
 # For each contract in deployments/<network>.json it reads the account's `code_hash` over RPC and
 # compares it with the recorded one. For contracts marked "reproducible": true it also builds the
 # wasm with `cargo near build reproducible-wasm` (docker, pinned toolchain image) from a clean
-# checkout of the recorded "commit" (HEAD if none) and compares base58(sha256(wasm)), the same
-# encoding as NEAR's `code_hash`.
+# checkout of the recorded "commit" (else the commit the contract names in its NEP-330
+# `contract_source_metadata`) and compares base58(sha256(wasm)), the same encoding as NEAR's
+# `code_hash`.
 # Prints PASS/FAIL per check and exits 1 if anything fails.
 #
 # Needs: git, node 22+; for the build: cargo-near and docker.
@@ -24,23 +25,20 @@ else
   for file in deployments/*.json; do networks+=("$(basename "$file" .json)"); done
 fi
 
-# The reproducible build refuses uncommitted changes, so build from clean worktrees.
+# The reproducible build refuses uncommitted changes and mounts the crate's repo in docker, so
+# build from a fresh clone (a worktree's .git points outside the mount).
 BUILD_DIR=$(mktemp -d)
-cleanup() {
-  for tree in "$BUILD_DIR"/src-*; do
-    [[ -d $tree ]] && git worktree remove --force "$tree" >/dev/null 2>&1
-  done
-  rm -rf "$BUILD_DIR"
-  git worktree prune
-}
-trap cleanup EXIT
+trap 'rm -rf "$BUILD_DIR"' EXIT
 
 # Builds <source dir> at <commit> once and prints the wasm path.
 build_wasm() {
   local source=$1 commit=$2
   local tree="$BUILD_DIR/src-$commit" out="$BUILD_DIR/out-$commit/$source"
   if [[ ! -d "$out" ]]; then
-    [[ -d "$tree" ]] || git worktree add --quiet --detach "$tree" "$commit"
+    if [[ ! -d "$tree" ]]; then
+      git clone --quiet --no-checkout "$ROOT" "$tree"
+      git -C "$tree" checkout --quiet --detach "$commit"
+    fi
     mkdir -p "$out"
     (cd "$tree/$source" && cargo near build reproducible-wasm --out-dir "$out") >&2
   fi
@@ -60,31 +58,42 @@ code_hash_of_file() {
 }
 
 # Prints one line per contract: name, account, recorded hash, chain hash, reproducible, source,
-# commit.
+# commit to build ("-" if unknown).
 contracts_of() {
   node -e '
     const deployment = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))
-    const rpc = async (accountId) => {
+    const query = async (params) => {
       for (let attempt = 1; ; attempt++) {
         const response = await fetch(deployment.rpc, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ jsonrpc: "2.0", id: "verify", method: "query",
-            params: { request_type: "view_account", finality: "final", account_id: accountId } }),
+            params: { finality: "final", ...params } }),
         })
         if (response.ok) {
           const body = await response.json()
-          if (body.result) return body.result.code_hash
-          if (attempt >= 3) return "error:" + JSON.stringify(body.error?.cause ?? body.error)
+          if (body.result && !body.result.error) return body.result
+          if (attempt >= 3) throw new Error(JSON.stringify(body.error?.cause ?? body.error ?? body.result.error))
         } else if (attempt >= 3) {
-          return "error:http-" + response.status
+          throw new Error("http " + response.status)
         }
         await new Promise((resolve) => setTimeout(resolve, 1000 * attempt))
       }
     }
+    const codeHash = (accountId) =>
+      query({ request_type: "view_account", account_id: accountId })
+        .then((r) => r.code_hash, (e) => "error:" + e.message.replaceAll(" ", "_"))
+    // NEP-330: a reproducible build records `source_code_snapshot = git+<repo>?rev=<commit>`.
+    const sourceRev = (accountId) =>
+      query({ request_type: "call_function", account_id: accountId,
+        method_name: "contract_source_metadata", args_base64: "" })
+        .then((r) => JSON.parse(Buffer.from(r.result).toString()).build_info?.source_code_snapshot ?? "")
+        .then((snapshot) => /[?&]rev=([0-9a-f]{7,40})/.exec(snapshot)?.[1] ?? "-", () => "-")
     ;(async () => {
       for (const [name, c] of Object.entries(deployment.contracts)) {
-        console.log([name, c.account_id, c.code_hash, await rpc(c.account_id), c.reproducible === true, c.source, c.commit ?? "HEAD"].join(" "))
+        const reproducible = c.reproducible === true
+        const commit = c.commit ?? (reproducible ? await sourceRev(c.account_id) : "-")
+        console.log([name, c.account_id, c.code_hash, await codeHash(c.account_id), reproducible, c.source, commit].join(" "))
       }
     })()
   ' "$1"
@@ -108,6 +117,10 @@ for network in "${networks[@]}"; do
     fi
     if [[ $reproducible != true ]]; then
       report SKIP "$name $account: not built reproducibly, no source build to compare"
+      continue
+    fi
+    if [[ $commit == - ]] || ! git cat-file -e "$commit^{commit}" 2>/dev/null; then
+      report FAIL "$name $account: source commit '$commit' unknown or not in this clone (git fetch)"
       continue
     fi
     commit=$(git rev-parse --short "$commit")
