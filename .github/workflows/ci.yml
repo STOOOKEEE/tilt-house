@@ -34,10 +34,13 @@ jobs:
           workspaces: |
             . -> target
             contract/tests/mock-ft -> target
+      # near-workspaces' compile_project shells out to `cargo near`; the prebuilt binary installs in
+      # seconds (cargo-binstall fell back to compiling it, which fails on hidapi).
+      - name: Install cargo-near
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/near/cargo-near/releases/download/cargo-near-v0.22.0/cargo-near-installer.sh | sh
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      # Sandbox tests (contract/, token/) build the wasm with near-workspaces (cargo-near-build as a
-      # library, no cargo-near binary), download near-sandbox and deploy to it.
+      # Sandbox tests (contract/, token/) build the wasm, download near-sandbox and deploy to it.
       - run: cargo test --workspace
 
   node:
