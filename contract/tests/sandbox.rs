@@ -2,6 +2,7 @@
 //! test plays the session server: it holds the server key, draws the seed, plays rounds with
 //! `core_rules::session` and signs tickets and states like the real server.
 
+use core_rules::poker::{Hand, HandStart, PokerAction, SeatStart, TableConfig};
 use core_rules::session::{
     replay_round, server_seed_hash, session_max_win, state_message, ticket_message, CompactRound,
     Hash32, SessionPublic, SessionState, SessionTicket, SettleBatch,
@@ -9,6 +10,7 @@ use core_rules::session::{
 use core_rules::{Bet, DiceBet, Game, RouletteBet, RouletteSpot};
 use ed25519_dalek::{Signer, SigningKey};
 use near_workspaces::network::Sandbox;
+use near_workspaces::operations::Function;
 use near_workspaces::result::ExecutionFinalResult;
 use near_workspaces::types::{Gas, NearToken};
 use near_workspaces::{Account, Contract, Worker};
@@ -46,6 +48,16 @@ fn amount(value: &Value) -> u128 {
     value.as_str().expect("amount string").parse().unwrap()
 }
 
+fn expect_failure(result: ExecutionFinalResult, method: &str, error: &str) -> anyhow::Result<()> {
+    assert!(result.is_failure(), "{method} should fail with {error:?}");
+    let message = format!("{:?}", result.into_result().unwrap_err());
+    assert!(
+        message.contains(error),
+        "{method}: expected {error:?}, got {message}"
+    );
+    Ok(())
+}
+
 fn server_key() -> SigningKey {
     SigningKey::from_bytes(&[7u8; 32])
 }
@@ -60,7 +72,12 @@ struct Env {
 
 /// Floor with `dealers` NPC dealers (from `LAUNCH`), each seeded with 2,000 tUSDC and seated.
 async fn setup(dealers: usize) -> anyhow::Result<Env> {
-    let [floor_wasm, ft_wasm] = wasms().await;
+    setup_code(&wasms().await[0], dealers).await
+}
+
+/// `setup` with the floor running `floor_wasm` (an older release for the upgrade test).
+async fn setup_code(floor_wasm: &[u8], dealers: usize) -> anyhow::Result<Env> {
+    let ft_wasm = &wasms().await[1];
     let worker = near_workspaces::sandbox().await?;
     let owner = worker.dev_create_account().await?;
     let ft = worker.dev_deploy(ft_wasm).await?;
@@ -120,16 +137,7 @@ impl Env {
     }
 
     async fn deposit(&self, from: &Account, amount: u128) -> anyhow::Result<()> {
-        from.call(self.ft.id(), "ft_transfer_call")
-            .args_json(
-                json!({"receiver_id": self.floor.id(), "amount": amount.to_string(), "msg": ""}),
-            )
-            .deposit(NearToken::from_yoctonear(1))
-            .gas(Gas::from_tgas(100))
-            .transact()
-            .await?
-            .into_result()?;
-        Ok(())
+        self.transfer_call(from, amount, "").await
     }
 
     /// A new player holding `balance` in the floor.
@@ -146,9 +154,21 @@ impl Env {
         method: &str,
         args: Value,
     ) -> anyhow::Result<ExecutionFinalResult> {
+        self.call_with(who, method, args, NearToken::from_yoctonear(0))
+            .await
+    }
+
+    async fn call_with(
+        &self,
+        who: &Account,
+        method: &str,
+        args: Value,
+        deposit: NearToken,
+    ) -> anyhow::Result<ExecutionFinalResult> {
         Ok(who
             .call(self.floor.id(), method)
             .args_json(args)
+            .deposit(deposit)
             .gas(GAS)
             .transact()
             .await?)
@@ -173,13 +193,55 @@ impl Env {
         error: &str,
     ) -> anyhow::Result<()> {
         let result = self.call(who, method, args).await?;
-        assert!(result.is_failure(), "{method} should fail with {error:?}");
-        let message = format!("{:?}", result.into_result().unwrap_err());
-        assert!(
-            message.contains(error),
-            "{method}: expected {error:?}, got {message}"
-        );
+        expect_failure(result, method, error)
+    }
+
+    /// `fails` for the 1 yocto (full-access key) methods.
+    async fn fails_yocto(
+        &self,
+        who: &Account,
+        method: &str,
+        args: Value,
+        error: &str,
+    ) -> anyhow::Result<()> {
+        let result = self
+            .call_with(who, method, args, NearToken::from_yoctonear(1))
+            .await?;
+        expect_failure(result, method, error)
+    }
+
+    /// `ft_transfer_call` of `amount` to the floor with `msg`; the token refunds a refused one.
+    async fn transfer_call(&self, from: &Account, amount: u128, msg: &str) -> anyhow::Result<()> {
+        from.call(self.ft.id(), "ft_transfer_call")
+            .args_json(
+                json!({"receiver_id": self.floor.id(), "amount": amount.to_string(), "msg": msg}),
+            )
+            .deposit(NearToken::from_yoctonear(1))
+            .gas(Gas::from_tgas(100))
+            .transact()
+            .await?
+            .into_result()?;
         Ok(())
+    }
+
+    async fn wallet(&self, account: &Account) -> anyhow::Result<u128> {
+        let held: Value = self
+            .ft
+            .view("ft_balance_of")
+            .args_json(json!({"account_id": account.id()}))
+            .await?
+            .json()?;
+        Ok(amount(&held))
+    }
+
+    async fn shares(&self, account: &Account, dealer_id: &str) -> anyhow::Result<u128> {
+        let shares = self
+            .view(
+                "mt_balance_of",
+                json!({"account_id": account.id(), "token_id": dealer_id}),
+            )
+            .await?;
+        Ok(amount(&shares))
     }
 
     async fn view(&self, method: &str, args: Value) -> anyhow::Result<Value> {
@@ -284,8 +346,15 @@ impl Play {
     }
 
     fn play(&mut self, bet: &Bet, stake: u128) {
+        let round =
+            replay_round(&self.seed, &self.public(), self.nonce + 1, bet, stake, &[]).unwrap();
+        self.push(round);
+    }
+
+    /// Records a round played elsewhere (a poker hand's line for this player).
+    fn push(&mut self, round: CompactRound) {
         self.nonce += 1;
-        let round = replay_round(&self.seed, &self.public(), self.nonce, bet, stake, &[]).unwrap();
+        assert_eq!(round.nonce, self.nonce);
         self.balance = self.balance - round.wager() + round.payout;
         self.chain = core_rules::session::chain_step(&self.chain, &round);
         self.pending.push(round);
@@ -321,8 +390,22 @@ async fn open(
     id: &str,
     seed_byte: u8,
 ) -> anyhow::Result<Play> {
+    let (play, args) = offer(env, player, dealer_id, id, seed_byte, 10 * USDC, USDC).await?;
+    env.ok(player, "open_session", args).await?;
+    Ok(play)
+}
+
+/// The server's side and the signed `open_session` args of a session of `lock` and `max_bet`.
+async fn offer(
+    env: &Env,
+    player: &Account,
+    dealer_id: &str,
+    id: &str,
+    seed_byte: u8,
+    lock: u128,
+    max_bet: u128,
+) -> anyhow::Result<(Play, Value)> {
     let dealer = env.dealer(dealer_id).await?;
-    let lock = 10 * USDC;
     let free = amount(&dealer["bankroll"]) - amount(&dealer["reserved"]);
     let seed = [seed_byte; 32];
     let game: Game = serde_json::from_value(dealer["game"].clone())?;
@@ -333,7 +416,7 @@ async fn open(
         client_seed: "lucky-7".to_string(),
         lock,
         rake_bp: dealer["rake_bp"].as_u64().unwrap() as u16,
-        max_bet: USDC,
+        max_bet,
         max_win: session_max_win(lock, free),
         balance: lock,
         chain: server_seed_hash(&seed),
@@ -354,13 +437,7 @@ async fn open(
         expires_at: env.now().await? + 120,
     };
     let sig = env.sign(&ticket_message(&ticket));
-    env.ok(
-        player,
-        "open_session",
-        json!({"ticket": ticket, "server_sig": sig}),
-    )
-    .await?;
-    Ok(play)
+    Ok((play, json!({"ticket": ticket, "server_sig": sig})))
 }
 
 /// Every token the floor holds is somebody's: balances + pools + jackpot (no open session).
@@ -851,5 +928,534 @@ async fn force_close_after_timeout_then_claim_unrevealed() -> anyhow::Result<()>
             .await?["status"],
         "forfeited"
     );
+    Ok(())
+}
+
+/// NPC gamblers: a capped registry, every way out for their money refused but sessions, and a
+/// salary only the keeper can pay, up to the balance cap.
+#[tokio::test]
+async fn npc_gamblers_only_play_sessions_and_take_salary_from_the_keeper() -> anyhow::Result<()> {
+    let env = setup(1).await?;
+    let npc = env.player(50 * USDC).await?;
+    let stranger = env.player(10 * USDC).await?;
+    env.fails(
+        &stranger,
+        "register_npcs",
+        json!({"accounts": [npc.id()]}),
+        "only the owner",
+    )
+    .await?;
+    env.ok(
+        &env.owner,
+        "register_npcs",
+        json!({"accounts": [npc.id(), npc.id()]}),
+    )
+    .await?;
+    assert_eq!(env.view("get_npcs", json!({})).await?, json!([npc.id()]));
+    let fillers: Vec<String> = (1..24).map(|i| format!("g-{i}.test.near")).collect();
+    env.ok(&env.owner, "register_npcs", json!({ "accounts": fillers }))
+        .await?;
+    env.fails(
+        &env.owner,
+        "register_npcs",
+        json!({"accounts": ["g-24.test.near"]}),
+        "too many NPC gamblers",
+    )
+    .await?;
+    let npcs = env.view("get_npcs", json!({})).await?;
+    assert_eq!(npcs.as_array().unwrap().len(), 24);
+
+    // Every way out but a session is refused.
+    let refused = "NPC gamblers can only play sessions";
+    env.fails_yocto(
+        &npc,
+        "withdraw",
+        json!({"amount": USDC.to_string()}),
+        refused,
+    )
+    .await?;
+    env.fails(
+        &npc,
+        "invest",
+        json!({"dealer_id": "ada", "amount": USDC.to_string()}),
+        refused,
+    )
+    .await?;
+    env.fails(
+        &npc,
+        "divest",
+        json!({"dealer_id": "ada", "shares": "1"}),
+        refused,
+    )
+    .await?;
+    env.fails(
+        &npc,
+        "open_table",
+        json!({
+            "id": "npc-dice", "name": "NPC", "game": "dice", "temperament": "promoter",
+            "look": "top-hat", "seed_amount": TABLE_SEED.to_string(),
+        }),
+        refused,
+    )
+    .await?;
+    env.fails(
+        &npc,
+        "list_seat",
+        json!({"dealer_id": "ada", "price": "1"}),
+        refused,
+    )
+    .await?;
+    env.fails(
+        &npc,
+        "buy_seat",
+        json!({"seat": 1, "dealer_id": "ada", "max_price": "1"}),
+        refused,
+    )
+    .await?;
+    env.fails_yocto(
+        &npc,
+        "mt_transfer",
+        json!({"receiver_id": stranger.id(), "token_id": "ada", "amount": "1", "approval": null}),
+        refused,
+    )
+    .await?;
+    // LP shares bought with a token transfer are refused too: the token refunds them.
+    env.mint(npc.id().as_str(), USDC).await?;
+    env.transfer_call(&npc, USDC, r#"{"invest":"ada"}"#).await?;
+    assert_eq!(env.wallet(&npc).await?, USDC);
+    assert_eq!(env.shares(&npc, "ada").await?, 0);
+    assert_eq!(env.balance(&npc).await?, 50 * USDC);
+
+    // Sessions are what NPCs are for.
+    let mut play = open(&env, &npc, "ada", "s-npc", 5).await?;
+    for _ in 0..3 {
+        play.round(USDC);
+    }
+    env.ok(
+        &env.owner,
+        "settle_session",
+        json!({"batch": play.batch(&env)}),
+    )
+    .await?;
+    env.ok(
+        &npc,
+        "close_session",
+        json!({"session_id": "s-npc", "server_seed": hex::encode(play.seed)}),
+    )
+    .await?;
+    let after_session = 40 * USDC + play.balance;
+    assert_eq!(env.balance(&npc).await?, after_session);
+
+    // The keeper (the owner here) pays the salary into the NPC's floor balance.
+    env.mint(env.owner.id().as_str(), 300 * USDC).await?;
+    let credit = |account: &Account| json!({ "credit_npc": account.id() }).to_string();
+    env.transfer_call(&env.owner, 5 * USDC, &credit(&npc))
+        .await?;
+    assert_eq!(env.balance(&npc).await?, after_session + 5 * USDC);
+    // Refused (and refunded): another sender, an account that is not an NPC, above the cap.
+    env.mint(stranger.id().as_str(), 5 * USDC).await?;
+    env.transfer_call(&stranger, 5 * USDC, &credit(&npc))
+        .await?;
+    assert_eq!(env.wallet(&stranger).await?, 5 * USDC);
+    env.transfer_call(&env.owner, 5 * USDC, &credit(&stranger))
+        .await?;
+    assert_eq!(env.balance(&stranger).await?, 10 * USDC);
+    env.transfer_call(&env.owner, 200 * USDC, &credit(&npc))
+        .await?;
+    assert_eq!(env.balance(&npc).await?, after_session + 5 * USDC);
+    assert_eq!(env.wallet(&env.owner).await?, 295 * USDC);
+    assert_conserved(
+        &env,
+        &[&env.owner, &npc, &stranger],
+        10_000 * USDC + 60 * USDC + 5 * USDC,
+    )
+    .await?;
+    Ok(())
+}
+
+/// A controller renames its table, then retires it once it is off the floor, settled and
+/// fully its own; the retired table takes no more money, seat or name.
+#[tokio::test]
+async fn controller_renames_and_retires_an_off_floor_table() -> anyhow::Result<()> {
+    let env = setup(5).await?;
+    let alice = env.player(TABLE_SEED + 10 * USDC).await?;
+    let bob = env.player(TABLE_SEED + 10 * USDC).await?;
+    let carol = env.player(50 * USDC).await?;
+    env.open_table(&alice, "alice-dice").await?;
+    env.open_table(&bob, "bob-dice").await?;
+    let table = |name: &str| json!({"dealer_id": "alice-dice", "name": name});
+
+    env.fails(&bob, "set_table_name", table("Bob's"), "controller")
+        .await?;
+    env.fails(&alice, "set_table_name", table(" padded"), "table name")
+        .await?;
+    env.ok(&alice, "set_table_name", table("Lucky Alice"))
+        .await?;
+    assert_eq!(env.dealer("alice-dice").await?["name"], "Lucky Alice");
+
+    let alice_dice = json!({"dealer_id": "alice-dice"});
+    env.ok(
+        &alice,
+        "bid_for_seat",
+        json!({"dealer_id": "alice-dice", "rent_per_hour": "600000"}),
+    )
+    .await?;
+    env.fails(&alice, "retire_table", alice_dice.clone(), "on the floor")
+        .await?;
+    // A new table offers small bets: the session takes the minimum.
+    let min_bet = USDC / 10;
+    let (mut play, args) = offer(&env, &carol, "alice-dice", "s-a", 6, 10 * USDC, min_bet).await?;
+    env.ok(&carol, "open_session", args).await?;
+    play.round(min_bet);
+    env.ok(
+        &env.owner,
+        "settle_session",
+        json!({"batch": play.batch(&env)}),
+    )
+    .await?;
+    // Alice sells the seat: her table leaves the floor with Carol's session still open.
+    env.ok(
+        &alice,
+        "list_seat",
+        json!({"dealer_id": "alice-dice", "price": "1000000"}),
+    )
+    .await?;
+    env.ok(
+        &bob,
+        "buy_seat",
+        json!({"seat": 6, "dealer_id": "bob-dice", "max_price": "1000000"}),
+    )
+    .await?;
+    env.fails(
+        &alice,
+        "retire_table",
+        alice_dice.clone(),
+        "sessions to settle",
+    )
+    .await?;
+    env.ok(
+        &env.owner,
+        "close_session",
+        json!({"session_id": "s-a", "server_seed": hex::encode(play.seed)}),
+    )
+    .await?;
+    env.ok(
+        &carol,
+        "invest",
+        json!({"dealer_id": "alice-dice", "amount": (5 * USDC).to_string()}),
+    )
+    .await?;
+    env.fails(&alice, "retire_table", alice_dice.clone(), "other LPs")
+        .await?;
+    let carol_shares = env.shares(&carol, "alice-dice").await?;
+    env.ok(
+        &carol,
+        "divest",
+        json!({"dealer_id": "alice-dice", "shares": carol_shares.to_string()}),
+    )
+    .await?;
+    env.fails(&bob, "retire_table", alice_dice.clone(), "controller")
+        .await?;
+
+    let before = env.balance(&alice).await?;
+    let bankroll = amount(&env.dealer("alice-dice").await?["bankroll"]);
+    env.ok(&alice, "retire_table", alice_dice.clone()).await?;
+    assert_eq!(env.balance(&alice).await?, before + bankroll);
+    assert_eq!(env.shares(&alice, "alice-dice").await?, 0);
+    let lobby = env.view("get_lobby", json!({})).await?;
+    assert!(lobby
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|d| d["id"] != "alice-dice"));
+    let retired = env.view("get_retired", json!({})).await?;
+    assert_eq!(retired[0]["id"], "alice-dice");
+    assert_eq!(retired[0]["name"], "Lucky Alice");
+    assert_eq!(retired[0]["bankroll"], "0");
+    let alice_view = env
+        .view("get_player", json!({"account_id": alice.id()}))
+        .await?;
+    assert_eq!(alice_view["tables"], json!([]));
+    let history = env
+        .view(
+            "get_history",
+            json!({"dealer_id": "alice-dice", "from": null, "limit": 1}),
+        )
+        .await?;
+    assert_eq!(history[0]["kind"], "retired");
+    assert_eq!(amount(&history[0]["amount"]), bankroll);
+
+    // Retired for good: no money, seat or name, and the id stays taken.
+    env.fails(&alice, "retire_table", alice_dice.clone(), "retired")
+        .await?;
+    env.fails(&alice, "set_table_name", table("Again"), "retired")
+        .await?;
+    env.fails(
+        &alice,
+        "bid_for_seat",
+        json!({"dealer_id": "alice-dice", "rent_per_hour": "5000000"}),
+        "retired",
+    )
+    .await?;
+    env.fails(
+        &carol,
+        "invest",
+        json!({"dealer_id": "alice-dice", "amount": USDC.to_string()}),
+        "retired",
+    )
+    .await?;
+    env.fails(
+        &alice,
+        "open_table",
+        json!({
+            "id": "alice-dice", "name": "Back", "game": "dice", "temperament": "promoter",
+            "look": "top-hat", "seed_amount": TABLE_SEED.to_string(),
+        }),
+        "already used",
+    )
+    .await?;
+    assert_conserved(
+        &env,
+        &[&env.owner, &alice, &bob, &carol],
+        10_000 * USDC + 2 * (TABLE_SEED + 10 * USDC) + 50 * USDC,
+    )
+    .await?;
+    Ok(())
+}
+
+/// The live v2 code (tests/fixtures/floor-v2.wasm, fetched from floor.tilthouse.testnet)
+/// upgraded in place: `migrate` keeps every balance, table, log and open session.
+#[tokio::test]
+async fn upgrade_from_v2_keeps_every_balance_and_session() -> anyhow::Result<()> {
+    let v2 = std::fs::read("tests/fixtures/floor-v2.wasm")?;
+    let env = setup_code(&v2, 1).await?;
+    let player = env.player(50 * USDC).await?;
+    let alice = env.player(TABLE_SEED).await?;
+    env.open_table(&alice, "alice-dice").await?;
+    let mut play = open(&env, &player, "ada", "s-up", 8).await?;
+    for _ in 0..3 {
+        play.round(USDC);
+    }
+    env.ok(
+        &env.owner,
+        "settle_session",
+        json!({"batch": play.batch(&env)}),
+    )
+    .await?;
+    let player_args = json!({"account_id": player.id()});
+    let session_args = json!({"session_id": "s-up"});
+    let history_args = json!({"dealer_id": "ada", "from": 0, "limit": 50});
+    let player_before = env.view("get_player", player_args.clone()).await?;
+    let session_before = env.view("get_session", session_args.clone()).await?;
+    let history_before = env.view("get_history", history_args.clone()).await?;
+    let lobby_before = env.view("get_lobby", json!({})).await?;
+
+    let code = &wasms().await[0];
+    env.floor
+        .as_account()
+        .batch(env.floor.id())
+        .deploy(code)
+        .call(
+            Function::new("migrate")
+                .args_json(json!({}))
+                .gas(Gas::from_tgas(100)),
+        )
+        .transact()
+        .await?
+        .into_result()?;
+
+    assert_eq!(env.view("get_player", player_args).await?, player_before);
+    assert_eq!(env.view("get_session", session_args).await?, session_before);
+    assert_eq!(env.view("get_history", history_args).await?, history_before);
+    let lobby = env.view("get_lobby", json!({})).await?;
+    let lobby = lobby.as_array().unwrap();
+    assert_eq!(lobby.len(), lobby_before.as_array().unwrap().len());
+    for (after, before) in lobby.iter().zip(lobby_before.as_array().unwrap()) {
+        for field in [
+            "id",
+            "name",
+            "controller",
+            "bankroll",
+            "reserved",
+            "shares",
+            "seat",
+        ] {
+            assert_eq!(after[field], before[field], "{field} kept");
+        }
+    }
+    assert_eq!(env.view("get_npcs", json!({})).await?, json!([]));
+    assert_eq!(env.view("get_retired", json!({})).await?, json!([]));
+
+    // Only the contract itself migrates, and only a v2 state.
+    env.fails(&env.owner, "migrate", json!({}), "private")
+        .await?;
+    let again = env
+        .floor
+        .as_account()
+        .call(env.floor.id(), "migrate")
+        .args_json(json!({}))
+        .transact()
+        .await?;
+    expect_failure(again, "migrate", "Cannot deserialize")?;
+
+    // The session opened under v2 plays on and closes under v3; v3 methods run on old state.
+    play.round(USDC);
+    env.ok(
+        &env.owner,
+        "settle_session",
+        json!({"batch": play.batch(&env)}),
+    )
+    .await?;
+    env.ok(
+        &env.owner,
+        "close_session",
+        json!({"session_id": "s-up", "server_seed": hex::encode(play.seed)}),
+    )
+    .await?;
+    assert_eq!(env.balance(&player).await?, 40 * USDC + play.balance);
+    env.ok(
+        &env.owner,
+        "register_npcs",
+        json!({"accounts": ["g-1.test.near"]}),
+    )
+    .await?;
+    env.ok(&alice, "retire_table", json!({"dealer_id": "alice-dice"}))
+        .await?;
+    assert_conserved(
+        &env,
+        &[&env.owner, &player, &alice],
+        10_000 * USDC + 50 * USDC + TABLE_SEED,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Poker: two players' buy-ins are sessions at one poker table; one hand settles as one round
+/// per player, the pool (with the rent it paid meanwhile) gains exactly the hand's rake, and
+/// each session verifies off chain from the hand history.
+#[tokio::test]
+async fn poker_hand_settles_for_both_players_and_the_pool_keeps_the_rake() -> anyhow::Result<()> {
+    let env = setup(0).await?;
+    env.ok(
+        &env.owner,
+        "add_dealer",
+        json!({
+            "id": "faye", "name": "Faye", "game": "poker", "temperament": "cautious",
+            "look": "top-hat", "dealer_account": env.owner.id(), "seed_amount": SEED.to_string(),
+        }),
+    )
+    .await?;
+    env.ok(&env.owner, "launch_floor", json!({"dealer_ids": ["faye"]}))
+        .await?;
+    let alice = env.player(50 * USDC).await?;
+    let bob = env.player(50 * USDC).await?;
+    let max_bet = amount(&env.dealer("faye").await?["max_bet"]);
+    let buy_in = (10 * USDC).min(max_bet);
+    let big_blind = USDC / 5;
+    assert!(buy_in >= 20 * big_blind, "the table takes a minimum buy-in");
+
+    // A buy-in bigger than one hand may take from a stack is refused.
+    let (_, too_big) = offer(&env, &alice, "faye", "p-x", 9, buy_in, buy_in - 1).await?;
+    env.fails(
+        &alice,
+        "open_session",
+        too_big,
+        "poker buy-in above the max bet",
+    )
+    .await?;
+    let mut sessions = Vec::new();
+    for (player, id, seed_byte) in [(&alice, "p-a", 10), (&bob, "p-b", 11)] {
+        let (play, args) = offer(&env, player, "faye", id, seed_byte, buy_in, buy_in).await?;
+        env.ok(player, "open_session", args).await?;
+        sessions.push((player, play));
+    }
+
+    let seats = sessions
+        .iter()
+        .zip(1u8..)
+        .map(|((player, play), seat)| SeatStart {
+            seat,
+            player: player.id().to_string(),
+            stack: play.balance,
+            client_seed: play.client_seed.clone(),
+            rake_bp: play.rake_bp,
+        })
+        .collect();
+    let hand_seed = [42u8; 32];
+    let start = HandStart {
+        table: "faye".to_string(),
+        hand: 1,
+        config: TableConfig::standard(big_blind),
+        button: 1,
+        seats,
+        hand_seed_hash: server_seed_hash(&hand_seed),
+    };
+    let mut hand = Hand::new(start, hand_seed).map_err(|e| anyhow::anyhow!("{e}"))?;
+    // Both all in: the hand runs to the river.
+    for action in [PokerAction::AllIn, PokerAction::Call] {
+        let seat = hand.to_act().expect("a player to act");
+        hand.act(seat, action).map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
+    let rake = hand.result().expect("the hand is over").rake;
+    assert!(rake > 0);
+    let history = hand.history().expect("the hand is over");
+
+    let pot_and_jackpot =
+        |dealer: &Value, floor: &Value| amount(&dealer["bankroll"]) + amount(&floor["jackpot"]);
+    let before = pot_and_jackpot(
+        &env.dealer("faye").await?,
+        &env.view("get_floor", json!({})).await?,
+    );
+    let mut batches = Vec::new();
+    for ((_, play), seat) in sessions.iter_mut().zip(1u8..) {
+        let round = hand
+            .round_for(seat, play.nonce + 1)
+            .expect("a line per seat");
+        play.push(round);
+        let batch = play.batch(&env);
+        env.ok(&env.owner, "settle_session", json!({ "batch": batch }))
+            .await?;
+        batches.push(batch);
+    }
+    let mut jackpots = 0;
+    for (_, play) in &sessions {
+        let session = env
+            .view("get_session", json!({"session_id": play.id}))
+            .await?;
+        jackpots += amount(&session["jackpot_won"]);
+    }
+    let after = pot_and_jackpot(
+        &env.dealer("faye").await?,
+        &env.view("get_floor", json!({})).await?,
+    );
+    assert_eq!(
+        after + jackpots,
+        before + rake,
+        "the table (and the rent it paid) gained exactly the rake"
+    );
+
+    for ((player, play), batch) in sessions.iter().zip(&batches) {
+        env.ok(
+            &env.owner,
+            "close_session",
+            json!({"session_id": play.id, "server_seed": hex::encode(play.seed)}),
+        )
+        .await?;
+        let summary = core_rules::session::verify_poker_session(
+            &play.seed,
+            &play.public(),
+            player.id().as_str(),
+            std::slice::from_ref(batch),
+            std::slice::from_ref(&history),
+        )
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert_eq!(summary.balance, play.balance);
+    }
+    assert_conserved(
+        &env,
+        &[&env.owner, &alice, &bob],
+        10_000 * USDC + 100 * USDC,
+    )
+    .await?;
     Ok(())
 }

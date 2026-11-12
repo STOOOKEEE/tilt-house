@@ -1,10 +1,20 @@
 [package]
 name = "tilt-house-contract"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
-description = "Tilt House floor: NPC and player-owned tables as LP pools, seats, rent, jackpot and provably fair sessions (NEAR testnet)"
+description = "Tilt House floor: NPC and player-owned tables as LP pools, seats, rent, jackpot and provably fair sessions (NEAR)"
 license = "MIT"
 publish = false
+# NEP-330 `contract_source_metadata` link (near-sdk reads it at build time).
+repository = "https://github.com/STOOOKEEE/tilt-house"
+
+# `cargo near build reproducible-wasm` (run from contract/, committed tree): the image is
+# pinned by digest so anyone rebuilds the same wasm bytes (docs/contract-api.md, Build).
+[package.metadata.near.reproducible_build]
+image = "sourcescan/cargo-near:0.21.1-rust-1.96.0"
+image_digest = "sha256:ccb22bb4e677ed022d8b9d1aa1b32f0af52dd0471ef1c32e48dedbf68ee6ee17"
+passed_env = []
+container_build_command = ["cargo", "near", "build", "non-reproducible-wasm", "--locked"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

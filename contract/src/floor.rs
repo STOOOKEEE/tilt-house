@@ -50,7 +50,7 @@ impl House {
             "launch 1 to 6 dealers"
         );
         for (i, id) in dealer_ids.iter().enumerate() {
-            require!(self.dealers.contains_key(id), "unknown dealer");
+            require!(self.dealer_ids.contains(id), "unknown dealer");
             require!(!dealer_ids[..i].contains(id), "a dealer is listed twice");
         }
         let now = now();
@@ -75,7 +75,7 @@ impl House {
     /// The keeper (or the controller) runs an NPC dealer's rent strategy
     /// (`core::rent_bid`). Returns the `RentDecision`.
     pub fn rent_bid(&mut self, dealer_id: String) -> Value {
-        let dealer = self.dealer(&dealer_id);
+        let dealer = self.active_dealer(&dealer_id);
         require!(dealer.npc, "only NPC dealers bid by themselves");
         self.assert_keeper_or_controller(&dealer);
         let now = now();
@@ -103,6 +103,7 @@ impl House {
 
     /// Lists the seated dealer's seat for sale at `price` (`null` unlists).
     pub fn list_seat(&mut self, dealer_id: String, price: Option<U128>) {
+        self.assert_not_npc();
         let mut dealer = self.controlled_dealer(&dealer_id);
         let price = price.map(|p| p.0);
         self.floor
@@ -134,6 +135,7 @@ impl House {
     /// moves from the caller's balance to the seller's controller, the seat (rent, prepaid time)
     /// to `dealer_id`; the seller's dealer goes off the floor without cooldown.
     pub fn buy_seat(&mut self, seat: u8, dealer_id: String, max_price: U128) {
+        self.assert_not_npc();
         let mut buyer = self.controlled_dealer(&dealer_id);
         let index = usize::from(seat)
             .checked_sub(1)

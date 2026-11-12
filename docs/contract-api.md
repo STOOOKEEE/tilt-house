@@ -1,9 +1,10 @@
-# Floor contract API v2 (`contract/`, crate `tilt-house-contract`)
+# Floor contract API v3 (`contract/`, crate `tilt-house-contract`)
 
-Deployed to `floor.tilthouse.testnet` (testnet only, fresh state; v1 `house.tilthouse.testnet` stays as is
-with its per-round OutLayer betting, which v2 removes). Rules come from `core_rules` (docs/floor.md,
+Deployed to `floor.tilthouse.testnet` (v2 upgraded in place with `migrate`) and, with play-money chips, to the
+mainnet floor (`floor.<root>`, `scripts/deploy-floor.sh`). Rules come from `core_rules` (docs/floor.md,
 docs/sessions.md, docs/tycoon.md); this file is the JSON contract between the chain, the web, the session
-server, the relayer and the agents.
+server, the relayer and the agents. v3 adds: the NPC gambler registry and their salary (`register_npcs`,
+`credit_npc`), table rename and retirement, poker tables, the reproducible build.
 
 ## Conventions
 
@@ -21,15 +22,16 @@ server, the relayer and the agents.
 
 | Role | Who | Can |
 |---|---|---|
-| owner | `tilthouse.testnet` | `add_dealer`, `launch_floor`, `set_server_pubkey`, `set_keeper` |
-| keeper | config `keeper` | `reprice` (any dealer on autopilot), `rent_bid` (NPC dealers) |
-| controller | NPC dealer account (`ada.tilthouse.testnet`) or the player who opened the table | `bid_for_seat`, `set_offer`, `set_autopilot`, `set_temperament`, `list_seat`, `buy_seat`, `reprice`, `rent_bid` (NPC) |
+| owner | `tilthouse.testnet` | `add_dealer`, `launch_floor`, `set_server_pubkey`, `set_keeper`, `register_npcs` |
+| keeper | config `keeper` | `reprice` (any dealer on autopilot), `rent_bid` (NPC dealers), NPC salary (`credit_npc` deposit msg) |
+| controller | NPC dealer account (`ada.tilthouse.testnet`) or the player who opened the table | `bid_for_seat`, `set_offer`, `set_autopilot`, `set_temperament`, `list_seat`, `buy_seat`, `reprice`, `rent_bid` (NPC), `set_table_name`, `retire_table` |
+| NPC gambler | an account in `get_npcs()` (at most `MAX_NPC_GAMBLERS = 24`, core `gambler_rules`) | sessions only: `open_session`, `close_session`, `force_close`, `claim_unrevealed`. Refused: `withdraw`, `invest` (also the `invest` deposit msg), `divest`, `open_table`, `list_seat`, `buy_seat`, `mt_transfer` (`"NPC gamblers can only play sessions"`). Their keys are function-call keys limited to the four session methods. |
 | session server | holds the ed25519 key whose public half is config `server_pubkey` | signs tickets and states (no on-chain role besides `settle_session`, which anyone may send) |
 | anyone | | `collect_rent`, `settle_session`, `close_session` (with the seed) |
 
 Relayer allow-list (function-call, 0 deposit): `open_table`, `bid_for_seat`, `set_offer`, `set_autopilot`,
-`set_temperament`, `list_seat`, `buy_seat`, `invest`, `divest`, `open_session`, `close_session`, `force_close`,
-`claim_unrevealed`. `withdraw` and `mt_transfer` need 1 yocto (full-access key).
+`set_temperament`, `set_table_name`, `retire_table`, `list_seat`, `buy_seat`, `invest`, `divest`, `open_session`,
+`close_session`, `force_close`, `claim_unrevealed`. `withdraw` and `mt_transfer` need 1 yocto (full-access key).
 
 ## Init and owner
 
@@ -38,14 +40,18 @@ Relayer allow-list (function-call, 0 deposit): `open_table`, `bid_for_seat`, `se
 | `new` | `{owner, token, keeper, server_pubkey_hex}` | `#[init]`. `server_pubkey_hex`: the session server's ed25519 public key. |
 | `set_server_pubkey` | `{server_pubkey_hex}` | owner. Open sessions keep working only if signed by the new key. |
 | `set_keeper` | `{keeper}` | owner. |
-| `add_dealer` | `{id, name, game: "dice"\|"roulette"\|"blackjack", temperament: "greedy"\|"promoter"\|"cautious", look: string\|null, dealer_account, seed_amount}` | owner. An **NPC** dealer, controlled by `dealer_account`, always on autopilot, off the floor. Seed from the owner's in-contract balance, minted as the owner's LP shares (`"0"`: empty pool). |
-| `launch_floor` | `{dealer_ids: string[]}` | owner, only while nobody is seated. `core::Floor::launch`: seats them in order (seat 1 first) at their seat's minimum rent, rent accruing from now (no prepay). |
+| `add_dealer` | `{id, name, game: "dice"\|"roulette"\|"blackjack"\|"poker", temperament: "greedy"\|"promoter"\|"cautious", look: string\|null, dealer_account, seed_amount}` | owner. An **NPC** dealer, controlled by `dealer_account`, always on autopilot, off the floor. Seed from the owner's in-contract balance, minted as the owner's LP shares (`"0"`: empty pool). |
+| `launch_floor` | `{dealer_ids: string[]}` | owner, only while nobody is seated. `core::Floor::launch`: seats them in order (seat 1 first) at their seat's minimum rent, rent accruing from now (no prepay). Retired tables are refused. |
+| `register_npcs` | `{accounts: string[]}` | owner. Appends NPC gamblers (already registered ones are skipped); panics past `MAX_NPC_GAMBLERS = 24` in total. No removal. |
+| `migrate` | `{}` | `#[private]` init, run once as the init call of the v3 deploy over a v2 state (`near contract deploy … with-init-call migrate`). Keeps every collection; adds an empty NPC list and retired list. A v3 state does not read as v2, so a second call panics. |
 
 ## Money in and out
 
 - **Deposit**: `ft_transfer_call({receiver_id: floor, amount, msg})` on the token (1 yocto). `ft_on_transfer` accepts
   only the configured token: `msg = ""` credits the sender's balance; `msg = "{\"invest\":\"<dealer_id>\"}"` buys LP
-  shares for the sender; anything else panics and the token refunds.
+  shares for the sender (refused for NPC gamblers); `msg = "{\"credit_npc\":\"<account>\"}"` is the NPC salary:
+  accepted only when the token sender is the config `keeper` and `<account>` is a registered NPC gambler whose
+  balance stays ≤ `GAMBLER_MAX_BALANCE` (200 tUSDC) after the credit; anything else panics and the token refunds.
 - `withdraw({amount})` — **1 yocto**. Debits now, `ft_transfer` to the caller, credited back if the transfer fails.
   Send ≥ 50 TGas. The caller must be registered on tUSDC.
 
@@ -74,12 +80,14 @@ evicted), `mt_transfer` (LP transfer, seat sale):
 
 | Method | Args | Who | Notes |
 |---|---|---|---|
-| `open_table` | `{id, name, game, temperament, look, seed_amount}` | any player | `core::validate_new_table` (seed ≥ 200 tUSDC, ≤ 16 dealers); `look` ∈ `gold-visor`, `top-hat`, `beanie`, `bare`. Seed from the caller's balance, caller = controller and founding LP. Off the floor, on autopilot with `temperament`. Returns nothing. |
+| `open_table` | `{id, name, game: "dice"\|"roulette"\|"blackjack"\|"poker", temperament, look, seed_amount}` | any player | `core::validate_new_table` (seed ≥ 200 tUSDC, ≤ 16 dealers); `look` ∈ `gold-visor`, `top-hat`, `beanie`, `bare`. Seed from the caller's balance, caller = controller and founding LP. Off the floor, on autopilot with `temperament`. Returns nothing. |
 | `set_offer` | `{dealer_id, rake_bp, max_bet, boost_secs}` | controller | `core::clamp_owner_offer` (total edge 1–5 %, max bet ≤ what the pool covers, boost ≤ 15 min, one boost per hour). Turns autopilot **off**. Returns the `Offer`. Applies to sessions opened afterwards. |
 | `set_autopilot` | `{dealer_id, temperament: string\|null}` | controller (player tables) | `null`: manual (keeps the current offer). A temperament: autopilot on with it (a temperament *change* follows `set_temperament`'s hourly limit). |
 | `set_temperament` | `{dealer_id, temperament}` | controller | at most once an hour (`core::can_set_temperament`). |
 | `reprice` | `{dealer_id}` | keeper or controller | autopilot only. `core::reprice(game, pool, stats_1h, traits, rivals, now)`; rivals = other seated dealers of the same game. Returns the `Offer`. |
 | `rent_bid` | `{dealer_id}` | keeper or controller | NPC dealers only. Settles rent, runs `core::rent_bid`, applies it through `bid_for_seat`. Returns the `RentDecision` (`{"action":{"outbid":"1000000"},"reason":"bidding_for_seat"}`, `{"action":"keep","reason":null}`). |
+| `set_table_name` | `{dealer_id, name}` | controller | same name rule as `open_table` (`core::floor::validate_table_name`: 1–32 bytes, no control characters, no surrounding spaces). Logs `renamed`. |
+| `retire_table` | `{dealer_id}` | controller | the table must be off the floor, with no open session and nothing reserved (force-closed sessions revealed), and the controller must hold every LP share (other LPs divest first). The controller's shares are paid the whole bankroll; a bankroll left with no shares at all goes to the jackpot. The table leaves `get_lobby`, `get_player.tables` and the 16-dealer count, shows in `get_retired`, keeps its id, and refuses every later call (`"the table is retired"`). At most 64 retired tables. Returns the amount paid (`"U128"`). |
 
 `Offer` = `{"rake_bp": 300, "max_bet": "9000000", "boost_until": 0, "reason": "steady"}` (`reason` `"owner"` for
 `set_offer`).
@@ -126,11 +134,21 @@ played alone; `outcome` stays `{"roulette":{"pocket":n}}`). `RouletteBet`: `"red
 (n = 1, 4 … 34), `{"corner":n}` 8:1 (n, n+1, n+3, n+4), `{"six_line":n}` 5:1 (n..n+5, n = 1, 4 … 31),
 `{"dozen":d}`, `{"column":c}` 2:1. Borsh variants are only appended, so older rounds keep their bytes.
 
+**Poker** (docs/poker-api.md): each buy-in is a session (`lock` = buy-in, `max_bet` = the most one hand may take
+from the stack, so `lock ≤ max_bet ≤` the dealer's max bet, where `worst_case_multiple("poker") = 6` seats);
+each hand is one round per player who put chips in: `"bet": {"poker":{"table":"<table>","hand":7}}`, `stake` =
+chips put in the pot, `payout` = chips won after rake (0 for a loser), `"outcome": {"poker":{"hand_seed_hash":
+"hex","history_hash":"hex","seat":2,"board":["As","Kd","7h","2c","9s"]}}`. Across a hand's rounds the pool gets
+Σ stakes − Σ payouts = the rake (`rake_bounds("poker") = 0..500` bp). The contract checks bounds only
+(`0 ≤ stake ≤ max_bet`, `payout ≤ 6 × stake`, the running balance ≤ `lock + max_win`); it never replays a hand
+(hand seeds are per hand): the server signature and the hash chain bind every round, and
+`core_rules::session::verify_poker_session` replays them off chain from the published hand histories.
+
 **open_session** checks: server signature over `ticket_message(ticket)`; `now ≤ expires_at`; caller = `player`;
 `session_id` 1–64 chars of `[A-Za-z0-9_-]`, unused; `client_seed_is_valid`; no other `open` session for the player;
 the dealer is seated (rent settled first), open, of `game`; `lock ≥ 0.1 tUSDC` and ≤ balance;
 `rake_bp` within `rake_bounds(game)` and ≥ the dealer's rake in force now; `0.1 tUSDC ≤ max_bet ≤` the dealer's max
-bet now; `max_win ≤ session_max_win(lock, pool.free)`. Then `lock` leaves the balance (escrow), the pool reserves
+bet now (poker: also `lock ≤ max_bet`); `max_win ≤ session_max_win(lock, pool.free)`. Then `lock` leaves the balance (escrow), the pool reserves
 `max_win`, the offer is frozen.
 
 **settle_session** checks: session `open`; rounds non-empty, nonces `settled_nonce+1 ..= upto_nonce`; each round
@@ -207,6 +225,14 @@ Statuses: `"open" | "force_closed" | "closed" | "forfeited"`. Done = `closed` or
 the floor. `earnings_1h` = −`player_net_1h` (what players lost at the table), `pnl_1h` = earnings − rent paid.
 `game_share_bp` = this table's share of the bets at seated tables of its game over the hour (10 000 if none).
 
+### `get_retired()` → `DealerView[]`
+
+Retired tables (`retire_table`), oldest retirement first, same shape as `get_lobby` (bankroll and shares `"0"`).
+
+### `get_npcs()` → `string[]`
+
+Registered NPC gamblers, in registration order.
+
 ### `get_player({account_id})` → `PlayerView` (unknown player = zeros)
 
 ```json
@@ -247,7 +273,7 @@ Last 100 entries per dealer, oldest first; `limit` ≤ 50.
 `kind`: `reprice`, `boost`, `offer` (owner `set_offer`), `autopilot`, `temperament`, `bust`, `reopen`, `invest`,
 `divest`, `opened`, `seated` (`amount` = prepay, `detail` = `"seat-<n>"`), `evicted` (`detail` = `unpaid_rent` |
 `outbid`; `amount` = rent paid at eviction), `rent` (seated dealer's rent change, `amount` = new rent/h),
-`listed` (`amount` = ask, 0 = unlisted), `sold` / `bought` (`amount` = price, `detail` = `"seat-<n>"`, `account_id` = the other side), `jackpot` (`account_id` won `amount`).
+`listed` (`amount` = ask, 0 = unlisted), `sold` / `bought` (`amount` = price, `detail` = `"seat-<n>"`, `account_id` = the other side), `jackpot` (`account_id` won `amount`), `renamed` (`detail` = new name), `retired` (`amount` = paid to the controller).
 
 ### `get_config()`
 
@@ -277,9 +303,23 @@ Last 100 entries per dealer, oldest first; `limit` ≤ 50.
 | `session_force_closed` | `{session_id, nonce, balance}` |
 | `session_revealed` | `{session_id, server_seed, paid_out}` |
 | `session_forfeited` | `{session_id, paid}` |
+| `npcs_registered` | `{account_ids}` (newly added only) |
+| `npc_credited` | `{account_id, amount}` (keeper salary) |
+| `table_renamed` | `{dealer_id, name}` |
+| `table_retired` | `{dealer_id, controller, paid, to_jackpot}` |
 
 ## Verifying a session
 
 From chain data only: `server_seed_hash` and `client_seed` (open tx args / `get_session`), the round lists
 (`settle_session` tx args), the revealed `server_seed` (`session_revealed`). `core_rules::session::verify_session`
-replays everything; jackpot draws replay with `jackpot_hit(chain_n, wager)`.
+replays everything; jackpot draws replay with `jackpot_hit(chain_n, wager)`. Poker sessions:
+`verify_poker_session(server_seed, session, player, batches, hand_histories)`.
+
+## Build and verify the code
+
+`cd contract && cargo near build reproducible-wasm` (committed tree, Docker) builds in the image pinned in
+`contract/Cargo.toml` (`[package.metadata.near.reproducible_build]`, by digest) and writes
+`target/near/tilt_house_contract/tilt_house_contract.wasm`. The deployed code hash is `base58(sha256(wasm))`
+(`view_account.code_hash`); `contract_source_metadata()` (NEP-330) returns the version, the repo link
+(`https://github.com/STOOOKEEE/tilt-house`) and the build command, image and commit. `scripts/verify-deployment.sh`
+rebuilds and compares with the chain.

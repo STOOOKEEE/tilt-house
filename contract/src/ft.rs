@@ -21,15 +21,19 @@ trait FungibleToken {
 
 /// `ft_transfer_call` msg other than `""`.
 #[derive(Deserialize)]
-#[serde(crate = "near_sdk::serde", deny_unknown_fields)]
-struct InvestMsg {
-    invest: String,
+#[serde(crate = "near_sdk::serde", rename_all = "snake_case")]
+enum TransferMsg {
+    /// Buys LP shares of this dealer.
+    Invest(String),
+    /// The keeper pays an NPC gambler's salary into its floor balance.
+    CreditNpc(AccountId),
 }
 
 #[near]
 impl House {
     /// NEP-141 receiver. `msg = ""` credits the balance, `{"invest":"<dealer>"}` buys LP
-    /// shares. Anything else panics, and the token refunds the whole transfer.
+    /// shares, `{"credit_npc":"<account>"}` (keeper only) credits an NPC gambler. Anything else
+    /// panics, and the token refunds the whole transfer.
     pub fn ft_on_transfer(
         &mut self,
         sender_id: AccountId,
@@ -43,10 +47,20 @@ impl House {
         require!(amount.0 > 0, "amount must be positive");
         if msg.is_empty() {
             self.credit(&sender_id, amount.0);
-        } else {
-            let invest: InvestMsg = serde_json::from_str(&msg)
-                .unwrap_or_else(|_| fail("msg must be \"\" or {\"invest\":\"<dealer_id>\"}"));
-            self.invest_for(&sender_id, &invest.invest, amount.0);
+            return PromiseOrValue::Value(U128(0));
+        }
+        let parsed: TransferMsg = serde_json::from_str(&msg).unwrap_or_else(|_| {
+            fail("msg must be \"\", {\"invest\":\"<dealer_id>\"} or {\"credit_npc\":\"<account>\"}")
+        });
+        match parsed {
+            TransferMsg::Invest(dealer_id) => {
+                require!(
+                    !self.is_npc(&sender_id),
+                    "NPC gamblers can only play sessions"
+                );
+                self.invest_for(&sender_id, &dealer_id, amount.0);
+            }
+            TransferMsg::CreditNpc(npc) => self.credit_npc(&sender_id, &npc, amount.0),
         }
         PromiseOrValue::Value(U128(0))
     }
@@ -56,6 +70,7 @@ impl House {
     #[payable]
     pub fn withdraw(&mut self, amount: U128) {
         assert_one_yocto();
+        self.assert_not_npc();
         require!(amount.0 > 0, "amount must be positive");
         let account = env::predecessor_account_id();
         self.debit(&account, amount.0);

@@ -84,6 +84,7 @@ impl House {
         memo: Option<String>,
     ) {
         assert_one_yocto();
+        self.assert_not_npc();
         require!(approval.is_none(), "approvals are not supported");
         require!(
             seat_index(&token_id).is_none(),

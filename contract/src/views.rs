@@ -52,7 +52,7 @@ pub struct FloorView {
 pub struct DealerView {
     pub id: String,
     pub name: String,
-    /// `"dice" | "roulette" | "blackjack"` (core `Game`).
+    /// `"dice" | "roulette" | "blackjack" | "poker"` (core `Game`).
     pub game: Value,
     pub look: Option<String>,
     pub npc: bool,
@@ -232,6 +232,8 @@ fn log_text(entry: &LogEntry) -> String {
         LogKind::Autopilot if detail == "manual" => "owner took the controls".to_string(),
         LogKind::Autopilot => format!("autopilot on ({detail})"),
         LogKind::Temperament => format!("temperament now {detail}"),
+        LogKind::Renamed => format!("renamed to {detail}"),
+        LogKind::Retired => format!("table retired · {amount} USDC paid out to the owner"),
     }
 }
 
@@ -380,6 +382,16 @@ impl House {
         let mut ids = self.dealer_ids.clone();
         ids.sort();
         ids.iter()
+            .filter_map(|id| self.dealers.get(id))
+            .map(|dealer| self.dealer_view(dealer, now))
+            .collect()
+    }
+
+    /// Retired tables (`retire_table`), oldest retirement first.
+    pub fn get_retired(&self) -> Vec<DealerView> {
+        let now = now();
+        self.retired_ids
+            .iter()
             .filter_map(|id| self.dealers.get(id))
             .map(|dealer| self.dealer_view(dealer, now))
             .collect()

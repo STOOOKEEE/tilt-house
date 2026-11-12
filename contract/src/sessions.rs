@@ -192,6 +192,11 @@ fn check_rounds(session: &Session, batch: &SettleBatch) -> (u128, u128, Vec<Hash
     (wagered, paid, chains)
 }
 
+/// Bounds only: outcomes are never replayed here. For a poker round (one player's share of a
+/// hand: stake = chips put in the pot, payout = chips won after rake) core bounds the stake by
+/// the session's `max_bet` and the payout by what the other seats can have put in; the hand
+/// itself is vouched for by the server signature and the hash chain, and verified off chain
+/// from the hand history.
 fn check_round(session: &Session, round: &CompactRound) {
     require!(
         round.bet.game() == session.game && round.bet.is_valid(),
@@ -255,6 +260,12 @@ impl House {
             "max bet above what the table offers"
         );
         require!(ticket.lock >= SESSION_MIN_BET, "lock below the minimum bet");
+        // Poker: the lock is the buy-in and `max_bet` the most one hand may take from a stack
+        // (core `stake_is_valid`), so the whole buy-in must fit in one hand.
+        require!(
+            ticket.game != Game::Poker || ticket.lock <= ticket.max_bet,
+            "a poker buy-in above the max bet"
+        );
         require!(
             ticket.max_win <= session_max_win(ticket.lock, dealer.pool.free()),
             "max win above what the pool can reserve"

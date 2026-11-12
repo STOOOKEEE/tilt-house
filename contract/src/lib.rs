@@ -13,9 +13,11 @@ mod dealers;
 mod floor;
 mod ft;
 mod mt;
+mod npcs;
 mod sessions;
 mod views;
 
+use near_sdk::borsh::BorshDeserialize;
 use near_sdk::serde_json::{json, Value};
 use near_sdk::store::{Lazy, LookupMap};
 use near_sdk::{env, near, require, AccountId, BorshStorageKey, PanicOnDefault};
@@ -29,6 +31,8 @@ pub const MIN_BET: u128 = core_rules::session::SESSION_MIN_BET;
 pub const HISTORY_PER_DEALER: u64 = 100;
 /// Session ids kept per player; older finished sessions are deleted (the contract pays storage).
 pub const SESSIONS_PER_PLAYER: usize = 20;
+/// Retired tables kept (`retire_table`); bounds the storage a cycle of open/retire can take.
+pub const MAX_RETIRED_TABLES: usize = 64;
 
 const EVENT_STANDARD: &str = "tilthouse";
 const EVENT_VERSION: &str = "2.0.0";
@@ -68,6 +72,27 @@ pub struct House {
     dealers: LookupMap<String, Dealer>,
     shares: LookupMap<(String, AccountId), u128>,
     /// Key: (dealer id, seq % HISTORY_PER_DEALER).
+    history: LookupMap<(String, u64), LogEntry>,
+    floor: Lazy<core_rules::Floor>,
+    sessions: LookupMap<String, Session>,
+    /// v3. Registered NPC gamblers (`npcs.rs`): they may only play sessions.
+    npcs: Vec<AccountId>,
+    /// v3. Retired tables, oldest first: out of the lobby and of the `MAX_DEALERS` count.
+    retired_ids: Vec<String>,
+}
+
+/// The v2 root state (deployed on testnet before v3), read once by `migrate`.
+#[derive(BorshDeserialize)]
+#[borsh(crate = "near_sdk::borsh")]
+struct HouseV2 {
+    owner: AccountId,
+    token: AccountId,
+    keeper: AccountId,
+    server_pubkey: [u8; 32],
+    players: LookupMap<AccountId, Player>,
+    dealer_ids: Vec<String>,
+    dealers: LookupMap<String, Dealer>,
+    shares: LookupMap<(String, AccountId), u128>,
     history: LookupMap<(String, u64), LogEntry>,
     floor: Lazy<core_rules::Floor>,
     sessions: LookupMap<String, Session>,
@@ -121,6 +146,32 @@ impl House {
             history: LookupMap::new(StorageKey::History),
             floor: Lazy::new(StorageKey::Floor, core_rules::Floor::default()),
             sessions: LookupMap::new(StorageKey::Sessions),
+            npcs: Vec::new(),
+            retired_ids: Vec::new(),
+        }
+    }
+
+    /// Upgrade from v2: deploy the v3 code with this as the init call (signed by the contract
+    /// account). Only the root state changes; every collection keeps its storage prefix. A v3
+    /// state does not read as v2, so a second call fails.
+    #[private]
+    #[init(ignore_state)]
+    pub fn migrate() -> Self {
+        let old: HouseV2 = env::state_read().unwrap_or_else(|| fail("no state to migrate"));
+        Self {
+            owner: old.owner,
+            token: old.token,
+            keeper: old.keeper,
+            server_pubkey: old.server_pubkey,
+            players: old.players,
+            dealer_ids: old.dealer_ids,
+            dealers: old.dealers,
+            shares: old.shares,
+            history: old.history,
+            floor: old.floor,
+            sessions: old.sessions,
+            npcs: Vec::new(),
+            retired_ids: Vec::new(),
         }
     }
 

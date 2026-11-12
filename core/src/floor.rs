@@ -240,12 +240,7 @@ pub fn validate_new_table(
     if !id_ok {
         return Err(FloorError::BadTableId);
     }
-    let name_ok = (1..=MAX_TABLE_NAME_LEN).contains(&name.len())
-        && !name.chars().any(char::is_control)
-        && name.trim() == name;
-    if !name_ok {
-        return Err(FloorError::BadTableName);
-    }
+    validate_table_name(name)?;
     if seed_amount < MIN_TABLE_SEED {
         return Err(FloorError::SeedTooLow);
     }
@@ -253,6 +248,19 @@ pub fn validate_new_table(
         return Err(FloorError::TooManyDealers);
     }
     Ok(())
+}
+
+/// A table name: 1-32 bytes, no control characters, no surrounding spaces (`open_table` and
+/// `set_table_name`).
+pub fn validate_table_name(name: &str) -> Result<(), FloorError> {
+    let name_ok = (1..=MAX_TABLE_NAME_LEN).contains(&name.len())
+        && !name.chars().any(char::is_control)
+        && name.trim() == name;
+    if name_ok {
+        Ok(())
+    } else {
+        Err(FloorError::BadTableName)
+    }
 }
 
 /// Rent for `secs` seconds at `rent_per_hour`, rounded up so settling often can never shave

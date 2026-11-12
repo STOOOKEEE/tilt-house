@@ -3,6 +3,7 @@
 //! hand (`set_offer`, clamped by `core_rules::clamp_owner_offer`).
 
 use core_rules::dealer_rules::{CAUTIOUS, GREEDY, PROMOTER};
+use core_rules::floor::validate_table_name;
 use core_rules::{
     can_set_temperament, clamp_owner_offer, keep_running_boost, validate_new_table,
     worst_case_multiple, Game, Offer, Pool, Reason, RivalOffer, Stats, Temperament, BP,
@@ -13,7 +14,9 @@ use near_sdk::serde_json::{self, json, Value};
 use near_sdk::{env, near, require, AccountId};
 
 use crate::views::to_json;
-use crate::{emit, fail, mt, now, House, HouseExt, HISTORY_PER_DEALER, MIN_BET};
+use crate::{
+    emit, fail, mt, now, House, HouseExt, HISTORY_PER_DEALER, MAX_RETIRED_TABLES, MIN_BET,
+};
 
 /// Stats buckets: 6 × 10 min = the last hour (same as the simulator).
 const BUCKET_SECS: u64 = 600;
@@ -97,6 +100,9 @@ pub enum LogKind {
     Offer,
     Autopilot,
     Temperament,
+    // v3, appended: older entries keep their borsh tags.
+    Renamed,
+    Retired,
 }
 
 impl LogKind {
@@ -119,6 +125,8 @@ impl LogKind {
             Self::Offer => "offer",
             Self::Autopilot => "autopilot",
             Self::Temperament => "temperament",
+            Self::Renamed => "renamed",
+            Self::Retired => "retired",
         }
     }
 }
@@ -153,7 +161,7 @@ pub fn temperament_traits(name: &str) -> Temperament {
 
 fn parse_game(name: &str) -> Game {
     serde_json::from_value(Value::String(name.to_string()))
-        .unwrap_or_else(|_| fail("game must be dice, roulette or blackjack"))
+        .unwrap_or_else(|_| fail("game must be dice, roulette, blackjack or poker"))
 }
 
 fn check_look(look: &str) {
@@ -347,6 +355,7 @@ impl House {
         look: String,
         seed_amount: U128,
     ) {
+        self.assert_not_npc();
         check_look(&look);
         self.check_new_id(&id, &name, seed_amount.0);
         let account = env::predecessor_account_id();
@@ -436,7 +445,7 @@ impl House {
     /// The keeper or the controller reprices a table on autopilot; `core::reprice` keeps the
     /// offer in bounds whatever the inputs. Returns the new core `Offer`.
     pub fn reprice(&mut self, dealer_id: String) -> Value {
-        let mut dealer = self.dealer(&dealer_id);
+        let mut dealer = self.active_dealer(&dealer_id);
         self.assert_keeper_or_controller(&dealer);
         require!(dealer.autopilot, "the table is on manual pricing");
         let now = now();
@@ -449,6 +458,7 @@ impl House {
 
     /// Buys LP shares with the caller's in-contract balance. Returns the shares minted.
     pub fn invest(&mut self, dealer_id: String, amount: U128) -> U128 {
+        self.assert_not_npc();
         let account = env::predecessor_account_id();
         self.debit(&account, amount.0);
         U128(self.invest_for(&account, &dealer_id, amount.0))
@@ -456,6 +466,7 @@ impl House {
 
     /// Sells LP shares at the sell price (free bankroll only) into the caller's balance.
     pub fn divest(&mut self, dealer_id: String, shares: U128) -> U128 {
+        self.assert_not_npc();
         let account = env::predecessor_account_id();
         let held = self.shares_of(&dealer_id, &account);
         require!(shares.0 <= held, "not enough shares");
@@ -479,6 +490,85 @@ impl House {
         self.credit(&account, payout);
         mt::emit_burn(&account, &dealer_id, shares.0);
         U128(payout)
+    }
+
+    /// The controller renames its table (same rules as an `open_table` name).
+    pub fn set_table_name(&mut self, dealer_id: String, name: String) {
+        let mut dealer = self.controlled_dealer(&dealer_id);
+        validate_table_name(&name).unwrap_or_else(|e| fail(&e.to_string()));
+        dealer.name = name.clone();
+        self.log(&mut dealer, LogKind::Renamed, None, 0, name.clone());
+        emit(
+            "table_renamed",
+            json!({ "dealer_id": dealer.id, "name": name }),
+        );
+        self.save_dealer(dealer);
+    }
+
+    /// The controller retires an off-floor table nobody else holds shares in: its own shares
+    /// are paid out (the whole bankroll, nothing is reserved), the table leaves the lobby and
+    /// the `MAX_DEALERS` count for good (`get_retired` still shows it). A bankroll left with no
+    /// shares at all belongs to nobody and goes to the jackpot. Returns what the controller got.
+    pub fn retire_table(&mut self, dealer_id: String) -> U128 {
+        let mut dealer = self.controlled_dealer(&dealer_id);
+        require!(
+            self.floor.seat_of(&dealer_id).is_none(),
+            "the table is on the floor"
+        );
+        require!(
+            dealer.open_sessions == 0 && dealer.pool.reserved == 0 && dealer.pool.open_stakes == 0,
+            "the table still has sessions to settle or reveal"
+        );
+        let controller = dealer.controller.clone();
+        let held = self.shares_of(&dealer_id, &controller);
+        require!(
+            held == dealer.pool.shares,
+            "other LPs still hold shares: they must divest first"
+        );
+        require!(
+            self.retired_ids.len() < MAX_RETIRED_TABLES,
+            "no room left for retired tables"
+        );
+        let now = now();
+        let bankroll = dealer.pool.bankroll;
+        dealer.pool.bankroll = 0;
+        dealer.pool.shares = 0;
+        dealer.open = false;
+        dealer.record_flow(now, -signed(bankroll));
+        let paid = if held > 0 {
+            self.set_shares(&dealer_id, &controller, 0);
+            self.credit(&controller, bankroll);
+            mt::emit_burn(&controller, &dealer_id, held);
+            bankroll
+        } else {
+            self.floor.jackpot = self
+                .floor
+                .jackpot
+                .checked_add(bankroll)
+                .unwrap_or_else(|| fail("jackpot overflow"));
+            0
+        };
+        self.log(
+            &mut dealer,
+            LogKind::Retired,
+            Some(controller.clone()),
+            paid,
+            String::new(),
+        );
+        emit(
+            "table_retired",
+            json!({
+                "dealer_id": dealer_id,
+                "controller": controller,
+                "paid": paid.to_string(),
+                "to_jackpot": (bankroll - paid).to_string(),
+            }),
+        );
+        // Inserted directly: emptying the pool here is not a bust.
+        self.dealers.insert(dealer_id.clone(), dealer);
+        self.dealer_ids.retain(|id| *id != dealer_id);
+        self.retired_ids.push(dealer_id);
+        U128(paid)
     }
 }
 
@@ -513,6 +603,17 @@ impl House {
             .unwrap_or_else(|| fail("unknown dealer"))
     }
 
+    /// The dealer, refused once retired (a retired table takes no money and no seat).
+    pub(crate) fn active_dealer(&self, id: &str) -> Dealer {
+        let dealer = self.dealer(id);
+        require!(!self.is_retired(id), "the table is retired");
+        dealer
+    }
+
+    pub(crate) fn is_retired(&self, id: &str) -> bool {
+        self.retired_ids.iter().any(|retired| retired == id)
+    }
+
     /// Saves a dealer, logging a bust or a reopen when its pool crossed the "covers a minimum
     /// bet" line since the last save.
     pub(crate) fn save_dealer(&mut self, mut dealer: Dealer) {
@@ -529,9 +630,9 @@ impl House {
         self.dealers.insert(dealer.id.clone(), dealer);
     }
 
-    /// The dealer, if the caller controls it.
+    /// The active dealer, if the caller controls it.
     pub(crate) fn controlled_dealer(&self, id: &str) -> Dealer {
-        let dealer = self.dealer(id);
+        let dealer = self.active_dealer(id);
         require!(
             env::predecessor_account_id() == dealer.controller,
             "only the table's controller can do this"
@@ -671,7 +772,7 @@ impl House {
         amount: u128,
     ) -> u128 {
         require!(amount > 0, "amount must be positive");
-        let mut dealer = self.dealer(dealer_id);
+        let mut dealer = self.active_dealer(dealer_id);
         let now = now();
         self.settle_rent(&mut dealer, now);
         let minted = dealer.pool.buy_shares(amount);
