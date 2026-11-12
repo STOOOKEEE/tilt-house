@@ -151,10 +151,7 @@ function SeatCard({ table, api, demo, loggedIn, wallet }: SeatCardProps) {
   return (
     <div className="center-card poker-seat-card">
       <h2>Sit down at {table.name}</h2>
-      <p className="muted">
-        Your buy-in is locked on chain as a session; each hand is one signed round of it. Every deck is committed before
-        your seed goes in and replayed here after the hand.
-      </p>
+      <p className="muted">Your buy-in is locked on chain as a session; each hand is one signed round of it.</p>
       {loggedIn || demo ? null : <LoginPrompt action="play poker" />}
       <label className="stake">
         buy-in ({demo ? 'practice chips' : 'tUSDC'})
@@ -165,9 +162,6 @@ function SeatCard({ table, api, demo, loggedIn, wallet }: SeatCardProps) {
       <button type="button" className="tilt-button" disabled={!canSit} onClick={() => buyIn !== null && void api.sit(buyIn)}>
         {api.progress || 'Sit down'}
       </button>
-      {table.seats.some((s) => s?.npc) ? (
-        <p className="muted">If every seat is taken, a house bot gives you its seat after the current hand.</p>
-      ) : null}
       {demo ? null : (
         <p className="muted">
           Just looking? <Link to="/poker?demo=1">Practice against bots</Link>, no login.

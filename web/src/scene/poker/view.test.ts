@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { verifyHand } from '../../near/poker-client'
 import { botAction, DEMO_PLAYER, PokerDemo } from '../../near/poker-demo'
 import { chairAt, seatSlot, slotAngle, towardSeat } from './layout'
-import { pokerScene } from './view'
+import { pokerScene, shortName } from './view'
 
 describe('poker layout', () => {
   it('puts the own seat nearest the camera and the others clockwise', () => {
@@ -74,5 +74,13 @@ describe('practice table', () => {
     const facing = { ...open, can_check: false, call: 5_000_000n, raise: null }
     expect(botAction(facing, 0.1, 0)).toBe('fold')
     expect(botAction(facing, 0.9, 0)).toBe('call')
+  })
+})
+
+describe('shortName', () => {
+  it('drops the network suffix and clips long ids', () => {
+    expect(shortName('alice.testnet')).toBe('alice')
+    expect(shortName('Mia')).toBe('Mia')
+    expect(shortName('pokerweb-shot-1794500669974.testnet')).toBe('pokerweb-shot…')
   })
 })

@@ -16,11 +16,19 @@ export function potTotal(table: TableState): bigint {
   return (table.hand?.pots ?? []).reduce((sum, p) => sum + BigInt(p.amount), 0n)
 }
 
+const NAME_MAX = 14
+
+/** Account ids can be long: the plate shows the name without its network suffix, clipped. */
+export function shortName(name: string): string {
+  const bare = name.replace(/\.(testnet|near)$/, '')
+  return bare.length > NAME_MAX ? `${bare.slice(0, NAME_MAX - 1)}…` : bare
+}
+
 function seatScene(s: SeatView, table: TableState, cards: readonly (string | null)[], said: string | null): PokerSeatScene {
   return {
     seat: s.seat,
     player: s.player,
-    name: s.name,
+    name: shortName(s.name),
     npc: s.npc,
     you: table.you?.seat === s.seat,
     stack: s.stack,
