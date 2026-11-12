@@ -439,7 +439,7 @@ impl World {
             self.tick();
             self.now += TICK_SECS;
         }
-        if self.now % HOUR == 0 {
+        if self.now.is_multiple_of(HOUR) {
             self.dealers.iter_mut().for_each(Dealer::snapshot_price);
         }
         self.frame()
@@ -450,17 +450,17 @@ impl World {
         if now == 0 {
             self.dealers.iter_mut().for_each(Dealer::snapshot_price);
         }
-        if now % RENT_SECS == 0 {
+        if now.is_multiple_of(RENT_SECS) {
             self.collect_rent();
         }
-        if now % HOUR == 0 && now > 0 {
+        if now.is_multiple_of(HOUR) && now > 0 {
             self.pay_salaries();
         }
-        if now % SEAT_SECS == 0 {
+        if now.is_multiple_of(SEAT_SECS) {
             owners::act(self);
             self.npc_rent_bids();
         }
-        if now % REPRICE_SECS == 0 {
+        if now.is_multiple_of(REPRICE_SECS) {
             for index in 0..self.dealers.len() {
                 if self.dealers[index].temperament != owners::MANUAL {
                     self.reprice(index);

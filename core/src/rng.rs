@@ -12,9 +12,9 @@ pub struct Rng {
 impl Rng {
     pub fn new(seed: [u8; 32]) -> Self {
         let mut state = [0u64; 4];
-        for (word, chunk) in state.iter_mut().zip(seed.chunks_exact(8)) {
+        for (index, word) in state.iter_mut().enumerate() {
             let mut bytes = [0u8; 8];
-            bytes.copy_from_slice(chunk);
+            bytes.copy_from_slice(&seed[index * 8..index * 8 + 8]);
             *word = u64::from_le_bytes(bytes);
         }
         let mut mix = state[0]

@@ -145,7 +145,7 @@ fn step(world: &mut World, g: usize, state: State) -> State {
     match state {
         State::Away => {
             let gambler = &world.gamblers[g];
-            if now % ARRIVAL_SECS != 0
+            if !now.is_multiple_of(ARRIVAL_SECS)
                 || !arrives(gambler.persona, gambler.balance, now, &mut world.rng)
             {
                 return State::Away;

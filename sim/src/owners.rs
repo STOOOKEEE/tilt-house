@@ -293,7 +293,7 @@ fn premium(world: &mut World, o: usize, dealer: usize) {
         premium_find_seat(world, o, dealer);
     }
     let d = &world.dealers[dealer];
-    let boost_secs = if now % PREMIUM_BOOST_EVERY_SECS == 0 {
+    let boost_secs = if now.is_multiple_of(PREMIUM_BOOST_EVERY_SECS) {
         PREMIUM_BOOST_SECS
     } else {
         0

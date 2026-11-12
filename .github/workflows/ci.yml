@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, tests incl. sandbox)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # The sandbox tests build the contract and the mock token to wasm in their own target dirs.
+          workspaces: |
+            . -> target
+            contract/tests/mock-ft -> target
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Install cargo-near
+        run: cargo binstall --no-confirm cargo-near
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # Sandbox tests (contract/, token/) download near-sandbox and deploy the freshly built wasm.
+      - run: cargo test --workspace
+
+  node:
+    name: Node (typecheck, tests, web build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+      - run: pnpm -r test
+      - name: Build the site
+        run: pnpm --filter @tilt-house/web build
+        # Placeholders: config is read at runtime, the build only needs the variables to exist.
+        env:
+          VITE_HOUSE_CONTRACT: floor.tilthouse.testnet
+          VITE_TOKEN_CONTRACT: tusdc.tilthouse.testnet
+          VITE_RELAYER_URL: http://localhost:8788
+          VITE_RELAYER_ACCOUNT: relayer.tilthouse.testnet
+          VITE_NEAR_RPC_URL: https://test.rpc.fastnear.com
+          VITE_SESSION_URL: http://localhost:8791

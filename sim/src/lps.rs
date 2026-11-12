@@ -6,6 +6,7 @@
 //! - Movers chase the best trailing-24 h share-price return and leave laggards.
 //! - Profit takers sit in a pool and sell half once it is up enough.
 //! - Rescuers only buy into closed tables, at the low price a bust leaves, and cash out later.
+//!
 //! Movers and profit takers also cut a pool that falls past their stop-loss.
 
 use core_rules::Rng;
@@ -136,8 +137,8 @@ impl Lp {
     }
 
     fn stop_losses(&mut self, dealers: &mut [Dealer], returns: &[Option<f64>], now: u64) {
-        for index in 0..dealers.len() {
-            if returns[index].is_some_and(|r| r < -self.stop_loss) {
+        for (index, ret) in returns.iter().enumerate() {
+            if ret.is_some_and(|r| r < -self.stop_loss) {
                 self.sell(dealers, index, self.shares[index], now);
             }
         }
@@ -147,8 +148,8 @@ impl Lp {
         let Some((best, best_return)) = best_open(dealers, returns) else {
             return;
         };
-        for index in 0..dealers.len() {
-            let lagging = best_return - returns[index].unwrap_or(0.0) > MOVE_GAP;
+        for (index, ret) in returns.iter().enumerate() {
+            let lagging = best_return - ret.unwrap_or(0.0) > MOVE_GAP;
             if index != best && lagging {
                 self.sell(dealers, index, self.shares[index], now);
             }
