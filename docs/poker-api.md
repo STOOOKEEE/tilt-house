@@ -14,7 +14,8 @@ the session's `lock`, the stack is the session balance, and every hand the playe
 one `CompactRound` of that session (see "Hands on chain"). The session token is the player's credential
 at the table.
 
-Stakes (every table): small blind 0.1, big blind 0.2, buy-in 4 to 20 chips (core's 20–100 big blinds),
+Stakes (every table): small blind 0.1, big blind 0.2, buy-in 4 to 20 chips (core's 20–100 big blinds; the
+maximum is lowered to the ticket's max bet, 80 % of the dealer's max bet, which is all the contract takes),
 rake = the dealer's `rake_bp` of the pot (the lowest `rake_bp` among the players' tickets), capped at 3
 big blinds, none without a flop.
 
@@ -22,9 +23,8 @@ big blinds, none without a flop.
 
 1. `GET /poker/tables`: pick a table.
 2. `POST /sessions` `{player, dealer_id: <table id>, lock: <buy-in>, client_seed}` (docs/sessions.md):
-   `lock` must be within `min_buy_in..=max_buy_in` (`400` otherwise) and at most the ticket's max bet
-   (80 % of the dealer's max bet; `409 this table takes no bets now` otherwise). Keep `session_id` and
-   `token`.
+   `lock` must be within 4..=20 chips (`400` otherwise) and at most the table's current `max_buy_in`
+   (`409 buy-in above this table's max buy-in now` otherwise). Keep `session_id` and `token`.
 3. Sign `open_session` on chain, exactly as at the other tables.
 4. `POST /poker/tables/{id}/join` with `Authorization: Bearer <token>` and `{"session_id": "..."}`.
    `409 session not open on chain yet` until the open tx has executed: retry every second.
@@ -55,7 +55,7 @@ interface TableSummary {
   small_blind: string
   big_blind: string
   min_buy_in: string
-  max_buy_in: string
+  max_buy_in: string       // capped at the ticket's max bet (refreshed on this call); below min_buy_in: no buy-in now
   rake_bp: number          // the dealer's rake when the table was first used
   hand_number: number      // hands dealt since the server started (0: none yet)
 }

@@ -45,6 +45,14 @@ const DRIVER_IDLE: Duration = Duration::from_secs(1);
 /// calling one in again: retrying at once floods the RPC (every try reads the chain).
 const NPC_RETRY: Duration = Duration::from_secs(30);
 
+/// The biggest buy-in at a dealer whose max bet is `dealer_max_bet`: the contract takes a poker
+/// lock only up to the ticket's max bet.
+fn max_buy_in(dealer_max_bet: u128) -> u128 {
+    table_config()
+        .max_buy_in()
+        .min(crate::app::ticket_max_bet(dealer_max_bet))
+}
+
 /// The stakes of every poker table.
 pub fn table_config() -> TableConfig {
     TableConfig::standard(BIG_BLIND)
@@ -391,6 +399,9 @@ struct Table {
     name: String,
     floor_seat: Option<usize>,
     stakes: TableConfig,
+    /// Biggest buy-in the contract takes now: the stakes' maximum, capped at the ticket's max
+    /// bet (refreshed with the floor on `GET /poker/tables`).
+    max_buy_in: u128,
     rake_bp: u16,
     config: PokerConfig,
     seats: Vec<Option<Seat>>,
@@ -926,7 +937,7 @@ impl Table {
                 big_blind: self.stakes.big_blind,
                 rake_cap: self.stakes.rake_cap,
                 min_buy_in: self.stakes.min_buy_in(),
-                max_buy_in: self.stakes.max_buy_in(),
+                max_buy_in: self.max_buy_in,
                 rake_bp: self.rake_bp,
                 action_ms: duration_ms(self.config.action),
                 seed_ms: duration_ms(self.config.seeding),
@@ -947,7 +958,7 @@ impl Table {
             small_blind: self.stakes.small_blind,
             big_blind: self.stakes.big_blind,
             min_buy_in: self.stakes.min_buy_in(),
-            max_buy_in: self.stakes.max_buy_in(),
+            max_buy_in: self.max_buy_in,
             rake_bp: self.rake_bp,
             hand_number: self.hand_number,
         }
@@ -1061,7 +1072,8 @@ impl Cell {
     }
 }
 
-type Dealers = Vec<(String, String, Option<usize>)>;
+/// (id, name, floor seat, max bet) of the poker dealers on the floor.
+type Dealers = Vec<(String, String, Option<usize>, u128)>;
 
 pub struct Poker<C> {
     app: Arc<App<C>>,
@@ -1115,7 +1127,7 @@ impl<C: Chain> Poker<C> {
             .tables
             .into_iter()
             .filter(|t| t.game == Game::Poker && t.seat.is_some())
-            .map(|t| (t.dealer_id, t.name, t.seat))
+            .map(|t| (t.dealer_id, t.name, t.seat, t.max_bet))
             .collect();
         *cache = Some((Instant::now(), dealers.clone()));
         Ok(dealers)
@@ -1132,11 +1144,11 @@ impl<C: Chain> Poker<C> {
         if let Some(cell) = self.tables_lock().get(id) {
             return Ok(Arc::clone(cell));
         }
-        let (_, name, floor_seat) = self
+        let (_, name, floor_seat, _) = self
             .poker_dealers()
             .await?
             .into_iter()
-            .find(|(dealer_id, _, _)| dealer_id == id)
+            .find(|(dealer_id, ..)| dealer_id == id)
             .ok_or_else(not_found)?;
         let dealer = self
             .app
@@ -1151,6 +1163,7 @@ impl<C: Chain> Poker<C> {
             name,
             floor_seat,
             stakes: table_config(),
+            max_buy_in: max_buy_in(dealer.max_bet),
             rake_bp: dealer.rake_bp,
             config: self.config,
             seats: vec![None; SEATS],
@@ -1187,9 +1200,11 @@ impl<C: Chain> Poker<C> {
     /// `GET /poker/tables`.
     pub async fn list(self: &Arc<Self>) -> Result<Vec<TableSummary>, ApiError> {
         let mut out = Vec::new();
-        for (id, _, _) in self.poker_dealers().await? {
+        for (id, _, _, max_bet) in self.poker_dealers().await? {
             let cell = self.cell(&id).await?;
-            out.push(cell.table.lock().await.summary());
+            let mut table = cell.table.lock().await;
+            table.max_buy_in = max_buy_in(max_bet);
+            out.push(table.summary());
         }
         Ok(out)
     }
@@ -1566,4 +1581,17 @@ fn seat_human(
         seat: None,
         waiting: true,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Faye on testnet (max bet 9.324): the contract takes buy-ins up to the ticket's max bet
+    /// only, so the table must not advertise 20.
+    #[test]
+    fn max_buy_in_is_capped_at_the_ticket_max_bet() {
+        assert_eq!(max_buy_in(9_324_000), 7_459_200);
+        assert_eq!(max_buy_in(100_000_000), table_config().max_buy_in());
+    }
 }

@@ -276,8 +276,15 @@ impl<C: Chain> App<C> {
             ));
         }
         // The contract takes a poker buy-in only up to the ticket's max bet.
-        let poker_too_big = dealer.game == Game::Poker && request.lock > max_bet;
-        if !dealer.open || max_bet < SESSION_MIN_BET || max_win == 0 || poker_too_big {
+        if dealer.game == Game::Poker && request.lock > max_bet {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                format!(
+                    "buy-in above this table's max buy-in now ({max_bet}, see GET /poker/tables)"
+                ),
+            ));
+        }
+        if !dealer.open || max_bet < SESSION_MIN_BET || max_win == 0 {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
                 "this table takes no bets now",
