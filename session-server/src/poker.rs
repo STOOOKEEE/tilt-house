@@ -41,6 +41,9 @@ const MAX_TIMEOUTS: u8 = 2;
 const FLOOR_CACHE: Duration = Duration::from_secs(5);
 /// The driver checks its clock at least this often (actions and joins wake it at once).
 const DRIVER_IDLE: Duration = Duration::from_secs(1);
+/// After an NPC fails to sit (chain refusal, empty wallet, RPC limit), wait this long before
+/// calling one in again: retrying at once floods the RPC (every try reads the chain).
+const NPC_RETRY: Duration = Duration::from_secs(30);
 
 /// The stakes of every poker table.
 pub fn table_config() -> TableConfig {
@@ -398,6 +401,8 @@ struct Table {
     button: Option<usize>,
     next_hand_at: Instant,
     npc_joining: usize,
+    /// No NPC is called in before this (see `NPC_RETRY`).
+    npc_retry_at: Instant,
     version: u64,
     rng: Rng,
 }
@@ -465,7 +470,7 @@ impl Table {
 
     /// Between hands: removes leavers, seats queued humans (an NPC gives up its seat to a human
     /// who needs it: anti-bumhunting), and calls NPCs in or sends them away per core's rule.
-    fn reseat(&mut self, effects: &mut Effects) {
+    fn reseat(&mut self, now: Instant, effects: &mut Effects) {
         for seat in 0..SEATS {
             self.remove_leaver(seat, effects);
         }
@@ -496,6 +501,9 @@ impl Table {
             self.free_seats(),
         );
         if change > 0 {
+            if now < self.npc_retry_at {
+                return;
+            }
             effects.npc_joins += change.unsigned_abs();
             self.npc_joining += change.unsigned_abs();
             return;
@@ -520,7 +528,7 @@ impl Table {
     fn step(&mut self, now: Instant, effects: &mut Effects) {
         match self.hand.as_ref().map(|h| &h.stage) {
             None => {
-                self.reseat(effects);
+                self.reseat(now, effects);
                 if now >= self.next_hand_at {
                     self.start_hand(now);
                 }
@@ -1153,6 +1161,7 @@ impl<C: Chain> Poker<C> {
             button: None,
             next_hand_at: Instant::now(),
             npc_joining: 0,
+            npc_retry_at: Instant::now(),
             version: 1,
             rng: Rng::new(seed),
         };
@@ -1409,31 +1418,45 @@ impl<C: Chain> Poker<C> {
             let pick = table.rng.below(u32::MAX);
             (table.id.clone(), table.floor_seat, pick)
         };
-        if let Some(npc) = self.gamblers.claim_for_poker(&id, floor_seat, pick) {
-            self.npc_session(&cell, &id, npc).await;
-        }
+        let seated = match self.gamblers.claim_for_poker(&id, floor_seat, pick) {
+            Some(npc) => self.npc_session(&cell, &id, npc).await,
+            None => false,
+        };
         let mut table = cell.table.lock().await;
         table.npc_joining = table.npc_joining.saturating_sub(1);
+        if !seated {
+            table.npc_retry_at = Instant::now() + NPC_RETRY;
+        }
         table.changed();
         cell.publish(&table);
         drop(table);
         cell.wake.notify_one();
     }
 
-    async fn npc_session(&self, cell: &Cell, id: &str, npc: PokerNpc) {
+    /// Seats a claimed NPC; false (and the NPC given back) when it cannot sit.
+    async fn npc_session(&self, cell: &Cell, id: &str, npc: PokerNpc) -> bool {
         let stakes = table_config();
         let balance = self.gamblers.npc_balance(npc.index).await.unwrap_or(0);
-        let buy_in = stakes.max_buy_in().min(balance);
+        // The contract takes a poker buy-in only up to the ticket's max bet.
+        let max_bet = match self.app.chain().dealer(id).await {
+            Ok(Some(dealer)) => crate::app::ticket_max_bet(dealer.max_bet),
+            Ok(None) => 0,
+            Err(err) => {
+                eprintln!("poker npc {}: dealer read: {err:#}", npc.id);
+                0
+            }
+        };
+        let buy_in = stakes.max_buy_in().min(balance).min(max_bet);
         if buy_in < stakes.min_buy_in() {
             self.gamblers.release_from_poker(npc.index).await;
-            return;
+            return false;
         }
         let session = match self.open_npc_session(id, &npc, buy_in).await {
             Ok(session) => session,
             Err(err) => {
                 eprintln!("poker npc {}: {err:#}", npc.id);
                 self.gamblers.release_from_poker(npc.index).await;
-                return;
+                return false;
             }
         };
         // The floor shows its wallet without the buy-in now in escrow.
@@ -1443,7 +1466,7 @@ impl<C: Chain> Poker<C> {
             Err(err) => {
                 eprintln!("poker npc {} seat: {}", npc.id, err.message);
                 self.close_seat((session, Some(npc), 0)).await;
-                return;
+                return false;
             }
         };
         let rng_seed = random_bytes::<32>().unwrap_or_else(|_| sha256(session.as_bytes()));
@@ -1458,7 +1481,8 @@ impl<C: Chain> Poker<C> {
         let (Some(seat), true) = (free, wanted) else {
             drop(table);
             self.close_seat((session, Some(npc), 0)).await;
-            return;
+            // Not wanted any more is no failure: no retry delay.
+            return true;
         };
         let mut s = Seat::from_session(&info, None, npc.name.clone());
         s.npc = Some(NpcSeat {
@@ -1470,6 +1494,7 @@ impl<C: Chain> Poker<C> {
             table.next_hand_at = table.next_hand_at.max(Instant::now() + self.config.pause);
         }
         table.changed();
+        true
     }
 
     async fn open_npc_session(

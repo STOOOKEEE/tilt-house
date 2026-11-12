@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,11 +12,11 @@ use axum::extract::connect_info::MockConnectInfo;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use core_rules::poker::{deck_for, replay_hand, verify_poker_round, Card, PokerAction};
-use core_rules::session::sha256;
+use core_rules::session::{sha256, Hash32, SessionTicket, SettleBatch};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tilt_house_session_server::app::{App, CreateReply};
-use tilt_house_session_server::chain::NoChain;
+use tilt_house_session_server::chain::{Chain, DealerInfo, FloorInfo, NoChain};
 use tilt_house_session_server::gamblers::{Clock, Gamblers, DEFAULT_ACCOUNT_SUFFIX};
 use tilt_house_session_server::http::router_with_poker;
 use tilt_house_session_server::keys::Signer;
@@ -39,9 +40,12 @@ fn config() -> PokerConfig {
 }
 
 fn serve(dir: &std::path::Path) -> Router {
+    serve_on(dir, NoChain::default())
+}
+
+fn serve_on<C: Chain>(dir: &std::path::Path, chain: C) -> Router {
     let (store, events) = Store::open(dir).unwrap();
-    let app =
-        Arc::new(App::load(Signer::random().unwrap(), NoChain::default(), store, events).unwrap());
+    let app = Arc::new(App::load(Signer::random().unwrap(), chain, store, events).unwrap());
     // Gamblers not started: all away, so the table can borrow them.
     let gamblers = Arc::new(
         Gamblers::new(
@@ -620,4 +624,66 @@ async fn joins_are_checked() {
         let (_, phase) = balance(&router, &carol.session.session_id).await;
         assert_eq!(phase, "closing");
     }
+}
+
+/// The demo floor, but no NPC can open a session (as with a missing key or an empty gas
+/// allowance), and every chain read is counted.
+#[derive(Default)]
+struct NpcsCannotSit {
+    inner: NoChain,
+}
+
+/// Only `NpcsCannotSit` (one test) counts here.
+static READS: AtomicUsize = AtomicUsize::new(0);
+
+impl Chain for NpcsCannotSit {
+    async fn dealer(&self, dealer_id: &str) -> anyhow::Result<Option<DealerInfo>> {
+        READS.fetch_add(1, Ordering::SeqCst);
+        self.inner.dealer(dealer_id).await
+    }
+    async fn floor(&self) -> anyhow::Result<FloorInfo> {
+        READS.fetch_add(1, Ordering::SeqCst);
+        self.inner.floor().await
+    }
+    async fn balance(&self, account: &str) -> anyhow::Result<u128> {
+        READS.fetch_add(1, Ordering::SeqCst);
+        self.inner.balance(account).await
+    }
+    async fn open_session(
+        &self,
+        player: &str,
+        key: Option<&str>,
+        ticket: &SessionTicket,
+        sig: &[u8; 64],
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(!player.starts_with("g-"), "no access key");
+        self.inner.open_session(player, key, ticket, sig).await
+    }
+    async fn session_opened(&self, id: &str) -> anyhow::Result<bool> {
+        READS.fetch_add(1, Ordering::SeqCst);
+        self.inner.session_opened(id).await
+    }
+    async fn settle(&self, batch: &SettleBatch) -> anyhow::Result<()> {
+        self.inner.settle(batch).await
+    }
+    async fn close(&self, id: &str, seed: &Hash32) -> anyhow::Result<()> {
+        self.inner.close(id, seed).await
+    }
+}
+
+/// Regression: NPCs that failed to sit were called in again at once, in a loop that read the
+/// chain thousands of times a second and got the server rate-limited by its RPC (testnet,
+/// 2026-11-12). A failed call-in now waits before the next.
+#[tokio::test]
+async fn failing_npcs_are_not_called_in_a_loop() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let bare = serve_on(dir.path(), NpcsCannotSit::default());
+    let alice = sit(&bare, 2, "alice.testnet").await;
+    let before = READS.load(Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let reads = READS.load(Ordering::SeqCst) - before;
+    // One wave of call-ins (3 NPCs: a balance, a dealer, a balance again each), then quiet.
+    assert!(reads <= 12, "{reads} chain reads in 3 s");
+    let table = state(&alice.router, Some(alice.token())).await;
+    assert!(table.seats.iter().flatten().all(|s| !s.npc));
 }
