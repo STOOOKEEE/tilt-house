@@ -1,3 +1,5 @@
+> **Archived.** Notes on the per-round OutLayer VRF used by the retired v1; the live game uses provably fair sessions ([sessions.md](../sessions.md)). The spike code `spikes/vrf/` was removed; it is in git history at commit `398475f`.
+
 # OutLayer VRF on NEAR testnet: spike notes
 
 Spike: `spikes/vrf/` (throwaway contract, own `[workspace]`), deployed to

@@ -1,6 +1,6 @@
 # The Floor — economy spec (approved by Armand, 2026-11-05)
 
-Supersedes the "economy" parts of docs/design.md where they conflict. Goal: a closed economic
+Supersedes the "economy" parts of the v1 design ([archive/design.md](archive/design.md)) where they conflict. Goal: a closed economic
 loop the track can judge: scarcity (seats), circulation (rent → jackpot → players), player-owned
 businesses (players open tables), NPC agents that compete and react, all without a dev patch.
 

@@ -1,3 +1,5 @@
+> **Archived.** This is the implementation plan of the retired v1 (per-round OutLayer VRF, contract `house.tilthouse.testnet`, LP shares). The live design is [tycoon.md](../tycoon.md), [floor.md](../floor.md) and [sessions.md](../sessions.md).
+
 # Tilt House Implementation Plan
 
 > For agentic workers: execute task by task; each task ends with its own tests green and a commit.
@@ -8,7 +10,7 @@
 
 **Tech stack:** Rust (near-sdk 5.x, cargo-near 0.22), TypeScript (Node 22, near-api-js), Vite + React for web, Privy.
 
-**Spec:** `docs/design.md` (the "Calls" and "Game loop (revised)" sections override earlier ones).
+**Spec:** [`design.md`](design.md) (the "Calls" and "Game loop (revised)" sections override earlier ones).
 
 ## Global constraints
 

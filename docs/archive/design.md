@@ -1,3 +1,5 @@
+> **Archived.** This is the first design of the retired v1 (per-round OutLayer VRF, contract `house.tilthouse.testnet`). The live design is [tycoon.md](../tycoon.md), [floor.md](../floor.md) and [sessions.md](../sessions.md).
+
 # Tilt House — design (NEAR Hackathon, track `games`)
 
 > Update after Armand's review (2026-11-03): play has no fixed rhythm (a new round as soon as the

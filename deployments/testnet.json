@@ -1,0 +1,76 @@
+{
+  "network": "testnet",
+  "rpc": "https://test.rpc.fastnear.com",
+  "explorer": "https://testnet.nearblocks.io",
+  "checked_at": "2026-11-12T15:50:08Z",
+  "contracts": {
+    "floor": {
+      "account_id": "floor.tilthouse.testnet",
+      "source": "contract",
+      "code_hash": "BfbbJ5P9twTZbjFdJ6FV3b1BfoscrP89HZX6oE1EUfpK",
+      "deploy_tx": "CVrpzMYYYwxVvHEY31ktd1Mc7yQxPmthK2amyNmPLboC",
+      "deploy_block": 276636638,
+      "deployed_at": "2026-11-07T13:23:14Z",
+      "reproducible": false
+    },
+    "token": {
+      "account_id": "tusdc.tilthouse.testnet",
+      "source": "token",
+      "code_hash": "6P86ptN89U9Pj7RaUKsHE6T25AvWv35XkB3UnPEnK3M9",
+      "deploy_tx": "5JZbfXuN5CRUH4N2YHjqPmyBJQ9SkeQ2yDgSodV7bejA",
+      "deploy_block": 276083570,
+      "deployed_at": "2026-11-03T18:09:01Z",
+      "reproducible": false
+    }
+  },
+  "retired": {
+    "house_v1": {
+      "account_id": "house.tilthouse.testnet",
+      "note": "v1 contract (per-round OutLayer VRF), no longer used",
+      "code_hash": "Asj6txQZ5CzsV5Qyhtei1A7VMHpjFyEu36jFoefTFRq3",
+      "deploy_tx": "6YSfXPA25ZWudb2zo88fLL8ePXTg11h4G5dxwZh3dZJh",
+      "deploy_block": 276087334,
+      "deployed_at": "2026-11-03T18:45:11Z"
+    }
+  },
+  "accounts": {
+    "owner": "tilthouse.testnet",
+    "keeper": "tilthouse.testnet",
+    "relayer": "relayer.tilthouse.testnet",
+    "session_server": "sessions.tilthouse.testnet",
+    "session_server_pubkey": "ed25519:2GBhysYtJkzDdsBL84npSQnffVNSMhCtXYnwRRSYJ2oQ",
+    "npc_dealers": [
+      "ada.tilthouse.testnet",
+      "bruno.tilthouse.testnet",
+      "chloe.tilthouse.testnet",
+      "dmitri.tilthouse.testnet",
+      "eve.tilthouse.testnet"
+    ],
+    "npc_gamblers": [
+      "g-mia.tilthouse.testnet",
+      "g-noah.tilthouse.testnet",
+      "g-zoe.tilthouse.testnet",
+      "g-liam.tilthouse.testnet",
+      "g-ines.tilthouse.testnet",
+      "g-omar.tilthouse.testnet",
+      "g-kai.tilthouse.testnet",
+      "g-lea.tilthouse.testnet",
+      "g-hugo.tilthouse.testnet",
+      "g-nina.tilthouse.testnet",
+      "g-theo.tilthouse.testnet",
+      "g-ava.tilthouse.testnet",
+      "g-yuki.tilthouse.testnet",
+      "g-sam.tilthouse.testnet",
+      "g-iris.tilthouse.testnet",
+      "g-max.tilthouse.testnet",
+      "g-rosa.tilthouse.testnet",
+      "g-ezra.tilthouse.testnet",
+      "g-vera.tilthouse.testnet",
+      "g-paul.tilthouse.testnet",
+      "g-june.tilthouse.testnet",
+      "g-ravi.tilthouse.testnet",
+      "g-lola.tilthouse.testnet",
+      "g-tom.tilthouse.testnet"
+    ]
+  }
+}
