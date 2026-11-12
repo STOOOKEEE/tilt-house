@@ -40,7 +40,7 @@ export function PokerRoom({ api, demo, loggedIn, wallet }: RoomProps) {
     )
   }
   const you = table.you
-  const seat = you ? table.seats[you.seat] : null
+  const seat = you?.seat == null ? null : table.seats[you.seat]
   return (
     <div className="seat-view poker-view" style={{ top }}>
       <PokerStage table={table} />
@@ -54,6 +54,13 @@ export function PokerRoom({ api, demo, loggedIn, wallet }: RoomProps) {
           {seat.leaving ? <span className="muted">leaving when this hand ends</span> : null}
           <button type="button" className="leave-button" disabled={api.busy || seat.leaving} onClick={() => void api.leave()}>
             Leave table
+          </button>
+        </div>
+      ) : you ? (
+        <div className="hud hud-tr">
+          <span className="muted">queued: a house bot gives you its seat when this hand ends</span>
+          <button type="button" className="leave-button" disabled={api.busy} onClick={() => void api.leave()}>
+            Leave the queue
           </button>
         </div>
       ) : null}
@@ -102,7 +109,7 @@ function TableHud({ table, demo }: { table: TableState; demo: boolean }) {
           hand #{hand.number} · {hand.phase} · pot <span className="money">{formatUsdc(potTotal(table))}</span>
         </span>
       ) : (
-        <span className="muted">waiting for players…</span>
+        <span className="muted">{table.last_hand ? `hand #${table.last_hand.number} is over · next hand soon` : 'waiting for players…'}</span>
       )}
       {hand ? (
         <span className="muted" title={hand.commitment}>
@@ -145,8 +152,8 @@ function SeatCard({ table, api, demo, loggedIn, wallet }: SeatCardProps) {
     <div className="center-card poker-seat-card">
       <h2>Sit down at {table.name}</h2>
       <p className="muted">
-        Your buy-in is locked on chain as a session; each hand you play is one signed round of it. The server commits to
-        every deck before your seed goes in, and reveals it after the hand: this page replays it.
+        Your buy-in is locked on chain as a session; each hand is one signed round of it. Every deck is committed before
+        your seed goes in and replayed here after the hand.
       </p>
       {loggedIn || demo ? null : <LoginPrompt action="play poker" />}
       <label className="stake">

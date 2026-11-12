@@ -6,8 +6,8 @@ import { PALETTE } from '../table/props'
 import { pixelTexture, shade, voxelPart, type VoxelBox } from '../voxel'
 import { OVAL_A, OVAL_B, POKER_FELT_Y } from './layout'
 
-const RIM_BLOCKS = 72
-const RIM_BLOCK = 0.26
+const RIM_BLOCKS = 120
+const RIM_BLOCK = 0.2
 const RIM_H = 0.13
 const FELT_SEGMENTS = 48
 const FELT_PX = 1024

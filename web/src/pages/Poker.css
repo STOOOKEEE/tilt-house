@@ -4,6 +4,16 @@
   color: var(--pink);
 }
 
+.center-card.poker-seat-card {
+  /* Beside the felt, not over it: spectators keep watching the hand. */
+  top: auto;
+  left: auto;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  transform: none;
+  width: min(380px, 90vw);
+}
+
 .poker-seat-card .stake {
   display: flex;
   gap: 0.6rem;

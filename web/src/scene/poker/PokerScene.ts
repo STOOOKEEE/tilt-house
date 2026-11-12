@@ -58,16 +58,16 @@ export interface PokerSceneApi {
   dispose(): void
 }
 
-const EYE = new THREE.Vector3(0, 3.3, OVAL_B + 2.7)
-const LOOK_AT = new THREE.Vector3(0, 0.45, -0.25)
-const FOV = 48
+const EYE = new THREE.Vector3(0, 4.1, OVAL_B + 3.3)
+const LOOK_AT = new THREE.Vector3(0, 0.55, -0.35)
+const FOV = 46
 /** The whole table and the side players must stay in view. */
 const FRAME_HALF_W = OVAL_A + 1.1
 const DECK_AT: FlatPoint = { x: 1.0, z: -0.62 }
 const CARD_SPREAD = 0.2
 const BOARD_GAP = 0.4
-const OWN_CARD_SCALE = 1.45
-const OWN_CARD_TILT = 0.75
+const OWN_CARD_SCALE = 1.15
+const OWN_CARD_TILT = 0.6
 const BUBBLE_SCALE = 0.5
 const DEAL_S = 0.32
 const SWEEP_S = 0.45
@@ -196,11 +196,11 @@ class PokerScene implements PokerSceneApi {
 
   // ---- seats ---------------------------------------------------------------------------------
 
-  /** Seats rotate so the player's own seat is the nearest one; spectators see seat 0 there. */
+  /** Seats rotate so the player's own seat is the nearest one; spectators look from an empty seat. */
   private layout(state: PokerSceneState): void {
     const you = state.seats.find((s) => s?.you)
     const seatCount = Math.max(2, state.seats.length)
-    const pivot = you ? you.seat : 0
+    const pivot = you ? you.seat : Math.max(0, state.seats.indexOf(null))
     const moved = pivot !== this.pivot || seatCount !== this.seatCount
     this.pivot = pivot
     this.seatCount = seatCount
@@ -241,7 +241,8 @@ class PokerScene implements PokerSceneApi {
       this.mounted.scene.add(rig.object)
     }
     const plate = textSprite(0.13, 16)
-    plate.sprite.position.copy(this.felt(towardSeat(angle, view.you ? 0.93 : RADIUS.plate), view.you ? 0.06 : 0.42))
+    // The player's own plate sits on the near rim, below its cards.
+    plate.sprite.position.copy(this.felt(towardSeat(angle, view.you ? 1.08 : RADIUS.plate), view.you ? 0.16 : 0.42))
     const tag = textSprite(0.1, 4)
     tag.sprite.position.copy(plate.sprite.position).add(new THREE.Vector3(0, 0.13, 0))
     const betLabel = textSprite(0.09, 7)
@@ -306,7 +307,7 @@ class PokerScene implements PokerSceneApi {
     const angle = this.angle(seat)
     const base = towardSeat(angle, own ? RADIUS.ownCards : RADIUS.cards)
     // Fan the two cards side by side, across the line to the seat.
-    const spread = (index - 0.5) * CARD_SPREAD * (own ? 1.6 : 1)
+    const spread = (index - 0.5) * CARD_SPREAD * (own ? 2.1 : 1.4)
     return this.felt({ x: base.x + Math.cos(angle) * spread, z: base.z + Math.sin(angle) * spread }, own ? 0.12 : 0.008 + index * 0.004)
   }
 

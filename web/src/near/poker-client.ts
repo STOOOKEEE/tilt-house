@@ -70,10 +70,13 @@ export interface HandView {
   number: number
   phase: HandPhase
   commitment: string
+  /** Seats dealt into this hand. */
+  seats: number[]
   seeds_in: number[]
   button: number
-  small_blind_seat: number
-  big_blind_seat: number
+  /** Null while seeding. */
+  small_blind_seat: number | null
+  big_blind_seat: number | null
   board: Card[]
   pots: PotView[]
   current_bet: string
@@ -82,7 +85,8 @@ export interface HandView {
 }
 
 export interface YouView {
-  seat: number
+  /** Null while queued for a seat an NPC is giving up. */
+  seat: number | null
   session_id: string
   hole: Card[] | null
   /** Non-null exactly when it is your turn. */
@@ -285,7 +289,8 @@ export interface PokerClient {
   tables(): Promise<TableSummary[]>
   /** Long-polls when `since` is the current version (the server holds up to 10 s). */
   state(tableId: string, token: string | null, since: number | null, signal?: AbortSignal): Promise<TableState>
-  join(tableId: string, token: string, sessionId: string, seat: number | null): Promise<{ seat: number; waiting: boolean }>
+  /** `seat` null: queued until an NPC gives its seat up at the end of the hand. */
+  join(tableId: string, token: string, sessionId: string, seat: number | null): Promise<{ seat: number | null; waiting: boolean }>
   seed(tableId: string, token: string, hand: number, clientSeed: string): Promise<void>
   act(tableId: string, token: string, hand: number, action: PokerAction): Promise<TableState>
   leave(tableId: string, token: string): Promise<{ left: boolean }>
@@ -306,7 +311,7 @@ export function pokerClient(baseUrl: string): PokerClient {
     async join(tableId, token, sessionId, seat) {
       const payload = seat === null ? { session_id: sessionId } : { session_id: sessionId, seat }
       const body = record(await call(`${table(tableId)}/join`, { method: 'POST', headers: auth(token), body: JSON.stringify(payload) }), 'join')
-      return { seat: int(body.seat, 'join.seat'), waiting: bool(body.waiting, 'join.waiting') }
+      return { seat: maybeInt(body.seat, 'join.seat'), waiting: bool(body.waiting, 'join.waiting') }
     },
     async seed(tableId, token, hand, clientSeed) {
       await call(`${table(tableId)}/seed`, { method: 'POST', headers: auth(token), body: JSON.stringify({ hand, client_seed: clientSeed }) })
@@ -405,10 +410,11 @@ function parseHand(value: unknown, path: string): HandView {
     number: int(h.number, `${path}.number`),
     phase: oneOf(PHASES, h.phase, `${path}.phase`),
     commitment: hex(h.commitment, `${path}.commitment`, 32),
+    seats: ints(h.seats, `${path}.seats`),
     seeds_in: ints(h.seeds_in, `${path}.seeds_in`),
     button: int(h.button, `${path}.button`),
-    small_blind_seat: int(h.small_blind_seat, `${path}.small_blind_seat`),
-    big_blind_seat: int(h.big_blind_seat, `${path}.big_blind_seat`),
+    small_blind_seat: maybeInt(h.small_blind_seat, `${path}.small_blind_seat`),
+    big_blind_seat: maybeInt(h.big_blind_seat, `${path}.big_blind_seat`),
     board: cards(h.board, `${path}.board`),
     pots: pots(h.pots, `${path}.pots`),
     current_bet: amount(h.current_bet, `${path}.current_bet`),
@@ -550,7 +556,7 @@ export function parseTableState(value: unknown): TableState {
     you: optional(t.you, (v) => {
       const y = record(v, 'table.you')
       return {
-        seat: int(y.seat, 'table.you.seat'),
+        seat: maybeInt(y.seat, 'table.you.seat'),
         session_id: str(y.session_id, 'table.you.session_id'),
         hole: optional(y.hole, (h) => cards(h, 'table.you.hole')),
         legal: optional(y.legal, (l) => parseLegal(l, 'table.you.legal')),

@@ -44,10 +44,10 @@ const later = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 function useProof(table: TableState | null, seedFor: (hand: number) => string | undefined): HandProof | null {
   const [proof, setProof] = useState<HandProof | null>(null)
   const last = table?.last_hand ?? null
-  const player = table?.you ? table.seats[table.you.seat]?.player : undefined
+  const sessionId = table?.you?.session_id
   useEffect(() => {
     if (!last || proof?.hand === last.number) return
-    const mineAt = last.history.start.seats.find((s) => s.player === player)
+    const mineAt = last.players.find((p) => p.session_id === sessionId)
     const clientSeed = seedFor(last.number)
     const mine = mineAt && clientSeed !== undefined ? { seat: mineAt.seat, clientSeed } : null
     setProof({ hand: last.number, check: verifyHand(last, mine) })
@@ -176,7 +176,8 @@ export function usePokerLive(config: Config, tableId: string, session: SessionAp
   // The player's own seed for each hand: drawn here, so the server cannot choose it.
   const hand = table?.hand ?? null
   useEffect(() => {
-    if (!token || !you || !hand || hand.phase !== 'seeding' || hand.seeds_in.includes(you.seat) || seeds.current.has(hand.number)) return
+    if (!token || you?.seat == null || !hand || hand.phase !== 'seeding') return
+    if (!hand.seats.includes(you.seat) || hand.seeds_in.includes(you.seat) || seeds.current.has(hand.number)) return
     const clientSeed = randomClientSeed()
     seeds.current.set(hand.number, clientSeed)
     client.seed(tableId, token, hand.number, clientSeed).catch((e: unknown) => {
@@ -192,7 +193,7 @@ export function usePokerLive(config: Config, tableId: string, session: SessionAp
   const round = you?.last_round ?? null
   const state = you?.state ?? null
   useEffect(() => {
-    if (!round || !state || !lastHand || !you || !mine || round.nonce !== mine.state.nonce + 1) return
+    if (!round || !state || !lastHand || you?.seat == null || !mine || round.nonce !== mine.state.nonce + 1) return
     const ofHand = round.bet !== 'blackjack' && 'poker' in round.bet ? round.bet.poker.hand : null
     if (ofHand !== lastHand.number) return
     if (!verifyHand(lastHand).ok || !roundMatchesHand(round, lastHand, you.seat)) {

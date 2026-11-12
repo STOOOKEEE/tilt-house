@@ -13,7 +13,7 @@ const SEAT_OUT = 0.78
 export const RADIUS = {
   bet: 0.5,
   cards: 0.74,
-  ownCards: 0.7,
+  ownCards: 0.72,
   button: 0.7,
   plate: 1.02,
 } as const
