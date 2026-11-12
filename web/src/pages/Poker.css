@@ -1,0 +1,130 @@
+/* Poker table overlays: on top of the shared seat-view styles (styles.css). */
+
+.poker-bot-note {
+  color: var(--pink);
+}
+
+.poker-seat-card .stake {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.poker-actions {
+  gap: 0.5rem;
+}
+
+.poker-timer {
+  position: relative;
+  width: min(420px, 80vw);
+  height: 0.9rem;
+  background: rgba(12, 11, 13, 0.7);
+  border: 1px solid rgba(240, 194, 106, 0.35);
+}
+
+.poker-timer-fill {
+  height: 100%;
+  background: var(--gold);
+  transition: width 1s linear;
+}
+
+.poker-timer-fill.late {
+  background: var(--loss);
+}
+
+.poker-timer span {
+  position: absolute;
+  inset: 0;
+  font-size: 0.7rem;
+  text-align: center;
+  color: #141014;
+  font-weight: 700;
+}
+
+.poker-raise {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  background: rgba(12, 11, 13, 0.7);
+}
+
+.poker-raise button {
+  margin: 0;
+  padding: 0.2rem 0.6rem;
+}
+
+.poker-raise button.selected {
+  outline: 2px solid var(--gold);
+}
+
+.poker-raise input[type='range'] {
+  width: min(260px, 40vw);
+  accent-color: var(--gold);
+}
+
+.poker-amount {
+  width: 6rem;
+}
+
+.poker-actions .bj-actions button.poker-all-in {
+  background: var(--pink);
+}
+
+.poker-proof {
+  left: 0.75rem;
+  bottom: 0.75rem;
+  max-width: min(520px, 90vw);
+  z-index: 3;
+}
+
+.poker-proof > button {
+  margin: 0;
+  background: none;
+  border: none;
+  text-transform: none;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.poker-proof > button.win {
+  color: var(--win);
+}
+
+.poker-proof > button.loss {
+  color: var(--loss);
+}
+
+.poker-proof-detail ul {
+  margin: 0.4rem 0;
+  padding-left: 1rem;
+  color: var(--win);
+}
+
+.poker-proof-detail dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.75rem;
+  margin: 0;
+  font-size: 0.72rem;
+}
+
+.poker-proof-detail dt {
+  color: var(--muted);
+}
+
+.poker-proof-detail dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.poker-tables {
+  border-collapse: collapse;
+}
+
+.poker-tables th,
+.poker-tables td {
+  padding: 0.35rem 1rem 0.35rem 0;
+  text-align: left;
+}

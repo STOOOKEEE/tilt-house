@@ -106,6 +106,7 @@ export function resultChip(round: CompactRound): BoardResult {
     const won = bet ? diceWins(o.dice.roll, bet.chance_bp, bet.over) : net > 0n
     return { text: rollLabel(o.dice.roll).slice(0, 2), color: won ? WIN : LOSS }
   }
+  if ('poker' in o) return { text: '♠', color: tone }
   return { text: String(handTotal(o.blackjack.player).total), color: tone }
 }
 
@@ -157,7 +158,7 @@ export function feltSpot(game: DealerView['game'], u: number, v: number, dice: D
 
 /** Felt point where a bet's chips stack (a multi-spot spin: its first spot). */
 export function stackPoint(bet: Bet): { u: number; v: number } {
-  if (bet === 'blackjack') return BLACKJACK_BET_SPOT
+  if (bet === 'blackjack' || 'poker' in bet) return BLACKJACK_BET_SPOT
   if ('dice' in bet) return DICE_BET_SPOT
   const cell = betCell('roulette' in bet ? bet.roulette : bet.roulette_spots[0].bet)
   return { u: cell.u + cell.w / 2, v: cell.v + cell.h / 2 }
@@ -176,6 +177,7 @@ export function outcomeLabel(round: CompactRound): string {
   const o = round.outcome
   if ('dice' in o) return `roll ${rollLabel(o.dice.roll)}`
   if ('roulette' in o) return `pocket ${o.roulette.pocket}`
+  if ('poker' in o) return `board ${o.poker.board.join(' ') || '—'}`
   const cards = (c: number[]) => `${c.map(cardLabel).join(' ')} (${handTotal(c).total})`
   return `you ${cards(o.blackjack.player)} · dealer ${cards(o.blackjack.dealer)}`
 }

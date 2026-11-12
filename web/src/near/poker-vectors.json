@@ -1,0 +1,2223 @@
+{
+  "deck_seed": {
+    "client_seeds": [
+      "alice-1",
+      "bob-1",
+      "npc-carol-1"
+    ],
+    "deck": [
+      "9h",
+      "Ts",
+      "Ah",
+      "Ac",
+      "5d",
+      "Kd",
+      "7d",
+      "Jc",
+      "3h",
+      "9d",
+      "Js",
+      "9s",
+      "2h",
+      "7c",
+      "9c",
+      "4s",
+      "3c",
+      "6h",
+      "6d",
+      "Jd",
+      "2c",
+      "Th",
+      "6c",
+      "7s",
+      "3d",
+      "Qc",
+      "Qd",
+      "Qh",
+      "8s",
+      "4d",
+      "8c",
+      "5s",
+      "2s",
+      "5h",
+      "Kh",
+      "6s",
+      "7h",
+      "5c",
+      "8d",
+      "Qs",
+      "3s",
+      "Ad",
+      "Kc",
+      "4h",
+      "Tc",
+      "4c",
+      "Td",
+      "Ks",
+      "As",
+      "2d",
+      "8h",
+      "Jh"
+    ],
+    "deck_seed": "ac3ffe81a29ffd3271bac7f87cd783a04a315babd15b937a4ccee388ce617ff0",
+    "hand_seed": "0909090909090909090909090909090909090909090909090909090909090909"
+  },
+  "evaluations": [
+    {
+      "cards": "As 2d 3c 4h 5s Kd Kc",
+      "category": "straight",
+      "value": 4390912
+    },
+    {
+      "cards": "5h 4h 3h 2h Ah Kd Kc",
+      "category": "straight_flush",
+      "value": 8585216
+    },
+    {
+      "cards": "9c 9d 9h 4s 4d 4c 2h",
+      "category": "full_house",
+      "value": 6758400
+    },
+    {
+      "cards": "Ts Js Qs Ks 2s Ad Kd",
+      "category": "flush",
+      "value": 6007168
+    },
+    {
+      "cards": "Ad Kd Qc Jh Tc 9s 2c",
+      "category": "straight",
+      "value": 4980736
+    },
+    {
+      "cards": "7c 7d 7h 7s 2c 3d Ah",
+      "category": "quads",
+      "value": 7716864
+    },
+    {
+      "cards": "8c 8d 5h 5s 2c 2d Ah",
+      "category": "two_pair",
+      "value": 2505728
+    },
+    {
+      "cards": "Ac Qd 9h 7s 5c 4d 2h",
+      "category": "high_card",
+      "value": 829267
+    },
+    {
+      "cards": "Kc Kd 9h 7s 5c 4d 2h",
+      "category": "pair",
+      "value": 1799472
+    },
+    {
+      "cards": "Qc Qd Qh 7s 5c 4d 2h",
+      "category": "trips",
+      "value": 3822336
+    }
+  ],
+  "hands": [
+    {
+      "deck": [
+        "9s",
+        "4s",
+        "Qd",
+        "6h",
+        "9c",
+        "3s",
+        "Qc",
+        "Jc",
+        "Qs",
+        "6s",
+        "7c",
+        "Kh",
+        "5d",
+        "Td",
+        "9d",
+        "Ah",
+        "Js",
+        "Jh",
+        "5s",
+        "Ts",
+        "Qh",
+        "5c",
+        "7s",
+        "Jd",
+        "3h",
+        "9h",
+        "2h",
+        "5h",
+        "2c",
+        "8d",
+        "8c",
+        "3c",
+        "Tc",
+        "Ac",
+        "Ks",
+        "Kd",
+        "8h",
+        "As",
+        "7d",
+        "Kc",
+        "Th",
+        "6d",
+        "7h",
+        "2s",
+        "3d",
+        "Ad",
+        "4d",
+        "8s",
+        "2d",
+        "4c",
+        "4h",
+        "6c"
+      ],
+      "history": {
+        "actions": [
+          {
+            "action": {
+              "raise_to": "300000"
+            },
+            "seat": 0
+          },
+          {
+            "action": "fold",
+            "seat": 1
+          },
+          {
+            "action": "fold",
+            "seat": 3
+          }
+        ],
+        "hand_seed": "0101010101010101010101010101010101010101010101010101010101010101",
+        "start": {
+          "button": 0,
+          "config": {
+            "big_blind": "100000",
+            "rake_cap": "300000",
+            "small_blind": "50000"
+          },
+          "hand": 1,
+          "hand_seed_hash": "72cd6e8422c407fb6d098690f1130b7ded7ec2f7f5e1d30bd9d521f015363793",
+          "seats": [
+            {
+              "client_seed": "seed-0-1",
+              "player": "p0.testnet",
+              "rake_bp": 300,
+              "seat": 0,
+              "stack": "2000000"
+            },
+            {
+              "client_seed": "seed-1-1",
+              "player": "p1.testnet",
+              "rake_bp": 250,
+              "seat": 1,
+              "stack": "2000000"
+            },
+            {
+              "client_seed": "seed-3-1",
+              "player": "p3.testnet",
+              "rake_bp": 400,
+              "seat": 3,
+              "stack": "2000000"
+            }
+          ],
+          "table": "poker-demo"
+        }
+      },
+      "history_hash": "8decd9fce01773bd234840ea94ed129016b70ae52b1f5acf2837c036fb0ef476",
+      "holes": [
+        [
+          "Qd",
+          "3s"
+        ],
+        [
+          "9s",
+          "6h"
+        ],
+        [
+          "4s",
+          "9c"
+        ]
+      ],
+      "legals": [
+        {
+          "call": "100000",
+          "can_check": false,
+          "raise": {
+            "max_to": "2000000",
+            "min_to": "200000"
+          },
+          "seat": 0,
+          "stack": "2000000"
+        },
+        {
+          "call": "250000",
+          "can_check": false,
+          "raise": {
+            "max_to": "2000000",
+            "min_to": "500000"
+          },
+          "seat": 1,
+          "stack": "1950000"
+        },
+        {
+          "call": "200000",
+          "can_check": false,
+          "raise": {
+            "max_to": "2000000",
+            "min_to": "500000"
+          },
+          "seat": 3,
+          "stack": "1900000"
+        }
+      ],
+      "name": "fold preflop, no flop no drop",
+      "result": {
+        "board": [],
+        "pots": [
+          {
+            "amount": "250000",
+            "eligible": [
+              0
+            ],
+            "winners": [
+              0
+            ]
+          }
+        ],
+        "rake": "0",
+        "seats": [
+          {
+            "player": "p0.testnet",
+            "put_in": "100000",
+            "seat": 0,
+            "shown": null,
+            "stack_after": "2150000",
+            "value": null,
+            "won": "250000"
+          },
+          {
+            "player": "p1.testnet",
+            "put_in": "50000",
+            "seat": 1,
+            "shown": null,
+            "stack_after": "1950000",
+            "value": null,
+            "won": "0"
+          },
+          {
+            "player": "p3.testnet",
+            "put_in": "100000",
+            "seat": 3,
+            "shown": null,
+            "stack_after": "1900000",
+            "value": null,
+            "won": "0"
+          }
+        ],
+        "showdown": false
+      },
+      "rounds": [
+        {
+          "borsh": "0700000000000000040a000000706f6b65722d64656d6f0100000000000000a0860100000000000000000000000000000000000372cd6e8422c407fb6d098690f1130b7ded7ec2f7f5e1d30bd9d521f0153637938decd9fce01773bd234840ea94ed129016b70ae52b1f5acf2837c036fb0ef476000000000090d00300000000000000000000000000",
+          "round": {
+            "actions": [],
+            "bet": {
+              "poker": {
+                "hand": 1,
+                "table": "poker-demo"
+              }
+            },
+            "nonce": 7,
+            "outcome": {
+              "poker": {
+                "board": [],
+                "hand_seed_hash": "72cd6e8422c407fb6d098690f1130b7ded7ec2f7f5e1d30bd9d521f015363793",
+                "history_hash": "8decd9fce01773bd234840ea94ed129016b70ae52b1f5acf2837c036fb0ef476",
+                "seat": 0
+              }
+            },
+            "payout": "250000",
+            "stake": "100000"
+          }
+        },
+        {
+          "borsh": "0700000000000000040a000000706f6b65722d64656d6f010000000000000050c30000000000000000000000000000000000000372cd6e8422c407fb6d098690f1130b7ded7ec2f7f5e1d30bd9d521f0153637938decd9fce01773bd234840ea94ed129016b70ae52b1f5acf2837c036fb0ef476010000000000000000000000000000000000000000",
+          "round": {
+            "actions": [],
+            "bet": {
+              "poker": {
+                "hand": 1,
+                "table": "poker-demo"
+              }
+            },
+            "nonce": 7,
+            "outcome": {
+              "poker": {
+                "board": [],
+                "hand_seed_hash": "72cd6e8422c407fb6d098690f1130b7ded7ec2f7f5e1d30bd9d521f015363793",
+                "history_hash": "8decd9fce01773bd234840ea94ed129016b70ae52b1f5acf2837c036fb0ef476",
+                "seat": 1
+              }
+            },
+            "payout": "0",
+            "stake": "50000"
+          }
+        },
+        {
+          "borsh": "0700000000000000040a000000706f6b65722d64656d6f0100000000000000a0860100000000000000000000000000000000000372cd6e8422c407fb6d098690f1130b7ded7ec2f7f5e1d30bd9d521f0153637938decd9fce01773bd234840ea94ed129016b70ae52b1f5acf2837c036fb0ef476030000000000000000000000000000000000000000",
+          "round": {
+            "actions": [],
+            "bet": {
+              "poker": {
+                "hand": 1,
+                "table": "poker-demo"
+              }
+            },
+            "nonce": 7,
+            "outcome": {
+              "poker": {
+                "board": [],
+                "hand_seed_hash": "72cd6e8422c407fb6d098690f1130b7ded7ec2f7f5e1d30bd9d521f015363793",
+                "history_hash": "8decd9fce01773bd234840ea94ed129016b70ae52b1f5acf2837c036fb0ef476",
+                "seat": 3
+              }
+            },
+            "payout": "0",
+            "stake": "100000"
+          }
+        }
+      ]
+    },
+    {
+      "deck": [
+        "3h",
+        "4s",
+        "Ad",
+        "Ks",
+        "8s",
+        "Js",
+        "8c",
+        "7s",
+        "Jd",
+        "Tc",
+        "3c",
+        "Td",
+        "9d",
+        "5c",
+        "7h",
+        "Ts",
+        "8h",
+        "3s",
+        "4d",
+        "Kh",
+        "Qh",
+        "Kc",
+        "5d",
+        "Qc",
+        "8d",
+        "7d",
+        "9h",
+        "5h",
+        "6c",
+        "As",
+        "Ah",
+        "6s",
+        "2d",
+        "2c",
+        "Ac",
+        "2h",
+        "6h",
+        "6d",
+        "3d",
+        "4c",
+        "9s",
+        "9c",
+        "4h",
+        "Th",
+        "Qs",
+        "Jc",
+        "Qd",
+        "Kd",
+        "5s",
+        "Jh",
+        "7c",
+        "2s"
+      ],
+      "history": {
+        "actions": [
+          {
+            "action": "call",
+            "seat": 1
+          },
+          {
+            "action": "call",
+            "seat": 3
+          },
+          {
+            "action": "check",
+            "seat": 0
+          },
+          {
+            "action": "check",
+            "seat": 3
+          },
+          {
+            "action": "check",
+            "seat": 0
+          },
+          {
+            "action": "check",
+            "seat": 1
+          },
+          {
+            "action": "check",
+            "seat": 3
+          },
+          {
+            "action": "check",
+            "seat": 0
+          },
+          {
+            "action": "check",
+            "seat": 1
+          },
+          {
+            "action": "check",
+            "seat": 3
+          },
+          {
+            "action": "check",
+            "seat": 0
+          },
+          {
+            "action": "check",
+            "seat": 1
+          }
+        ],
+        "hand_seed": "0202020202020202020202020202020202020202020202020202020202020202",
+        "start": {
+          "button": 1,
+          "config": {
+            "big_blind": "100000",
+            "rake_cap": "300000",
+            "small_blind": "50000"
+          },
+          "hand": 2,
+          "hand_seed_hash": "75877bb41d393b5fb8455ce60ecd8dda001d06316496b14dfa7f895656eeca4a",
+          "seats": [
+            {
+              "client_seed": "seed-0-2",
+              "player": "p0.testnet",
+              "rake_bp": 300,
+              "seat": 0,
+              "stack": "2000000"
+            },
+            {
+              "client_seed": "seed-1-2",
+              "player": "p1.testnet",
+              "rake_bp": 250,
+              "seat": 1,
+              "stack": "2000000"
+            },
+            {
+              "client_seed": "seed-3-2",
+              "player": "p3.testnet",
+              "rake_bp": 400,
+              "seat": 3,
+              "stack": "2000000"
+            }
+          ],
+          "table": "poker-demo"
+        }
+      },
+      "history_hash": "92a2e0777eb1110e9040aab400796b183741b839ac74baac5394292423c64d81",
+      "holes": [
+        [
+          "4s",
+          "8s"
+        ],
+        [
+          "Ad",
+          "Js"
+        ],
+        [
+          "3h",
+          "Ks"
+        ]
+      ],
+      "legals": [
+        {
+          "call": "100000",
+          "can_check": false,
+          "raise": {
+            "max_to": "2000000",
+            "min_to": "200000"
+          },
+          "seat": 1,
+          "stack": "2000000"
+        },
+        {
+          "call": "50000",
+          "can_check": false,
+          "raise": {
+            "max_to": "2000000",
+            "min_to": "200000"
+          },
+          "seat": 3,
+          "stack": "1950000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "2000000",
+            "min_to": "200000"
+          },
+          "seat": 0,
+          "stack": "1900000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1900000",
+            "min_to": "100000"
+          },
+          "seat": 3,
+          "stack": "1900000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1900000",
+            "min_to": "100000"
+          },
+          "seat": 0,
+          "stack": "1900000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1900000",
+            "min_to": "100000"
+          },
+          "seat": 1,
+          "stack": "1900000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1900000",
+            "min_to": "100000"
+          },
+          "seat": 3,
+          "stack": "1900000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1900000",
+            "min_to": "100000"
+          },
+          "seat": 0,
+          "stack": "1900000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1900000",
+            "min_to": "100000"
+          },
+          "seat": 1,
+          "stack": "1900000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1900000",
+            "min_to": "100000"
+          },
+          "seat": 3,
+          "stack": "1900000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1900000",
+            "min_to": "100000"
+          },
+          "seat": 0,
+          "stack": "1900000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1900000",
+            "min_to": "100000"
+          },
+          "seat": 1,
+          "stack": "1900000"
+        }
+      ],
+      "name": "checked down to a showdown",
+      "result": {
+        "board": [
+          "7s",
+          "Jd",
+          "Tc",
+          "Td",
+          "5c"
+        ],
+        "pots": [
+          {
+            "amount": "292500",
+            "eligible": [
+              3,
+              0,
+              1
+            ],
+            "winners": [
+              1
+            ]
+          }
+        ],
+        "rake": "7500",
+        "seats": [
+          {
+            "player": "p0.testnet",
+            "put_in": "100000",
+            "seat": 0,
+            "shown": [
+              "4s",
+              "8s"
+            ],
+            "stack_after": "1900000",
+            "value": 1611344,
+            "won": "0"
+          },
+          {
+            "player": "p1.testnet",
+            "put_in": "100000",
+            "seat": 1,
+            "shown": [
+              "Ad",
+              "Js"
+            ],
+            "stack_after": "2192500",
+            "value": 2722816,
+            "won": "292500"
+          },
+          {
+            "player": "p3.testnet",
+            "put_in": "100000",
+            "seat": 3,
+            "shown": [
+              "3h",
+              "Ks"
+            ],
+            "stack_after": "1900000",
+            "value": 1620304,
+            "won": "0"
+          }
+        ],
+        "showdown": true
+      },
+      "rounds": [
+        {
+          "borsh": "0700000000000000040a000000706f6b65722d64656d6f0200000000000000a0860100000000000000000000000000000000000375877bb41d393b5fb8455ce60ecd8dda001d06316496b14dfa7f895656eeca4a92a2e0777eb1110e9040aab400796b183741b839ac74baac5394292423c64d810005000000172520210c00000000000000000000000000000000",
+          "round": {
+            "actions": [],
+            "bet": {
+              "poker": {
+                "hand": 2,
+                "table": "poker-demo"
+              }
+            },
+            "nonce": 7,
+            "outcome": {
+              "poker": {
+                "board": [
+                  "7s",
+                  "Jd",
+                  "Tc",
+                  "Td",
+                  "5c"
+                ],
+                "hand_seed_hash": "75877bb41d393b5fb8455ce60ecd8dda001d06316496b14dfa7f895656eeca4a",
+                "history_hash": "92a2e0777eb1110e9040aab400796b183741b839ac74baac5394292423c64d81",
+                "seat": 0
+              }
+            },
+            "payout": "0",
+            "stake": "100000"
+          }
+        },
+        {
+          "borsh": "0700000000000000040a000000706f6b65722d64656d6f0200000000000000a0860100000000000000000000000000000000000375877bb41d393b5fb8455ce60ecd8dda001d06316496b14dfa7f895656eeca4a92a2e0777eb1110e9040aab400796b183741b839ac74baac5394292423c64d810105000000172520210c94760400000000000000000000000000",
+          "round": {
+            "actions": [],
+            "bet": {
+              "poker": {
+                "hand": 2,
+                "table": "poker-demo"
+              }
+            },
+            "nonce": 7,
+            "outcome": {
+              "poker": {
+                "board": [
+                  "7s",
+                  "Jd",
+                  "Tc",
+                  "Td",
+                  "5c"
+                ],
+                "hand_seed_hash": "75877bb41d393b5fb8455ce60ecd8dda001d06316496b14dfa7f895656eeca4a",
+                "history_hash": "92a2e0777eb1110e9040aab400796b183741b839ac74baac5394292423c64d81",
+                "seat": 1
+              }
+            },
+            "payout": "292500",
+            "stake": "100000"
+          }
+        },
+        {
+          "borsh": "0700000000000000040a000000706f6b65722d64656d6f0200000000000000a0860100000000000000000000000000000000000375877bb41d393b5fb8455ce60ecd8dda001d06316496b14dfa7f895656eeca4a92a2e0777eb1110e9040aab400796b183741b839ac74baac5394292423c64d810305000000172520210c00000000000000000000000000000000",
+          "round": {
+            "actions": [],
+            "bet": {
+              "poker": {
+                "hand": 2,
+                "table": "poker-demo"
+              }
+            },
+            "nonce": 7,
+            "outcome": {
+              "poker": {
+                "board": [
+                  "7s",
+                  "Jd",
+                  "Tc",
+                  "Td",
+                  "5c"
+                ],
+                "hand_seed_hash": "75877bb41d393b5fb8455ce60ecd8dda001d06316496b14dfa7f895656eeca4a",
+                "history_hash": "92a2e0777eb1110e9040aab400796b183741b839ac74baac5394292423c64d81",
+                "seat": 3
+              }
+            },
+            "payout": "0",
+            "stake": "100000"
+          }
+        }
+      ]
+    },
+    {
+      "deck": [
+        "7s",
+        "7h",
+        "2s",
+        "Ah",
+        "5h",
+        "Qs",
+        "7d",
+        "8h",
+        "6c",
+        "6d",
+        "6h",
+        "2d",
+        "9d",
+        "3h",
+        "3s",
+        "4s",
+        "As",
+        "Qc",
+        "3c",
+        "Qd",
+        "4h",
+        "5d",
+        "Qh",
+        "Td",
+        "3d",
+        "Th",
+        "Jc",
+        "5s",
+        "8s",
+        "Kc",
+        "9s",
+        "Kd",
+        "8d",
+        "Ac",
+        "Jh",
+        "Ks",
+        "2h",
+        "4d",
+        "Kh",
+        "6s",
+        "5c",
+        "9h",
+        "Tc",
+        "Js",
+        "Ts",
+        "2c",
+        "7c",
+        "Jd",
+        "Ad",
+        "8c",
+        "9c",
+        "4c"
+      ],
+      "history": {
+        "actions": [
+          {
+            "action": "all_in",
+            "seat": 0
+          },
+          {
+            "action": "call",
+            "seat": 2
+          },
+          {
+            "action": "call",
+            "seat": 4
+          },
+          {
+            "action": "check",
+            "seat": 2
+          },
+          {
+            "action": "check",
+            "seat": 4
+          },
+          {
+            "action": {
+              "raise_to": "400000"
+            },
+            "seat": 2
+          },
+          {
+            "action": "call",
+            "seat": 4
+          },
+          {
+            "action": "check",
+            "seat": 2
+          },
+          {
+            "action": "check",
+            "seat": 4
+          }
+        ],
+        "hand_seed": "0303030303030303030303030303030303030303030303030303030303030303",
+        "start": {
+          "button": 0,
+          "config": {
+            "big_blind": "100000",
+            "rake_cap": "300000",
+            "small_blind": "50000"
+          },
+          "hand": 3,
+          "hand_seed_hash": "648aa5c579fb30f38af744d97d6ec840c7a91277a499a0d780f3e7314eca090b",
+          "seats": [
+            {
+              "client_seed": "seed-0-3",
+              "player": "p0.testnet",
+              "rake_bp": 300,
+              "seat": 0,
+              "stack": "500000"
+            },
+            {
+              "client_seed": "seed-2-3",
+              "player": "p2.testnet",
+              "rake_bp": 300,
+              "seat": 2,
+              "stack": "2000000"
+            },
+            {
+              "client_seed": "seed-4-3",
+              "player": "p4.testnet",
+              "rake_bp": 300,
+              "seat": 4,
+              "stack": "3000000"
+            }
+          ],
+          "table": "poker-demo"
+        }
+      },
+      "history_hash": "522b32bfe12dfe07ca641a45c5f373ed175c39ffbfa8e5a09f0d656bda6345ba",
+      "holes": [
+        [
+          "2s",
+          "Qs"
+        ],
+        [
+          "7s",
+          "Ah"
+        ],
+        [
+          "7h",
+          "5h"
+        ]
+      ],
+      "legals": [
+        {
+          "call": "100000",
+          "can_check": false,
+          "raise": {
+            "max_to": "500000",
+            "min_to": "200000"
+          },
+          "seat": 0,
+          "stack": "500000"
+        },
+        {
+          "call": "450000",
+          "can_check": false,
+          "raise": {
+            "max_to": "2000000",
+            "min_to": "900000"
+          },
+          "seat": 2,
+          "stack": "1950000"
+        },
+        {
+          "call": "400000",
+          "can_check": false,
+          "raise": {
+            "max_to": "3000000",
+            "min_to": "900000"
+          },
+          "seat": 4,
+          "stack": "2900000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1500000",
+            "min_to": "100000"
+          },
+          "seat": 2,
+          "stack": "1500000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "2500000",
+            "min_to": "100000"
+          },
+          "seat": 4,
+          "stack": "2500000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1500000",
+            "min_to": "100000"
+          },
+          "seat": 2,
+          "stack": "1500000"
+        },
+        {
+          "call": "400000",
+          "can_check": false,
+          "raise": {
+            "max_to": "2500000",
+            "min_to": "800000"
+          },
+          "seat": 4,
+          "stack": "2500000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1100000",
+            "min_to": "100000"
+          },
+          "seat": 2,
+          "stack": "1100000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "2100000",
+            "min_to": "100000"
+          },
+          "seat": 4,
+          "stack": "2100000"
+        }
+      ],
+      "name": "short all-in makes a side pot",
+      "result": {
+        "board": [
+          "8h",
+          "6c",
+          "6d",
+          "2d",
+          "3h"
+        ],
+        "pots": [
+          {
+            "amount": "1431000",
+            "eligible": [
+              2,
+              4,
+              0
+            ],
+            "winners": [
+              0
+            ]
+          },
+          {
+            "amount": "800000",
+            "eligible": [
+              2,
+              4
+            ],
+            "winners": [
+              2
+            ]
+          }
+        ],
+        "rake": "69000",
+        "seats": [
+          {
+            "player": "p0.testnet",
+            "put_in": "500000",
+            "seat": 0,
+            "shown": [
+              "2s",
+              "Qs"
+            ],
+            "stack_after": "1431000",
+            "value": 2361856,
+            "won": "1431000"
+          },
+          {
+            "player": "p2.testnet",
+            "put_in": "900000",
+            "seat": 2,
+            "shown": [
+              "7s",
+              "Ah"
+            ],
+            "stack_after": "1900000",
+            "value": 1361488,
+            "won": "800000"
+          },
+          {
+            "player": "p4.testnet",
+            "put_in": "900000",
+            "seat": 4,
+            "shown": [
+              "7h",
+              "5h"
+            ],
+            "stack_after": "2100000",
+            "value": 1336624,
+            "won": "0"
+          }
+        ],
+        "showdown": true
+      },
+      "rounds": [
+        {
+          "borsh": "0700000000000000040a000000706f6b65722d64656d6f030000000000000020a107000000000000000000000000000000000003648aa5c579fb30f38af744d97d6ec840c7a91277a499a0d780f3e7314eca090b522b32bfe12dfe07ca641a45c5f373ed175c39ffbfa8e5a09f0d656bda6345ba00050000001a10110106d8d51500000000000000000000000000",
+          "round": {
+            "actions": [],
+            "bet": {
+              "poker": {
+                "hand": 3,
+                "table": "poker-demo"
+              }
+            },
+            "nonce": 7,
+            "outcome": {
+              "poker": {
+                "board": [
+                  "8h",
+                  "6c",
+                  "6d",
+                  "2d",
+                  "3h"
+                ],
+                "hand_seed_hash": "648aa5c579fb30f38af744d97d6ec840c7a91277a499a0d780f3e7314eca090b",
+                "history_hash": "522b32bfe12dfe07ca641a45c5f373ed175c39ffbfa8e5a09f0d656bda6345ba",
+                "seat": 0
+              }
+            },
+            "payout": "1431000",
+            "stake": "500000"
+          }
+        },
+        {
+          "borsh": "0700000000000000040a000000706f6b65722d64656d6f0300000000000000a0bb0d000000000000000000000000000000000003648aa5c579fb30f38af744d97d6ec840c7a91277a499a0d780f3e7314eca090b522b32bfe12dfe07ca641a45c5f373ed175c39ffbfa8e5a09f0d656bda6345ba02050000001a1011010600350c00000000000000000000000000",
+          "round": {
+            "actions": [],
+            "bet": {
+              "poker": {
+                "hand": 3,
+                "table": "poker-demo"
+              }
+            },
+            "nonce": 7,
+            "outcome": {
+              "poker": {
+                "board": [
+                  "8h",
+                  "6c",
+                  "6d",
+                  "2d",
+                  "3h"
+                ],
+                "hand_seed_hash": "648aa5c579fb30f38af744d97d6ec840c7a91277a499a0d780f3e7314eca090b",
+                "history_hash": "522b32bfe12dfe07ca641a45c5f373ed175c39ffbfa8e5a09f0d656bda6345ba",
+                "seat": 2
+              }
+            },
+            "payout": "800000",
+            "stake": "900000"
+          }
+        },
+        {
+          "borsh": "0700000000000000040a000000706f6b65722d64656d6f0300000000000000a0bb0d000000000000000000000000000000000003648aa5c579fb30f38af744d97d6ec840c7a91277a499a0d780f3e7314eca090b522b32bfe12dfe07ca641a45c5f373ed175c39ffbfa8e5a09f0d656bda6345ba04050000001a1011010600000000000000000000000000000000",
+          "round": {
+            "actions": [],
+            "bet": {
+              "poker": {
+                "hand": 3,
+                "table": "poker-demo"
+              }
+            },
+            "nonce": 7,
+            "outcome": {
+              "poker": {
+                "board": [
+                  "8h",
+                  "6c",
+                  "6d",
+                  "2d",
+                  "3h"
+                ],
+                "hand_seed_hash": "648aa5c579fb30f38af744d97d6ec840c7a91277a499a0d780f3e7314eca090b",
+                "history_hash": "522b32bfe12dfe07ca641a45c5f373ed175c39ffbfa8e5a09f0d656bda6345ba",
+                "seat": 4
+              }
+            },
+            "payout": "0",
+            "stake": "900000"
+          }
+        }
+      ]
+    },
+    {
+      "deck": [
+        "As",
+        "5c",
+        "8h",
+        "2d",
+        "3c",
+        "Td",
+        "5h",
+        "3d",
+        "4h",
+        "Qs",
+        "8c",
+        "4c",
+        "7s",
+        "Ks",
+        "Qh",
+        "Js",
+        "Jc",
+        "2c",
+        "9h",
+        "Ad",
+        "Ts",
+        "9s",
+        "Jd",
+        "Jh",
+        "Kh",
+        "4d",
+        "6d",
+        "3h",
+        "2h",
+        "8s",
+        "Kd",
+        "7c",
+        "Ac",
+        "Kc",
+        "6c",
+        "7d",
+        "7h",
+        "8d",
+        "5d",
+        "Ah",
+        "Th",
+        "9c",
+        "9d",
+        "Tc",
+        "3s",
+        "2s",
+        "6h",
+        "6s",
+        "4s",
+        "Qc",
+        "5s",
+        "Qd"
+      ],
+      "history": {
+        "actions": [
+          {
+            "action": {
+              "raise_to": "300000"
+            },
+            "seat": 0
+          },
+          {
+            "action": "call",
+            "seat": 1
+          },
+          {
+            "action": "all_in",
+            "seat": 2
+          },
+          {
+            "action": "call",
+            "seat": 0
+          },
+          {
+            "action": "call",
+            "seat": 1
+          },
+          {
+            "action": "check",
+            "seat": 1
+          },
+          {
+            "action": "check",
+            "seat": 0
+          },
+          {
+            "action": "check",
+            "seat": 1
+          },
+          {
+            "action": "check",
+            "seat": 0
+          },
+          {
+            "action": "check",
+            "seat": 1
+          },
+          {
+            "action": "check",
+            "seat": 0
+          }
+        ],
+        "hand_seed": "0404040404040404040404040404040404040404040404040404040404040404",
+        "start": {
+          "button": 0,
+          "config": {
+            "big_blind": "100000",
+            "rake_cap": "300000",
+            "small_blind": "50000"
+          },
+          "hand": 4,
+          "hand_seed_hash": "9f4fb68f3e1dac82202f9aa581ce0bbf1f765df0e9ac3c8c57e20f685abab8ed",
+          "seats": [
+            {
+              "client_seed": "seed-0-4",
+              "player": "p0.testnet",
+              "rake_bp": 200,
+              "seat": 0,
+              "stack": "2000000"
+            },
+            {
+              "client_seed": "seed-1-4",
+              "player": "p1.testnet",
+              "rake_bp": 200,
+              "seat": 1,
+              "stack": "2000000"
+            },
+            {
+              "client_seed": "seed-2-4",
+              "player": "p2.testnet",
+              "rake_bp": 200,
+              "seat": 2,
+              "stack": "450000"
+            }
+          ],
+          "table": "poker-demo"
+        }
+      },
+      "history_hash": "63516705f0e97690738b72cb156fcba1fb71e14d5bbc03453fa0689435128d9b",
+      "holes": [
+        [
+          "8h",
+          "Td"
+        ],
+        [
+          "As",
+          "2d"
+        ],
+        [
+          "5c",
+          "3c"
+        ]
+      ],
+      "legals": [
+        {
+          "call": "100000",
+          "can_check": false,
+          "raise": {
+            "max_to": "2000000",
+            "min_to": "200000"
+          },
+          "seat": 0,
+          "stack": "2000000"
+        },
+        {
+          "call": "250000",
+          "can_check": false,
+          "raise": {
+            "max_to": "2000000",
+            "min_to": "500000"
+          },
+          "seat": 1,
+          "stack": "1950000"
+        },
+        {
+          "call": "200000",
+          "can_check": false,
+          "raise": {
+            "max_to": "450000",
+            "min_to": "450000"
+          },
+          "seat": 2,
+          "stack": "350000"
+        },
+        {
+          "call": "150000",
+          "can_check": false,
+          "raise": null,
+          "seat": 0,
+          "stack": "1700000"
+        },
+        {
+          "call": "150000",
+          "can_check": false,
+          "raise": null,
+          "seat": 1,
+          "stack": "1700000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1550000",
+            "min_to": "100000"
+          },
+          "seat": 1,
+          "stack": "1550000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1550000",
+            "min_to": "100000"
+          },
+          "seat": 0,
+          "stack": "1550000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1550000",
+            "min_to": "100000"
+          },
+          "seat": 1,
+          "stack": "1550000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1550000",
+            "min_to": "100000"
+          },
+          "seat": 0,
+          "stack": "1550000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1550000",
+            "min_to": "100000"
+          },
+          "seat": 1,
+          "stack": "1550000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1550000",
+            "min_to": "100000"
+          },
+          "seat": 0,
+          "stack": "1550000"
+        }
+      ],
+      "name": "short all-in raise does not reopen",
+      "result": {
+        "board": [
+          "3d",
+          "4h",
+          "Qs",
+          "4c",
+          "Ks"
+        ],
+        "pots": [
+          {
+            "amount": "1323000",
+            "eligible": [
+              1,
+              2,
+              0
+            ],
+            "winners": [
+              2
+            ]
+          }
+        ],
+        "rake": "27000",
+        "seats": [
+          {
+            "player": "p0.testnet",
+            "put_in": "450000",
+            "seat": 0,
+            "shown": [
+              "8h",
+              "Td"
+            ],
+            "stack_after": "1550000",
+            "value": 1227392,
+            "won": "0"
+          },
+          {
+            "player": "p1.testnet",
+            "put_in": "450000",
+            "seat": 1,
+            "shown": [
+              "As",
+              "2d"
+            ],
+            "stack_after": "1550000",
+            "value": 1231776,
+            "won": "0"
+          },
+          {
+            "player": "p2.testnet",
+            "put_in": "450000",
+            "seat": 2,
+            "shown": [
+              "5c",
+              "3c"
+            ],
+            "stack_after": "1323000",
+            "value": 2235136,
+            "won": "1323000"
+          }
+        ],
+        "showdown": true
+      },
+      "rounds": [
+        {
+          "borsh": "0700000000000000040a000000706f6b65722d64656d6f0400000000000000d0dd060000000000000000000000000000000000039f4fb68f3e1dac82202f9aa581ce0bbf1f765df0e9ac3c8c57e20f685abab8ed63516705f0e97690738b72cb156fcba1fb71e14d5bbc03453fa0689435128d9b0005000000050a2b082f00000000000000000000000000000000",
+          "round": {
+            "actions": [],
+            "bet": {
+              "poker": {
+                "hand": 4,
+                "table": "poker-demo"
+              }
+            },
+            "nonce": 7,
+            "outcome": {
+              "poker": {
+                "board": [
+                  "3d",
+                  "4h",
+                  "Qs",
+                  "4c",
+                  "Ks"
+                ],
+                "hand_seed_hash": "9f4fb68f3e1dac82202f9aa581ce0bbf1f765df0e9ac3c8c57e20f685abab8ed",
+                "history_hash": "63516705f0e97690738b72cb156fcba1fb71e14d5bbc03453fa0689435128d9b",
+                "seat": 0
+              }
+            },
+            "payout": "0",
+            "stake": "450000"
+          }
+        },
+        {
+          "borsh": "0700000000000000040a000000706f6b65722d64656d6f0400000000000000d0dd060000000000000000000000000000000000039f4fb68f3e1dac82202f9aa581ce0bbf1f765df0e9ac3c8c57e20f685abab8ed63516705f0e97690738b72cb156fcba1fb71e14d5bbc03453fa0689435128d9b0105000000050a2b082f00000000000000000000000000000000",
+          "round": {
+            "actions": [],
+            "bet": {
+              "poker": {
+                "hand": 4,
+                "table": "poker-demo"
+              }
+            },
+            "nonce": 7,
+            "outcome": {
+              "poker": {
+                "board": [
+                  "3d",
+                  "4h",
+                  "Qs",
+                  "4c",
+                  "Ks"
+                ],
+                "hand_seed_hash": "9f4fb68f3e1dac82202f9aa581ce0bbf1f765df0e9ac3c8c57e20f685abab8ed",
+                "history_hash": "63516705f0e97690738b72cb156fcba1fb71e14d5bbc03453fa0689435128d9b",
+                "seat": 1
+              }
+            },
+            "payout": "0",
+            "stake": "450000"
+          }
+        },
+        {
+          "borsh": "0700000000000000040a000000706f6b65722d64656d6f0400000000000000d0dd060000000000000000000000000000000000039f4fb68f3e1dac82202f9aa581ce0bbf1f765df0e9ac3c8c57e20f685abab8ed63516705f0e97690738b72cb156fcba1fb71e14d5bbc03453fa0689435128d9b0205000000050a2b082ff82f1400000000000000000000000000",
+          "round": {
+            "actions": [],
+            "bet": {
+              "poker": {
+                "hand": 4,
+                "table": "poker-demo"
+              }
+            },
+            "nonce": 7,
+            "outcome": {
+              "poker": {
+                "board": [
+                  "3d",
+                  "4h",
+                  "Qs",
+                  "4c",
+                  "Ks"
+                ],
+                "hand_seed_hash": "9f4fb68f3e1dac82202f9aa581ce0bbf1f765df0e9ac3c8c57e20f685abab8ed",
+                "history_hash": "63516705f0e97690738b72cb156fcba1fb71e14d5bbc03453fa0689435128d9b",
+                "seat": 2
+              }
+            },
+            "payout": "1323000",
+            "stake": "450000"
+          }
+        }
+      ]
+    },
+    {
+      "deck": [
+        "Kd",
+        "Qs",
+        "2d",
+        "3s",
+        "9s",
+        "3c",
+        "Qd",
+        "Ad",
+        "8s",
+        "5c",
+        "2c",
+        "Kc",
+        "6s",
+        "Th",
+        "Jh",
+        "Ah",
+        "Qh",
+        "2h",
+        "As",
+        "Ac",
+        "6h",
+        "6c",
+        "8c",
+        "2s",
+        "Jd",
+        "7d",
+        "7c",
+        "3h",
+        "Td",
+        "4d",
+        "4s",
+        "9c",
+        "9d",
+        "6d",
+        "3d",
+        "Ks",
+        "Kh",
+        "5h",
+        "5d",
+        "4h",
+        "7h",
+        "Qc",
+        "Ts",
+        "Jc",
+        "5s",
+        "Js",
+        "8d",
+        "Tc",
+        "7s",
+        "8h",
+        "9h",
+        "4c"
+      ],
+      "history": {
+        "actions": [
+          {
+            "action": "call",
+            "seat": 5
+          },
+          {
+            "action": "check",
+            "seat": 2
+          },
+          {
+            "action": {
+              "raise_to": "200000"
+            },
+            "seat": 2
+          },
+          {
+            "action": {
+              "raise_to": "600000"
+            },
+            "seat": 5
+          },
+          {
+            "action": "call",
+            "seat": 2
+          },
+          {
+            "action": "check",
+            "seat": 2
+          },
+          {
+            "action": "check",
+            "seat": 5
+          },
+          {
+            "action": "check",
+            "seat": 2
+          },
+          {
+            "action": "check",
+            "seat": 5
+          }
+        ],
+        "hand_seed": "0505050505050505050505050505050505050505050505050505050505050505",
+        "start": {
+          "button": 5,
+          "config": {
+            "big_blind": "100000",
+            "rake_cap": "300000",
+            "small_blind": "50000"
+          },
+          "hand": 5,
+          "hand_seed_hash": "f849d67325facf04177bc663b2dc544051831c589ef581d412f2eba44834e77c",
+          "seats": [
+            {
+              "client_seed": "seed-2-5",
+              "player": "p2.testnet",
+              "rake_bp": 100,
+              "seat": 2,
+              "stack": "1500000"
+            },
+            {
+              "client_seed": "seed-5-5",
+              "player": "p5.testnet",
+              "rake_bp": 100,
+              "seat": 5,
+              "stack": "2500000"
+            }
+          ],
+          "table": "poker-demo"
+        }
+      },
+      "history_hash": "08c1fb9858a5e26f0a1a9a0fba496f08ed9739331641dddbdc6b0ccc5db0c308",
+      "holes": [
+        [
+          "Kd",
+          "2d"
+        ],
+        [
+          "Qs",
+          "3s"
+        ]
+      ],
+      "legals": [
+        {
+          "call": "50000",
+          "can_check": false,
+          "raise": {
+            "max_to": "2500000",
+            "min_to": "200000"
+          },
+          "seat": 5,
+          "stack": "2450000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1500000",
+            "min_to": "200000"
+          },
+          "seat": 2,
+          "stack": "1400000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1400000",
+            "min_to": "100000"
+          },
+          "seat": 2,
+          "stack": "1400000"
+        },
+        {
+          "call": "200000",
+          "can_check": false,
+          "raise": {
+            "max_to": "2400000",
+            "min_to": "400000"
+          },
+          "seat": 5,
+          "stack": "2400000"
+        },
+        {
+          "call": "400000",
+          "can_check": false,
+          "raise": {
+            "max_to": "1400000",
+            "min_to": "1000000"
+          },
+          "seat": 2,
+          "stack": "1200000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "800000",
+            "min_to": "100000"
+          },
+          "seat": 2,
+          "stack": "800000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1800000",
+            "min_to": "100000"
+          },
+          "seat": 5,
+          "stack": "1800000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "800000",
+            "min_to": "100000"
+          },
+          "seat": 2,
+          "stack": "800000"
+        },
+        {
+          "call": "0",
+          "can_check": true,
+          "raise": {
+            "max_to": "1800000",
+            "min_to": "100000"
+          },
+          "seat": 5,
+          "stack": "1800000"
+        }
+      ],
+      "name": "heads-up with a re-raise",
+      "result": {
+        "board": [
+          "3c",
+          "Qd",
+          "Ad",
+          "5c",
+          "Kc"
+        ],
+        "pots": [
+          {
+            "amount": "1386000",
+            "eligible": [
+              2,
+              5
+            ],
+            "winners": [
+              5
+            ]
+          }
+        ],
+        "rake": "14000",
+        "seats": [
+          {
+            "player": "p2.testnet",
+            "put_in": "700000",
+            "seat": 2,
+            "shown": [
+              "Kd",
+              "2d"
+            ],
+            "stack_after": "800000",
+            "value": 1821232,
+            "won": "0"
+          },
+          {
+            "player": "p5.testnet",
+            "put_in": "700000",
+            "seat": 5,
+            "shown": [
+              "Qs",
+              "3s"
+            ],
+            "stack_after": "3186000",
+            "value": 2759680,
+            "won": "1386000"
+          }
+        ],
+        "showdown": true
+      },
+      "rounds": [
+        {
+          "borsh": "0700000000000000040a000000706f6b65722d64656d6f050000000000000060ae0a000000000000000000000000000000000003f849d67325facf04177bc663b2dc544051831c589ef581d412f2eba44834e77c08c1fb9858a5e26f0a1a9a0fba496f08ed9739331641dddbdc6b0ccc5db0c30802050000000429310c2c00000000000000000000000000000000",
+          "round": {
+            "actions": [],
+            "bet": {
+              "poker": {
+                "hand": 5,
+                "table": "poker-demo"
+              }
+            },
+            "nonce": 7,
+            "outcome": {
+              "poker": {
+                "board": [
+                  "3c",
+                  "Qd",
+                  "Ad",
+                  "5c",
+                  "Kc"
+                ],
+                "hand_seed_hash": "f849d67325facf04177bc663b2dc544051831c589ef581d412f2eba44834e77c",
+                "history_hash": "08c1fb9858a5e26f0a1a9a0fba496f08ed9739331641dddbdc6b0ccc5db0c308",
+                "seat": 2
+              }
+            },
+            "payout": "0",
+            "stake": "700000"
+          }
+        },
+        {
+          "borsh": "0700000000000000040a000000706f6b65722d64656d6f050000000000000060ae0a000000000000000000000000000000000003f849d67325facf04177bc663b2dc544051831c589ef581d412f2eba44834e77c08c1fb9858a5e26f0a1a9a0fba496f08ed9739331641dddbdc6b0ccc5db0c30805050000000429310c2c10261500000000000000000000000000",
+          "round": {
+            "actions": [],
+            "bet": {
+              "poker": {
+                "hand": 5,
+                "table": "poker-demo"
+              }
+            },
+            "nonce": 7,
+            "outcome": {
+              "poker": {
+                "board": [
+                  "3c",
+                  "Qd",
+                  "Ad",
+                  "5c",
+                  "Kc"
+                ],
+                "hand_seed_hash": "f849d67325facf04177bc663b2dc544051831c589ef581d412f2eba44834e77c",
+                "history_hash": "08c1fb9858a5e26f0a1a9a0fba496f08ed9739331641dddbdc6b0ccc5db0c308",
+                "seat": 5
+              }
+            },
+            "payout": "1386000",
+            "stake": "700000"
+          }
+        }
+      ]
+    }
+  ],
+  "settlements": [
+    {
+      "flop_seen": false,
+      "rake_bp": 0,
+      "rake_cap": "0",
+      "seats": [
+        {
+          "committed": "101",
+          "folded": false,
+          "seat": 3,
+          "value": 1882736
+        },
+        {
+          "committed": "101",
+          "folded": false,
+          "seat": 0,
+          "value": 1882736
+        },
+        {
+          "committed": "101",
+          "folded": false,
+          "seat": 1,
+          "value": 1882736
+        }
+      ],
+      "settlement": {
+        "pots": [
+          {
+            "amount": "303",
+            "eligible": [
+              3,
+              0,
+              1
+            ],
+            "winners": [
+              3,
+              0,
+              1
+            ]
+          }
+        ],
+        "rake": "0",
+        "seats": [
+          {
+            "put_in": "101",
+            "seat": 3,
+            "won": "101"
+          },
+          {
+            "put_in": "101",
+            "seat": 0,
+            "won": "101"
+          },
+          {
+            "put_in": "101",
+            "seat": 1,
+            "won": "101"
+          }
+        ]
+      }
+    },
+    {
+      "flop_seen": true,
+      "rake_bp": 500,
+      "rake_cap": "300",
+      "seats": [
+        {
+          "committed": "1000",
+          "folded": false,
+          "seat": 1,
+          "value": 1812848
+        },
+        {
+          "committed": "400",
+          "folded": false,
+          "seat": 2,
+          "value": 1882736
+        },
+        {
+          "committed": "1000",
+          "folded": true,
+          "seat": 4,
+          "value": null
+        }
+      ],
+      "settlement": {
+        "pots": [
+          {
+            "amount": "1080",
+            "eligible": [
+              1,
+              2
+            ],
+            "winners": [
+              2
+            ]
+          },
+          {
+            "amount": "1200",
+            "eligible": [
+              1
+            ],
+            "winners": [
+              1
+            ]
+          }
+        ],
+        "rake": "120",
+        "seats": [
+          {
+            "put_in": "1000",
+            "seat": 1,
+            "won": "1200"
+          },
+          {
+            "put_in": "400",
+            "seat": 2,
+            "won": "1080"
+          },
+          {
+            "put_in": "1000",
+            "seat": 4,
+            "won": "0"
+          }
+        ]
+      }
+    },
+    {
+      "flop_seen": true,
+      "rake_bp": 250,
+      "rake_cap": "1000",
+      "seats": [
+        {
+          "committed": "250",
+          "folded": false,
+          "seat": 0,
+          "value": 1882736
+        },
+        {
+          "committed": "900",
+          "folded": false,
+          "seat": 1,
+          "value": 1812848
+        },
+        {
+          "committed": "900",
+          "folded": false,
+          "seat": 2,
+          "value": 1812848
+        }
+      ],
+      "settlement": {
+        "pots": [
+          {
+            "amount": "699",
+            "eligible": [
+              0,
+              1,
+              2
+            ],
+            "winners": [
+              0
+            ]
+          },
+          {
+            "amount": "1300",
+            "eligible": [
+              1,
+              2
+            ],
+            "winners": [
+              1,
+              2
+            ]
+          }
+        ],
+        "rake": "51",
+        "seats": [
+          {
+            "put_in": "250",
+            "seat": 0,
+            "won": "699"
+          },
+          {
+            "put_in": "900",
+            "seat": 1,
+            "won": "650"
+          },
+          {
+            "put_in": "900",
+            "seat": 2,
+            "won": "650"
+          }
+        ]
+      }
+    },
+    {
+      "flop_seen": true,
+      "rake_bp": 500,
+      "rake_cap": "100",
+      "seats": [
+        {
+          "committed": "5000",
+          "folded": false,
+          "seat": 0,
+          "value": null
+        },
+        {
+          "committed": "300",
+          "folded": true,
+          "seat": 1,
+          "value": null
+        }
+      ],
+      "settlement": {
+        "pots": [
+          {
+            "amount": "570",
+            "eligible": [
+              0
+            ],
+            "winners": [
+              0
+            ]
+          }
+        ],
+        "rake": "30",
+        "seats": [
+          {
+            "put_in": "300",
+            "seat": 0,
+            "won": "570"
+          },
+          {
+            "put_in": "300",
+            "seat": 1,
+            "won": "0"
+          }
+        ]
+      }
+    }
+  ]
+}

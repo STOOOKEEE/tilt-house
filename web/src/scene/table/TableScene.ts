@@ -67,6 +67,7 @@ const SHOTS: Record<Game, { eye: THREE.Vector3; look: THREE.Vector3; amount: num
   roulette: { eye: new THREE.Vector3(WHEEL.x + 0.25, 2.55, WHEEL.z + 0.95), look: WHEEL.clone(), amount: 1 },
   dice: { eye: new THREE.Vector3(0, 2.5, 1.55), look: feltPoint(0.5, 0.38), amount: 0.85 },
   blackjack: { eye: new THREE.Vector3(0, 2.3, 1.7), look: feltPoint(0.5, 0.42), amount: 0.6 },
+  poker: { eye: new THREE.Vector3(0, 2.3, 1.7), look: feltPoint(0.5, 0.42), amount: 0.6 },
 }
 const SHOT_MOVE_S = 0.4
 const CLOSE_UP_HOLD_S = 1
@@ -645,7 +646,8 @@ class TableScene implements TableSceneApi {
 }
 
 function buildProps(game: Game, anim: Animator): Props {
-  if (game === 'blackjack') return { game, cards: new Cards(anim) }
+  // Poker tables have their own scene (scene/poker); cards are the closest props here.
+  if (game === 'blackjack' || game === 'poker') return { game: 'blackjack', cards: new Cards(anim) }
   if (game === 'roulette') return { game, wheel: new Roulette(anim) }
   return { game, dice: new Dice(anim) }
 }

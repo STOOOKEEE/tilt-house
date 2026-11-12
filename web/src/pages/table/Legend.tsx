@@ -6,6 +6,7 @@ const FELT: Record<Game, string> = {
   dice: 'Click the bar to pick your target, Under / Over to flip the side, the circle to place chips. Lower chance, bigger pay.',
   roulette: 'Click any number, line or corner. A chip between cells splits the bet; one spin settles every stack.',
   blackjack: 'Chips on the circle, TILT to deal, then Hit, Stand or Double (H, S, D). Beat the dealer without passing 21.',
+  poker: "No-limit hold'em against the other seats: fold, check or call, bet or raise with the slider. The table only takes a rake.",
 }
 
 export function TableLegend({ game }: { game: Game }) {

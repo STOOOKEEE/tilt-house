@@ -14,10 +14,11 @@ export const RAKE_BOUNDS: Record<Game, readonly [number, number]> = {
   dice: [100, 495],
   roulette: [0, 230],
   blackjack: [0, 389],
+  poker: [0, 500],
 }
 
 /** `core::base_edge_bp(game)`: used when the v1 contract does not send `base_edge_bp`. */
-const BASE_EDGE_BP: Record<Game, number> = { dice: 0, roulette: 270, blackjack: 117 }
+const BASE_EDGE_BP: Record<Game, number> = { dice: 0, roulette: 270, blackjack: 117, poker: 0 }
 
 /** `core::dealer_rules::{MAX_BOOST_SECS, BOOST_COOLDOWN_SECS}` and `core::floor::TEMPERAMENT_COOLDOWN_SECS`. */
 export const MAX_BOOST_SECS = 15 * 60

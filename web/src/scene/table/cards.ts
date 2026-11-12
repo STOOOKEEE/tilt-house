@@ -24,7 +24,7 @@ export function suitFor(roundId: number, side: 'player' | 'dealer', index: numbe
   return SUITS[(roundId * 7 + index * 3 + rank + (side === 'dealer' ? 1 : 0)) % SUITS.length]
 }
 
-function faceTexture(rank: number, suit: string): THREE.Texture {
+export function faceTexture(rank: number, suit: string): THREE.Texture {
   const label = cardLabel(rank)
   const color = RED_SUITS[suit] ? '#c8283c' : '#16161a'
   return pixelTexture(
@@ -73,7 +73,7 @@ function backTexture(): THREE.Texture {
 }
 
 /** A card lying on the felt; face up when rotation.z = 0, face down at π. */
-function cardMesh(face: THREE.Texture | null): THREE.Mesh {
+export function cardMesh(face: THREE.Texture | null): THREE.Mesh {
   const edge = new THREE.MeshLambertMaterial({ color: '#efe8d6' })
   const top = face ? new THREE.MeshLambertMaterial({ map: face }) : edge.clone()
   const back = new THREE.MeshLambertMaterial({ map: backTexture() })
@@ -84,7 +84,7 @@ function cardMesh(face: THREE.Texture | null): THREE.Mesh {
   return mesh
 }
 
-function setFace(card: THREE.Mesh, face: THREE.Texture): void {
+export function setFace(card: THREE.Mesh, face: THREE.Texture): void {
   const materials = card.material as THREE.Material[]
   materials[2].dispose()
   materials[2] = new THREE.MeshLambertMaterial({ map: face })

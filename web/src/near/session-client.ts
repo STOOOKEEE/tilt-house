@@ -10,6 +10,7 @@ import { sha256 } from '@noble/hashes/sha256'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils'
 import { PublicKey } from 'near-api-js'
 import { applyRake, diceWins, handTotal, pocketColor, rouletteWinMultiple } from '../house'
+import { parseCard } from './poker-rules'
 import {
   amount,
   bool,
@@ -46,7 +47,19 @@ const DEALER_STANDS_ON = 17
 // ---- types (JSON forms of the Rust structs) -----------------------------------------------
 
 export type BjAction = 'hit' | 'stand' | 'double'
-export type Outcome = { dice: { roll: number } } | { roulette: { pocket: number } } | { blackjack: BlackjackHand }
+export type Outcome =
+  | { dice: { roll: number } }
+  | { roulette: { pocket: number } }
+  | { blackjack: BlackjackHand }
+  | { poker: PokerOutcome }
+
+/** A player's line of a poker hand: commitment, hash of the hand's history, seat, board ("As"). */
+export interface PokerOutcome {
+  hand_seed_hash: string
+  history_hash: string
+  seat: number
+  board: string[]
+}
 
 export interface CompactRound {
   nonce: number
@@ -307,12 +320,13 @@ function bjGross(hand: BlackjackHand, stake: bigint): bigint {
 
 export function betGame(bet: Bet): Game {
   if (bet === 'blackjack') return 'blackjack'
+  if ('poker' in bet) return 'poker'
   return 'dice' in bet ? 'dice' : 'roulette'
 }
 
 /** The chip stacks of a roulette bet: its spots, or the single bet as one spot of the whole stake. */
 export function rouletteSpots(bet: Bet, stake: string): RouletteSpot[] {
-  if (bet === 'blackjack' || 'dice' in bet) return []
+  if (bet === 'blackjack' || 'dice' in bet || 'poker' in bet) return []
   return 'roulette_spots' in bet ? bet.roulette_spots : [{ bet: bet.roulette, stake }]
 }
 
@@ -341,6 +355,7 @@ export function replayRound(
   if (betGame(bet) !== ticket.game) throw new Error('bet for another game')
   const rng = new Rng(stepSeed(serverSeed, ticket.client_seed, nonce, 0))
   const base = { nonce, bet, stake: stake.toString(), actions: [...actions] }
+  if (bet !== 'blackjack' && 'poker' in bet) throw new Error('a poker round replays from its hand history')
   if (bet === 'blackjack') {
     const hand = playHand(serverSeed, ticket.client_seed, nonce, actions)
     if (!hand.done) throw new Error('the hand is not finished')
@@ -369,7 +384,7 @@ export function replayRound(
 
 // ---- borsh (only what the protocol hashes and signs) --------------------------------------
 
-class Writer {
+export class Writer {
   private bytes: number[] = []
 
   u8(v: number): this {
@@ -425,7 +440,7 @@ class Writer {
   }
 }
 
-const GAME_INDEX: Record<Game, number> = { dice: 0, roulette: 1, blackjack: 2 }
+const GAME_INDEX: Record<Game, number> = { dice: 0, roulette: 1, blackjack: 2, poker: 3 }
 const ACTION_INDEX: Record<BjAction, number> = { hit: 0, stand: 1, double: 2 }
 // Declaration order of `RouletteBet`: Straight(u8), Red, Black, Odd, Even, Low, High, Dozen(u8), Column(u8),
 // Split(u8, u8), Street(u8), Corner(u8), SixLine(u8). Rust only appends, so these never move.
@@ -445,9 +460,10 @@ function writeRouletteBet(w: Writer, bet: RouletteBet): void {
   else w.u8(12).u8(bet.six_line)
 }
 
-// Declaration order of `Bet`: Dice, Roulette, Blackjack, RouletteSpots(Vec<RouletteSpot>).
+// Declaration order of `Bet`: Dice, Roulette, Blackjack, RouletteSpots(Vec<RouletteSpot>), Poker { table, hand }.
 function writeBet(w: Writer, bet: Bet): void {
   if (bet === 'blackjack') w.u8(2)
+  else if ('poker' in bet) w.u8(4).string(bet.poker.table).u64(bet.poker.hand)
   else if ('dice' in bet) w.u8(0).u16(bet.dice.chance_bp).bool(bet.dice.over)
   else if ('roulette_spots' in bet) {
     w.u8(3).u32(bet.roulette_spots.length)
@@ -464,7 +480,11 @@ function writeBet(w: Writer, bet: Bet): void {
 function writeOutcome(w: Writer, outcome: Outcome): void {
   if ('dice' in outcome) w.u8(0).u32(outcome.dice.roll)
   else if ('roulette' in outcome) w.u8(1).u8(outcome.roulette.pocket)
-  else {
+  else if ('poker' in outcome) {
+    const { hand_seed_hash, history_hash, seat, board } = outcome.poker
+    w.u8(3).raw(hex32(hand_seed_hash, 'hand_seed_hash')).raw(hex32(history_hash, 'history_hash')).u8(seat)
+    w.u8s(board.map(parseCard))
+  } else {
     const hand = outcome.blackjack
     w.u8(2).u8s(hand.player).u8s(hand.dealer).bool(hand.doubled).bool(hand.done)
   }
@@ -590,13 +610,15 @@ export type VerifyResult = { ok: true; summary: SessionSummary } | { ok: false; 
 /**
  * `core_rules::session::verify_session` over the whole round list: the seed matches its
  * commitment, every round replays bit for bit, the chain and balance end where the last signed
- * state says.
+ * state says. Poker rounds replay from their hand histories instead (`verify_poker_session`):
+ * pass `replayPoker`, which returns what the round should be, or throws.
  */
 export function verifySession(
   serverSeedHex: string,
   ticket: SessionTicket,
   rounds: readonly CompactRound[],
   finalState: SessionState,
+  replayPoker?: (round: CompactRound) => CompactRound,
 ): VerifyResult {
   let seed: Uint8Array
   try {
@@ -613,7 +635,10 @@ export function verifySession(
     if (round.nonce !== expected) return { ok: false, error: `expected round ${expected}, got ${round.nonce}`, nonce: round.nonce }
     let replayed: CompactRound
     try {
-      replayed = replayRound(seed, ticket, round.nonce, round.bet, BigInt(round.stake), round.actions)
+      replayed =
+        ticket.game === 'poker' && replayPoker
+          ? replayPoker(round)
+          : replayRound(seed, ticket, round.nonce, round.bet, BigInt(round.stake), round.actions)
     } catch {
       return { ok: false, error: `round ${round.nonce} does not replay`, nonce: round.nonce }
     }
@@ -717,6 +742,22 @@ function parseOutcome(value: unknown, path: string): Outcome {
   if (o.dice !== undefined) return { dice: { roll: int(record(o.dice, `${path}.dice`).roll, `${path}.dice.roll`) } }
   if (o.roulette !== undefined) {
     return { roulette: { pocket: int(record(o.roulette, `${path}.roulette`).pocket, `${path}.roulette.pocket`) } }
+  }
+  if (o.poker !== undefined) {
+    const p = record(o.poker, `${path}.poker`)
+    const board = list(p.board, `${path}.poker.board`).map((c, i) => {
+      const card = str(c, `${path}.poker.board[${i}]`)
+      parseCard(card)
+      return card
+    })
+    return {
+      poker: {
+        hand_seed_hash: hex(p.hand_seed_hash, `${path}.poker.hand_seed_hash`, 32),
+        history_hash: hex(p.history_hash, `${path}.poker.history_hash`, 32),
+        seat: int(p.seat, `${path}.poker.seat`),
+        board,
+      },
+    }
   }
   return { blackjack: parseHand(o.blackjack) }
 }

@@ -9,6 +9,7 @@ import { FastForward } from './pages/FastForward'
 import { Lobby } from './pages/Lobby'
 import { MyTable } from './pages/MyTable'
 import { OpenTable } from './pages/OpenTable'
+import { Poker } from './pages/Poker'
 import { Pools } from './pages/Pools'
 import { SeatMarket } from './pages/SeatMarket'
 import { Table } from './pages/Table'
@@ -30,6 +31,9 @@ export default function App({ config }: { config: Config }) {
           <Route path="/pools" element={<Pools />} />
           <Route path="/dealers" element={<Dealers />} />
           <Route path="/sim" element={<FastForward />} />
+          {/* Not in the nav until the go decision: reachable by URL only. */}
+          <Route path="/poker" element={<Poker />} />
+          <Route path="/poker/:table" element={<Poker />} />
         </Routes>
         <footer className="page-footer">
           <Link to="/seats">Seats</Link> · <Link to="/dealers">Dealers</Link> · <Link to="/sim">Fast-forward</Link>

@@ -186,6 +186,7 @@ export function betKey(bet: Bet): string {
   if (bet === 'blackjack') return 'blackjack'
   if ('dice' in bet) return 'dice'
   if ('roulette_spots' in bet) return 'spots'
+  if ('poker' in bet) return 'poker'
   const r = bet.roulette
   if (typeof r === 'string') return r
   if ('straight' in r) return `straight:${r.straight}`

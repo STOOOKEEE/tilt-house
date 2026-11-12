@@ -4,8 +4,8 @@
  * match fails loudly instead of rendering wrong numbers.
  */
 
-export type Game = 'dice' | 'roulette' | 'blackjack'
-export const GAMES: readonly Game[] = ['dice', 'roulette', 'blackjack']
+export type Game = 'dice' | 'roulette' | 'blackjack' | 'poker'
+export const GAMES: readonly Game[] = ['dice', 'roulette', 'blackjack', 'poker']
 
 export interface DealerView extends DealerTycoonView {
   id: string
@@ -122,6 +122,7 @@ export type Bet =
   | { roulette: RouletteBet }
   | 'blackjack'
   | { roulette_spots: RouletteSpot[] }
+  | { poker: { table: string; hand: number } }
 
 export interface BlackjackHand {
   player: number[]
@@ -361,6 +362,10 @@ export function parseBet(value: unknown): Bet {
       }
     })
     return { roulette_spots: spots }
+  }
+  if (b.poker !== undefined) {
+    const poker = record(b.poker, 'round.bet.poker')
+    return { poker: { table: str(poker.table, 'round.bet.poker.table'), hand: int(poker.hand, 'round.bet.poker.hand') } }
   }
   const dice = record(b.dice, 'round.bet.dice')
   return { dice: { chance_bp: int(dice.chance_bp, 'round.bet.dice.chance_bp'), over: bool(dice.over, 'round.bet.dice.over') } }

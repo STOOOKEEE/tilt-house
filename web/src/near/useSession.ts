@@ -77,6 +77,12 @@ export interface SessionApi {
   verify(): void
   forceClose(): Promise<void>
   forget(): void
+  /**
+   * Poker: a hand the table recorded in this session, with the state the server signed after it.
+   * The caller has checked the round against the replayed hand; this checks the state and keeps it
+   * as the force-close proof.
+   */
+  adoptRound(round: CompactRound, state: SignedState): void
 }
 
 function storageKey(accountId: string, contract: string): string {
@@ -248,7 +254,7 @@ export function useSession(
         }
         const next = { ...session, server_seed: closed.server_seed }
         save(next)
-        setVerified(verifySession(closed.server_seed, session.ticket, session.rounds, session.state))
+        setVerified(verifyStored(closed.server_seed, session))
         setPhase('closed')
       } catch (e) {
         if (closedByServer(e)) {
@@ -269,7 +275,7 @@ export function useSession(
       (seed) => {
         if (seed === null) return
         save({ ...s, server_seed: seed })
-        setVerified(verifySession(seed, s.ticket, s.rounds, s.state))
+        setVerified(verifyStored(seed, s))
       },
       () => setError('the session was closed on chain; its seed could not be fetched yet'),
     )
@@ -290,7 +296,18 @@ export function useSession(
   }, [chain, stillPlaying, sessionId])
 
   const verify = () => {
-    if (session?.server_seed) setVerified(verifySession(session.server_seed, session.ticket, session.rounds, session.state))
+    if (session?.server_seed) setVerified(verifyStored(session.server_seed, session))
+  }
+
+  const adoptRound = (round: CompactRound, state: SignedState) => {
+    if (!session || broken || round.nonce !== session.state.nonce + 1) return
+    const problem = checkNextState(session.server_public_key, session.state, round, state)
+    if (problem) {
+      setBroken(`hand round ${round.nonce} refused: ${problem}`)
+      return
+    }
+    save({ ...session, state, rounds: [...session.rounds, round] })
+    setLast((prev) => ({ round, ordinal: (prev?.ordinal ?? 0) + 1 }))
   }
 
   const forceClose = () =>
@@ -329,5 +346,11 @@ export function useSession(
     verify,
     forceClose,
     forget,
+    adoptRound,
   }
+}
+
+/** Poker rounds were each checked against their replayed hand when adopted (`adoptRound`). */
+function verifyStored(seed: string, s: StoredSession): VerifyResult {
+  return verifySession(seed, s.ticket, s.rounds, s.state, s.ticket.game === 'poker' ? (round) => round : undefined)
 }

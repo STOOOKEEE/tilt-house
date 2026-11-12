@@ -75,7 +75,7 @@ export function Table() {
 }
 
 /** The seat fills the window under the top bar; the page itself never scrolls. */
-function useTopbarBottom(): number {
+export function useTopbarBottom(): number {
   const [top, setTop] = useState(0)
   useLayoutEffect(() => {
     const bar = document.querySelector('.topbar')

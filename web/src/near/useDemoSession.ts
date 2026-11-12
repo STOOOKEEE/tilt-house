@@ -121,5 +121,7 @@ export function useDemoSession(dealer: DealerView | undefined): SessionApi {
       setVerified(null)
       setPhase('idle')
     },
+    // The poker practice table runs its own local engine (poker-demo.ts), not this session.
+    adoptRound() {},
   }
 }
