@@ -26,6 +26,7 @@ to put the whole casino "on tilt" for an hour.
 
 - **Play:** https://tilt-house-beta.vercel.app (email, Google or X login; test chips on the house).
   Guided tour of the economy: https://tilt-house-beta.vercel.app/?tour=1 · poker: https://tilt-house-beta.vercel.app/poker · $TILT: https://tilt-house-beta.vercel.app/tilt
+  · no login, practice in the browser (local seed, nothing on chain): https://tilt-house-beta.vercel.app/table/ada?demo=1 (any table) and https://tilt-house-beta.vercel.app/poker?demo=1
 - **Tracks:** `games` (Games With Real Economies) and `memecoins` (Memecoins With Mechanics).
 
 ## Judge it in one minute
@@ -43,6 +44,12 @@ plays dice, a multi-spot roulette spin and a blackjack hand (each round answered
 replays every round from the seed revealed on chain and prints `✓ Demo complete: every round
 verified against the chain.` (exit code 0 only if every check passed). If the public RPC rate-limits
 your IP, the CLI switches to `https://near-testnet.drpc.org` by itself (`--rpc <url>` picks another).
+
+Check every claim that needs no Docker in one command (~1 min, Node only): `pnpm judge` prints one
+`PASS`/`FAIL` line per claim (live services, deployed code hashes vs `deployments/testnet.json`,
+the NPC registry, $TILT parameters and supply, the live Tilt Hour, edge bounds, seat tokens, a played
+and verified session, an NPC's verified session), ends with `17/17 passed`, writes
+`judge-report.json` and exits 1 on any failure; `pnpm judge --rust` adds the simulator and edge tests.
 
 Then:
 
@@ -146,6 +153,9 @@ view() { node -e 'fetch("https://test.rpc.fastnear.com",{method:"POST",headers:{
 
 If `test.rpc.fastnear.com` answers 429 from your IP (shared cloud IPs often do), use
 `https://near-testnet.drpc.org` in the helper and in claim 21.
+
+`pnpm judge` runs the claims below that need no Docker and reports them as JSON; the table gives
+every command so each claim can also be checked by hand.
 
 Outputs were pasted from runs on a clean checkout on 2026-11-12 and 2026-11-13. Live values
 (balances, rents, jackpot, who is seated, sessions) move all the time, so yours will differ; the

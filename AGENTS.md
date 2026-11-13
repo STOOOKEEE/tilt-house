@@ -13,6 +13,7 @@ testnet deployment.
 
 ```sh
 pnpm install
+pnpm judge                                                            # ~1 min, Node only: every Docker-free README claim, live; ends "17/17 passed", writes judge-report.json
 pnpm --filter cli-demo floor                                          # the live economy right now
 pnpm --filter cli-demo demo                                           # play on testnet (the first run makes a throwaway account), verify every round
 pnpm --filter cli-demo poker                                          # two accounts play hold'em with the NPC bots, every hand verified
@@ -24,6 +25,9 @@ cargo run -p tilt-house-sim --release -- meme --days 60 --scenario busy > /tmp/t
 All CLI commands exit 0 only when every check passes; a failed check prints `✗` with the reason.
 `demo` makes its own throwaway testnet account (key in `~/.tilt-house/cli-demo-account.json`) and
 reuses it on later runs; `--new` makes a fresh one (the relayer activates a limited number per hour).
+In a browser without logging in: https://tilt-house-beta.vercel.app/table/ada?demo=1 (any table) and
+https://tilt-house-beta.vercel.app/poker?demo=1 play practice sessions with the real rules (local
+seed, nothing on chain); the lobby, $TILT page and live feeds need no login either.
 
 Then run the test suites: `pnpm -r test` (~30 s) and `cargo test --workspace` (~30 min on a cold
 machine, ~20 of them in the contract sandbox, which needs `wasm32-unknown-unknown` and `cargo-near`;
