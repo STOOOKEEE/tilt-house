@@ -146,7 +146,7 @@ export async function closeDayPass(deps: KeeperDeps, state: CloseDayState, nowMs
   if (day === null || day === state.closed) return;
   try {
     const before = await deps.house.day(day);
-    if (before.closed) {
+    if (before?.closed) {
       state.closed = day;
       logLine(deps, { action: "close_day", day, skipped: "already closed", record: before });
       return;
