@@ -11,5 +11,6 @@ pub mod limits;
 pub mod near;
 pub mod poker;
 pub mod poker_hands;
+pub mod rpc;
 pub mod session;
 pub mod store;

@@ -39,6 +39,15 @@ pub struct FloorTable {
     pub open: bool,
 }
 
+/// A session as the contract has it (`get_session`): what landed, whatever the RPC answered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ChainSession {
+    /// Last round nonce settled on chain.
+    pub settled_nonce: u64,
+    /// The server seed is revealed: `close_session` executed.
+    pub revealed: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FloorInfo {
     /// Every dealer, seated or not.
@@ -67,9 +76,12 @@ pub trait Chain: Send + Sync + 'static {
         server_sig: &[u8; 64],
     ) -> impl Future<Output = anyhow::Result<()>> + Send;
 
-    /// Whether `open_session` for this id has executed (lock escrowed, max win reserved).
-    fn session_opened(&self, session_id: &str)
-        -> impl Future<Output = anyhow::Result<bool>> + Send;
+    /// The session on chain, `None` until `open_session` executed (lock escrowed, max win
+    /// reserved). Read after a failed settle or close: the transaction may have executed anyway.
+    fn session(
+        &self,
+        session_id: &str,
+    ) -> impl Future<Output = anyhow::Result<Option<ChainSession>>> + Send;
 
     /// `settle_session({"batch": ...})`.
     fn settle(&self, batch: &SettleBatch) -> impl Future<Output = anyhow::Result<()>> + Send;
@@ -115,6 +127,7 @@ struct Ledger {
     balances: HashMap<String, u128>,
     /// Session id → (player, session balance at the last settle).
     escrows: HashMap<String, (String, u128)>,
+    sessions: HashMap<String, ChainSession>,
 }
 
 impl Ledger {
@@ -184,16 +197,31 @@ impl Chain for NoChain {
         ledger
             .escrows
             .insert(ticket.session_id.clone(), (player.to_string(), ticket.lock));
+        ledger
+            .sessions
+            .insert(ticket.session_id.clone(), ChainSession::default());
         Ok(())
     }
 
-    async fn session_opened(&self, _session_id: &str) -> anyhow::Result<bool> {
-        Ok(true)
+    /// Sessions this server opened, and any other: `--no-chain` has no chain to ask.
+    async fn session(&self, session_id: &str) -> anyhow::Result<Option<ChainSession>> {
+        let ledger = self.ledger()?;
+        Ok(Some(
+            ledger.sessions.get(session_id).copied().unwrap_or_default(),
+        ))
     }
 
     async fn settle(&self, batch: &SettleBatch) -> anyhow::Result<()> {
-        if let Some(escrow) = self.ledger()?.escrows.get_mut(&batch.session_id) {
-            escrow.1 = batch.balance;
+        {
+            let mut ledger = self.ledger()?;
+            if let Some(escrow) = ledger.escrows.get_mut(&batch.session_id) {
+                escrow.1 = batch.balance;
+            }
+            ledger
+                .sessions
+                .entry(batch.session_id.clone())
+                .or_default()
+                .settled_nonce = batch.upto_nonce;
         }
         let args = serde_json::json!({ "batch": batch });
         println!("no-chain settle_session {args}");
@@ -207,6 +235,11 @@ impl Chain for NoChain {
                 let paid = ledger.balance(&player).saturating_add(balance);
                 ledger.balances.insert(player, paid);
             }
+            ledger
+                .sessions
+                .entry(session_id.to_string())
+                .or_default()
+                .revealed = true;
         }
         let args = CloseArgs {
             session_id,

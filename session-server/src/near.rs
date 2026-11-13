@@ -3,15 +3,22 @@
 //! `settle_session` and `close_session` are the contract's session methods (docs/sessions.md);
 //! until they are deployed these calls fail and the server fails closed (no rounds before a
 //! confirmed open, settles retried).
+//!
+//! The floor-wide views (`get_lobby`, `get_floor`) are cached for `VIEW_TTL`, one request in
+//! flight per view (the gamblers, the poker tables and every new ticket read them); per-player
+//! views (`get_player`, `get_session`) always go to the chain. Requests go through `Rpc`
+//! (failover and backoff on 429/5xx).
 
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context};
 use core_rules::session::{hex64, Hash32, SessionTicket, SettleBatch};
 use core_rules::Game;
 use near_crypto::{InMemorySigner, SecretKey, Signer as NearSigner};
-use near_jsonrpc_client::{methods, JsonRpcClient};
+use near_jsonrpc_client::methods;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
 use near_primitives::gas::Gas;
 use near_primitives::transaction::{Action, FunctionCallAction, Transaction, TransactionV0};
@@ -21,16 +28,27 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::Mutex;
+use tokio::time::Instant;
 
-use crate::chain::{Chain, CloseArgs, DealerInfo, FloorInfo, FloorTable};
+use crate::chain::{Chain, ChainSession, CloseArgs, DealerInfo, FloorInfo, FloorTable};
+use crate::rpc::{Rpc, RpcStats};
 
 /// Settling 50 rounds hashes and stores them all: give it the per-tx maximum. The rest needs far
 /// less, and the signer must hold the full prepaid cost (an NPC gambler's wallet is 0.3 NEAR).
 const SETTLE_TGAS: u64 = 300;
 const CALL_TGAS: u64 = 100;
+/// How long a floor-wide view is reused. A ticket priced on a lobby this old is still checked by
+/// the contract at `open_session` (and keeps 20% pool headroom), so staleness fails closed.
+pub const VIEW_TTL: Duration = Duration::from_secs(5);
+
+/// One cached view: the raw result and when it was read. Its lock is held while it is fetched,
+/// so concurrent readers wait for that one request instead of sending their own.
+type CachedView = Arc<Mutex<Option<(Instant, Arc<Vec<u8>>)>>>;
 
 pub struct NearChain {
-    client: JsonRpcClient,
+    rpc: Rpc,
+    view_ttl: Duration,
+    views: std::sync::Mutex<HashMap<&'static str, CachedView>>,
     house: AccountId,
     signer: NearSigner,
     /// Transactions from one key must use increasing nonces: each account sends one at a time.
@@ -69,6 +87,13 @@ struct PlayerBalance {
     balance: u128,
 }
 
+/// The fields of the contract's `SessionView` (`get_session`) reconciliation needs.
+#[derive(Deserialize)]
+struct SessionProgress {
+    settled_nonce: u64,
+    server_seed: Option<String>,
+}
+
 #[derive(Serialize)]
 struct OpenArgs<'a> {
     ticket: &'a SessionTicket,
@@ -77,28 +102,32 @@ struct OpenArgs<'a> {
 }
 
 impl NearChain {
+    /// `rpc_urls`: preferred first. `view_ttl`: `VIEW_TTL`, or zero to read through.
     pub fn new(
-        rpc_url: &str,
+        rpc_urls: &[String],
+        view_ttl: Duration,
         house: &str,
         account: &str,
         secret_key: &str,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            client: JsonRpcClient::connect(rpc_url),
+            rpc: Rpc::new(rpc_urls)?,
+            view_ttl,
+            views: std::sync::Mutex::new(HashMap::new()),
             house: house.parse().context("HOUSE_CONTRACT")?,
             signer: signer(account, secret_key).context("session server key")?,
             last_nonces: std::sync::Mutex::new(HashMap::new()),
         })
     }
 
-    async fn view<T: DeserializeOwned>(
-        &self,
-        method: &str,
-        args: serde_json::Value,
-    ) -> anyhow::Result<T> {
+    pub fn rpc_stats(&self) -> Arc<RpcStats> {
+        self.rpc.stats()
+    }
+
+    async fn view_bytes(&self, method: &str, args: serde_json::Value) -> anyhow::Result<Vec<u8>> {
         let response = self
-            .client
-            .call(methods::query::RpcQueryRequest {
+            .rpc
+            .call(&methods::query::RpcQueryRequest {
                 block_reference: BlockReference::Finality(Finality::Final),
                 request: QueryRequest::CallFunction {
                     account_id: self.house.clone(),
@@ -109,11 +138,43 @@ impl NearChain {
             .await
             .with_context(|| format!("view {method}"))?;
         match response.kind {
-            QueryResponseKind::CallResult(result) => {
-                serde_json::from_slice(&result.result).with_context(|| format!("decode {method}"))
-            }
+            QueryResponseKind::CallResult(result) => Ok(result.result),
             _ => bail!("view {method}: unexpected response"),
         }
+    }
+
+    async fn view<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        args: serde_json::Value,
+    ) -> anyhow::Result<T> {
+        let bytes = self.view_bytes(method, args).await?;
+        serde_json::from_slice(&bytes).with_context(|| format!("decode {method}"))
+    }
+
+    /// A floor-wide view without arguments, reused for `view_ttl` (errors are not cached).
+    async fn cached_view<T: DeserializeOwned>(&self, method: &'static str) -> anyhow::Result<T> {
+        let entry = {
+            let mut views = self
+                .views
+                .lock()
+                .map_err(|_| anyhow!("view cache lock poisoned"))?;
+            Arc::clone(views.entry(method).or_default())
+        };
+        let mut cached = entry.lock().await;
+        let bytes = match cached.as_ref() {
+            Some((read_at, bytes)) if read_at.elapsed() < self.view_ttl => {
+                self.rpc.stats().cache_hits.fetch_add(1, Ordering::Relaxed);
+                Arc::clone(bytes)
+            }
+            _ => {
+                let bytes = Arc::new(self.view_bytes(method, json!({})).await?);
+                *cached = Some((Instant::now(), Arc::clone(&bytes)));
+                bytes
+            }
+        };
+        drop(cached);
+        serde_json::from_slice(&bytes).with_context(|| format!("decode {method}"))
     }
 
     fn nonce_lock(&self, account: &AccountId) -> anyhow::Result<Arc<Mutex<u64>>> {
@@ -128,8 +189,8 @@ impl NearChain {
         let lock = self.nonce_lock(&signer.get_account_id())?;
         let mut last_nonce = lock.lock().await;
         let access_key = self
-            .client
-            .call(methods::query::RpcQueryRequest {
+            .rpc
+            .call(&methods::query::RpcQueryRequest {
                 block_reference: BlockReference::Finality(Finality::Final),
                 request: QueryRequest::ViewAccessKey {
                     account_id: signer.get_account_id(),
@@ -161,8 +222,8 @@ impl NearChain {
         });
         *last_nonce = nonce;
         let response = self
-            .client
-            .call(methods::send_tx::RpcSendTransactionRequest {
+            .rpc
+            .send(&methods::send_tx::RpcSendTransactionRequest {
                 signed_transaction: transaction.sign(signer),
                 wait_until: TxExecutionStatus::Final,
             })
@@ -180,7 +241,7 @@ impl NearChain {
     }
 
     async fn lobby(&self) -> anyhow::Result<Vec<LobbyDealer>> {
-        self.view("get_lobby", json!({})).await
+        self.cached_view("get_lobby").await
     }
 }
 
@@ -209,7 +270,7 @@ impl Chain for NearChain {
 
     async fn floor(&self) -> anyhow::Result<FloorInfo> {
         let lobby = self.lobby().await?;
-        let floor: FloorJackpot = self.view("get_floor", json!({})).await?;
+        let floor: FloorJackpot = self.cached_view("get_floor").await?;
         let tables = lobby
             .into_iter()
             .map(|dealer| FloorTable {
@@ -253,11 +314,14 @@ impl Chain for NearChain {
             .await
     }
 
-    async fn session_opened(&self, session_id: &str) -> anyhow::Result<bool> {
-        let session: Option<serde_json::Value> = self
+    async fn session(&self, session_id: &str) -> anyhow::Result<Option<ChainSession>> {
+        let session: Option<SessionProgress> = self
             .view("get_session", json!({ "session_id": session_id }))
             .await?;
-        Ok(session.is_some())
+        Ok(session.map(|s| ChainSession {
+            settled_nonce: s.settled_nonce,
+            revealed: s.server_seed.is_some(),
+        }))
     }
 
     async fn settle(&self, batch: &SettleBatch) -> anyhow::Result<()> {

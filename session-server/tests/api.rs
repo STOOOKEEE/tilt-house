@@ -16,7 +16,7 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tilt_house_session_server::app::{App, CloseReply, CreateReply, RoundReply};
-use tilt_house_session_server::chain::{Chain, DealerInfo, FloorInfo, NoChain};
+use tilt_house_session_server::chain::{Chain, ChainSession, DealerInfo, FloorInfo, NoChain};
 use tilt_house_session_server::gamblers::{Clock, Gamblers, DEFAULT_ACCOUNT_SUFFIX};
 use tilt_house_session_server::http::router;
 use tilt_house_session_server::keys::Signer;
@@ -402,8 +402,8 @@ impl Chain for NeverOpened {
     ) -> anyhow::Result<()> {
         anyhow::bail!("opens never land")
     }
-    async fn session_opened(&self, _: &str) -> anyhow::Result<bool> {
-        Ok(false)
+    async fn session(&self, _: &str) -> anyhow::Result<Option<ChainSession>> {
+        Ok(None)
     }
     async fn settle(&self, _: &SettleBatch) -> anyhow::Result<()> {
         anyhow::bail!("no session to settle")

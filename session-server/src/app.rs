@@ -15,7 +15,7 @@ use core_rules::{rake_bounds, Game};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex as AsyncMutex;
 
-use crate::chain::Chain;
+use crate::chain::{Chain, ChainSession};
 use crate::keys::{random_bytes, Signer};
 use crate::session::{Phase, PlayError, RoundRequest, Session};
 use crate::store::{Event, Store};
@@ -374,10 +374,10 @@ impl<C: Chain> App<C> {
     async fn confirm_open(&self, session: &mut Session) -> Result<(), ApiError> {
         let opened = self
             .chain
-            .session_opened(&session.ticket.session_id)
+            .session(&session.ticket.session_id)
             .await
             .map_err(ApiError::chain)?;
-        if !opened {
+        if opened.is_none() {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
                 "session not open on chain yet",
@@ -447,7 +447,9 @@ impl<C: Chain> App<C> {
         self.record(session, event)
     }
 
-    /// Final settle, then reveal on chain. A session never opened on chain closes locally.
+    /// Final settle, then reveal on chain. A session never opened on chain closes locally. Starts
+    /// from what the chain has (`reconcile`): after a restart, or a settle or close that timed out
+    /// here but executed, nothing already done is sent again.
     async fn finish_close(&self, shared: &Shared) -> anyhow::Result<()> {
         let (id, opened, seed) = {
             let session = shared.lock().await;
@@ -460,15 +462,24 @@ impl<C: Chain> App<C> {
                 session.server_seed,
             )
         };
-        if !opened && !self.chain.session_opened(&id).await? {
-            let mut session = shared.lock().await;
-            return self.record(
-                &mut session,
-                Event::Closed {
-                    session_id: id,
-                    at: now(),
-                },
-            );
+        match self.chain.session(&id).await? {
+            None if !opened => {
+                let mut session = shared.lock().await;
+                return self.record(
+                    &mut session,
+                    Event::Closed {
+                        session_id: id,
+                        at: now(),
+                    },
+                );
+            }
+            // Opened here but not visible: an RPC lagging behind; retry later.
+            None => bail!("session {id} not found on chain"),
+            Some(on_chain) => {
+                if self.reconcile(shared, on_chain).await? {
+                    return Ok(());
+                }
+            }
         }
         self.settle(shared).await?;
         {
@@ -478,7 +489,15 @@ impl<C: Chain> App<C> {
             }
             session.chain_busy = true;
         }
-        let result = self.chain.close(&id, &seed).await;
+        let mut result = self.chain.close(&id, &seed).await;
+        if let Err(err) = &result {
+            if let Ok(Some(on_chain)) = self.chain.session(&id).await {
+                if on_chain.revealed {
+                    eprintln!("close {id}: {err:#}; the chain has it revealed");
+                    result = Ok(());
+                }
+            }
+        }
         let mut session = shared.lock().await;
         session.chain_busy = false;
         session.chain_done(result.is_ok(), now());
@@ -505,7 +524,20 @@ impl<C: Chain> App<C> {
             session.chain_busy = true;
             batch
         };
-        let result = self.chain.settle(&batch).await;
+        let mut result = self.chain.settle(&batch).await;
+        if let Err(err) = &result {
+            // A timeout here does not mean it failed there: resending a settle that executed is
+            // refused forever (`round nonces must follow the last settle`).
+            if let Ok(Some(on_chain)) = self.chain.session(&batch.session_id).await {
+                if on_chain.settled_nonce >= batch.upto_nonce {
+                    eprintln!(
+                        "settle {} upto {}: {err:#}; the chain has it",
+                        batch.session_id, batch.upto_nonce
+                    );
+                    result = Ok(());
+                }
+            }
+        }
         let mut session = shared.lock().await;
         session.chain_busy = false;
         session.chain_done(result.is_ok(), now());
@@ -516,6 +548,35 @@ impl<C: Chain> App<C> {
             at: now(),
         };
         self.record(&mut session, event)
+    }
+
+    /// Records what the chain already has for a closing session: its settled rounds, and the
+    /// close if the seed is revealed (then true: nothing left to send).
+    async fn reconcile(&self, shared: &Shared, on_chain: ChainSession) -> anyhow::Result<bool> {
+        let mut session = shared.lock().await;
+        let id = session.ticket.session_id.clone();
+        let settled = on_chain.settled_nonce.min(session.state.nonce);
+        if settled > session.settled_upto {
+            eprintln!("session {id}: chain settled up to {settled}, recorded");
+            let event = Event::Settled {
+                session_id: id.clone(),
+                upto_nonce: settled,
+                at: now(),
+            };
+            self.record(&mut session, event)?;
+        }
+        if !on_chain.revealed {
+            return Ok(false);
+        }
+        eprintln!("session {id}: seed already revealed on chain, closed");
+        self.record(
+            &mut session,
+            Event::Closed {
+                session_id: id,
+                at: now(),
+            },
+        )?;
+        Ok(true)
     }
 
     async fn settle_logged(&self, shared: &Shared) {

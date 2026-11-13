@@ -17,7 +17,7 @@ use core_rules::Game;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tilt_house_session_server::app::{App, CreateReply};
-use tilt_house_session_server::chain::{Chain, DealerInfo, FloorInfo, NoChain};
+use tilt_house_session_server::chain::{Chain, ChainSession, DealerInfo, FloorInfo, NoChain};
 use tilt_house_session_server::gamblers::{Clock, Gamblers, DEFAULT_ACCOUNT_SUFFIX};
 use tilt_house_session_server::http::router;
 use tilt_house_session_server::keys::Signer;
@@ -690,9 +690,9 @@ impl Chain for NpcsCannotSit {
         anyhow::ensure!(!player.starts_with("g-"), "no access key");
         self.inner.open_session(player, key, ticket, sig).await
     }
-    async fn session_opened(&self, id: &str) -> anyhow::Result<bool> {
+    async fn session(&self, id: &str) -> anyhow::Result<Option<ChainSession>> {
         READS.fetch_add(1, Ordering::SeqCst);
-        self.inner.session_opened(id).await
+        self.inner.session(id).await
     }
     async fn settle(&self, batch: &SettleBatch) -> anyhow::Result<()> {
         self.inner.settle(batch).await
@@ -764,8 +764,8 @@ impl Chain for CappedPoker {
     ) -> anyhow::Result<()> {
         self.inner.open_session(player, key, ticket, sig).await
     }
-    async fn session_opened(&self, id: &str) -> anyhow::Result<bool> {
-        self.inner.session_opened(id).await
+    async fn session(&self, id: &str) -> anyhow::Result<Option<ChainSession>> {
+        self.inner.session(id).await
     }
     async fn settle(&self, batch: &SettleBatch) -> anyhow::Result<()> {
         self.inner.settle(batch).await
