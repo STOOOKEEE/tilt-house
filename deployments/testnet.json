@@ -2,23 +2,53 @@
   "network": "testnet",
   "rpc": "https://test.rpc.fastnear.com",
   "explorer": "https://testnet.nearblocks.io",
-  "checked_at": "2026-11-12T16:46:00Z",
+  "checked_at": "2026-11-13T11:23:38Z",
   "contracts": {
     "floor": {
       "account_id": "floor.tilthouse.testnet",
       "source": "contract",
-      "version": "0.3.0",
-      "code_hash": "4w1gvFSNptiPii6ckeiokJ13KkX5XKZR9MQhNTZvmQee",
-      "deploy_tx": "CXSPUK5AJFtiY4hAasS8TBfoFdJqsUtcup47g4VHhcZz",
-      "deploy_block": 277388899,
-      "deployed_at": "2026-11-12T16:40:07Z",
+      "version": "0.4.0",
+      "note": "USD floor (tUSDC); reports each UTC day to $TILT (close_day), takes Tilt Hours from it",
+      "code_hash": "54kbcER1UUe3p7CKuMogjnwijQvPvSTvnqgTd13A8xei",
+      "deploy_tx": "GwmgM7qt3UNanoZQe18wksNBXStdny3aUsCn8KmdsYTx",
+      "deploy_block": 277500435,
+      "deployed_at": "2026-11-13T10:54:12Z",
       "reproducible": true,
-      "commit": "5266c54b8bb9f3fb8e8d1ec5382572065484f6a7",
+      "commit": "faa7636fc197be1ad4d0f9f75c090c59decc43bf",
       "build_image": "sourcescan/cargo-near:0.21.1-rust-1.96.0@sha256:ccb22bb4e677ed022d8b9d1aa1b32f0af52dd0471ef1c32e48dedbf68ee6ee17",
       "setup_txs": {
         "add_dealer_faye": "8vyMYRUiwtfNVw4i33TqmsEFwnCoPsqq9kNrE1dryN1c",
-        "register_npcs": "45LrzCZEfmCMty5s2cTgyxCDtP2cQGcSX5h8BADnQFWK"
+        "register_npcs": "45LrzCZEfmCMty5s2cTgyxCDtP2cQGcSX5h8BADnQFWK",
+        "set_meme_tilt": "8oZCnet2T8yZRZcY1nw69rCp5ozCCLNktdahSLdEacki"
       }
+    },
+    "tilt": {
+      "account_id": "tilt.tilthouse.testnet",
+      "source": "meme",
+      "version": "0.1.0",
+      "note": "$TILT memecoin (NEP-141, 6 decimals); no owner methods",
+      "code_hash": "EN6Q6tDX9SGAUbrFS7vEEVkA4CSGiacWZ4kut22wpc5H",
+      "create_tx": "Hh1NGqUgqhrPHcXTr1o7HKtN5mcNUxNQfzcbXonV1JCj",
+      "deploy_tx": "3Sr18xXLS35xLsWErzF5BmG4ntnhurqB35ZxDFZrC6GJ",
+      "deploy_block": 277500482,
+      "deployed_at": "2026-11-13T10:54:41Z",
+      "reproducible": true,
+      "commit": "9120a494f660c3361d2f0df785cb2e6c8e354ca4",
+      "build_image": "sourcescan/cargo-near:0.21.1-rust-1.96.0@sha256:ccb22bb4e677ed022d8b9d1aa1b32f0af52dd0471ef1c32e48dedbf68ee6ee17"
+    },
+    "floor_tilt": {
+      "account_id": "floor-tilt.tilthouse.testnet",
+      "source": "contract",
+      "version": "0.4.0",
+      "note": "TILT floor: same wasm as the USD floor, token tilt.tilthouse.testnet; NPC dealers ada, chloe, eve",
+      "code_hash": "54kbcER1UUe3p7CKuMogjnwijQvPvSTvnqgTd13A8xei",
+      "create_tx": "CqCAM1D1pumbUKbCC6LaHA3KY1WApRbzVJ5jMjQDnbXB",
+      "deploy_tx": "SAKniWznLs66iV33HCuzJvFwCJMKyS6QHvoyHEszxeh",
+      "deploy_block": 277500631,
+      "deployed_at": "2026-11-13T10:56:09Z",
+      "reproducible": true,
+      "commit": "faa7636fc197be1ad4d0f9f75c090c59decc43bf",
+      "build_image": "sourcescan/cargo-near:0.21.1-rust-1.96.0@sha256:ccb22bb4e677ed022d8b9d1aa1b32f0af52dd0471ef1c32e48dedbf68ee6ee17"
     },
     "token": {
       "account_id": "tusdc.tilthouse.testnet",
@@ -46,6 +76,15 @@
       "deploy_tx": "CVrpzMYYYwxVvHEY31ktd1Mc7yQxPmthK2amyNmPLboC",
       "deploy_block": 276636638,
       "deployed_at": "2026-11-07T13:23:14Z"
+    },
+    "floor_v3": {
+      "account_id": "floor.tilthouse.testnet",
+      "note": "v3 code, upgraded in place to v4 (state migrated)",
+      "code_hash": "4w1gvFSNptiPii6ckeiokJ13KkX5XKZR9MQhNTZvmQee",
+      "deploy_tx": "CXSPUK5AJFtiY4hAasS8TBfoFdJqsUtcup47g4VHhcZz",
+      "deploy_block": 277388899,
+      "deployed_at": "2026-11-12T16:40:07Z",
+      "commit": "5266c54b8bb9f3fb8e8d1ec5382572065484f6a7"
     }
   },
   "accounts": {
@@ -88,6 +127,14 @@
       "g-lola.tilthouse.testnet",
       "g-tom.tilthouse.testnet"
     ],
-    "npc_gamblers_note": "registered in the floor (get_npcs): no withdraw, salary credited in-contract"
+    "npc_gamblers_note": "registered in the floor (get_npcs): no withdraw, salary credited in-contract",
+    "tilt_floor_session_server_pubkey_hex": "749c0fbb027e4d7e693c3b3501cbd8a6fabbd721ba168882ef1830d97a908c58",
+    "tilt_welcome_operator": "relayer.tilthouse.testnet",
+    "tilt_house_receiver": "tilthouse.testnet",
+    "tilt_floor_dealers": [
+      "ada",
+      "chloe",
+      "eve"
+    ]
   }
 }
