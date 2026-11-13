@@ -293,8 +293,8 @@ e.g. the live gamblers feed `https://tilt-house-beta.vercel.app/session/gamblers
 
 ## Disclosure
 
-- Tilt is an earlier casino project by the same team on Solana (private). Tilt House is a separate
-  code base started on 2026-11-03 for this hackathon; its rules were written from scratch in `core/`.
+- Tilt House is a new code base started on 2026-11-03 for this hackathon; its rules were written
+  from scratch in `core/`.
 - Libraries: near-sdk, near-contract-standards, near-workspaces, cargo-near, near-api-js, axum,
   tokio, ed25519-dalek, borsh, Privy, Hono, Vite, React, three.js, vitest, @noble/hashes; plus serde,
   sha2, hmac, bs58, anyhow, react-router and the rest listed in each `Cargo.toml` and `package.json`.

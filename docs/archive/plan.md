@@ -94,4 +94,4 @@ Deploys to `house.tilthouse.testnet`, creates dealer accounts `<name>.tilthouse.
 
 ### Task 8: judge path, README, LICENSE
 
-**Files:** `cli-demo/` (creates a throwaway testnet account through the faucet helper, gets test USDC, plays a dice round, buys an LP share, prints explorer links), `README.md` (what, why, NEAR role, "do X, see Y" for web, sim and CLI, disclosure that Tilt exists on Solana and this NEAR build is new, list of reused libraries), `LICENSE` (MIT).
+**Files:** `cli-demo/` (creates a throwaway testnet account through the faucet helper, gets test USDC, plays a dice round, buys an LP share, prints explorer links), `README.md` (what, why, NEAR role, "do X, see Y" for web, sim and CLI, list of reused libraries), `LICENSE` (MIT).

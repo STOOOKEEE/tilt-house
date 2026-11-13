@@ -77,8 +77,7 @@ economy the track judges. "Players become owners of the house" is the part Arman
   hackathon requires a public repo by Nov 14; publishing needs Eli's agreement because of the
   project's privacy rule). Only Armand's code may be reused from the private Tilt repo (game rules,
   risk math); nothing from Eli's zone (mod, web, api) is copied.
-- Disclose in the README that Tilt exists on Solana and that this NEAR build is new (hackathon rule
-  Q-002), list reused libraries/code (Q-005), add a LICENSE.
+- List reused libraries/code in the README (hackathon rule Q-005), add a LICENSE.
 
 ## How it is built (decided)
 
@@ -104,7 +103,6 @@ economy the track judges. "Players become owners of the house" is the part Arman
 
 - The other 9 games, roulette chip layouts, blackjack split, multi-hand.
 - Mainnet, KYC, geo-blocking, sponsors and competitions, licensing.
-- Porting the Solana program or the MagicBlock rollup.
 - Any change to the private Tilt repo.
 
 ## Anti-goals (a failure even if it works)
