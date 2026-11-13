@@ -26,11 +26,11 @@ import {
   type SignedState,
 } from "../../web/src/near/session-client";
 import { amount, parsePlayer, record, str, type Bet, type DealerView, type Game } from "../../web/src/near/views";
-import type { Command, Funder, Targets } from "./args.ts";
+import { targetFlags, type Command, type Funder, type Targets } from "./args.ts";
 import { getChainSession, view } from "./chain.ts";
 import { printFloor, readFloor } from "./floor.ts";
 import { describeRound, handText } from "./rounds.ts";
-import { accountLink, BAD, color, errorMessage, heading, line, OK, txLink, usdc } from "./ui.ts";
+import { accountLink, BAD, color, errorMessage, heading, line, OK, txLink, money } from "./ui.ts";
 import { verifySessionById } from "./verify-session.ts";
 
 type DemoCommand = Extract<Command, { name: "demo" }>;
@@ -166,7 +166,7 @@ async function fundWithFunder(t: Targets, provider: JsonRpcProvider, funder: Fun
     args: { receiver_id: player.accountId, amount: DEPOSIT.toString() },
     deposit: ONE_YOCTO,
   });
-  line(`${OK} ${funder.accountId} sent ${usdc(DEPOSIT)} ${color.dim(txLink(sent.transaction.hash))}`);
+  line(`${OK} ${funder.accountId} sent ${money(DEPOSIT)} ${color.dim(txLink(sent.transaction.hash))}`);
 }
 
 async function accountExists(provider: JsonRpcProvider, accountId: string): Promise<boolean> {
@@ -199,7 +199,7 @@ export async function setUpPlayer(cmd: AccountOptions, provider: JsonRpcProvider
   } else {
     // No Privy login in a terminal: the testnet relayer activates demo accounts anonymously.
     await activate(t.relayer, accountId, null);
-    line(`${OK} the relayer activated it: gas money, token registration, 100 tUSDC ${color.dim(`(POST ${t.relayer}/activate)`)}`);
+    line(`${OK} the relayer activated it: gas money, token registration, welcome chips ${color.dim(`(POST ${t.relayer}/activate)`)}`);
   }
   return player;
 }
@@ -208,19 +208,19 @@ export async function floorBalance(t: Targets, accountId: string): Promise<bigin
   return BigInt(parsePlayer(await view(t, t.floor, "get_player", { account_id: accountId })).balance);
 }
 
-/** Tops the floor balance up to `need` at least (faucet, then a deposit of up to 20 tUSDC). */
+/** Tops the floor balance up to `need` at least (faucet, then a deposit of up to 20 chips). */
 export async function ensureBalance(t: Targets, player: Player, need = LOCK, label = "Deposit"): Promise<void> {
   heading(label);
   const before = await floorBalance(t, player.accountId);
   if (before >= need) {
-    line(`${OK} floor balance ${usdc(before)}, enough for the sessions`);
+    line(`${OK} floor balance ${money(before)}, enough for the sessions`);
     return;
   }
   const walletOf = async () => BigInt(amount(await view(t, t.token, "ft_balance_of", { account_id: player.accountId }), "ft_balance_of"));
   let wallet = await walletOf();
   if (wallet < need - before) {
     const minted = await claimFaucet(t.relayer, player.accountId, null);
-    line(`${OK} faucet: +${usdc(minted)} ${color.dim(`(POST ${t.relayer}/faucet, once an hour)`)}`);
+    line(`${OK} faucet: +${money(minted)} ${color.dim(`(POST ${t.relayer}/faucet, once an hour)`)}`);
     wallet = await walletOf();
   }
   const deposit = wallet < DEPOSIT ? wallet : DEPOSIT;
@@ -229,7 +229,7 @@ export async function ensureBalance(t: Targets, player: Player, need = LOCK, lab
     if (i > 20) throw new Error(`the floor did not credit the deposit ${hash}`);
     await sleep(POLL_MS);
   }
-  line(`${OK} deposited ${usdc(deposit)} into ${t.floor} (ft_transfer_call) ${color.dim(txLink(hash))}`);
+  line(`${OK} deposited ${money(deposit)} into ${t.floor} (ft_transfer_call) ${color.dim(txLink(hash))}`);
 }
 
 // ---- sessions ------------------------------------------------------------------------------
@@ -272,7 +272,7 @@ async function playSession(
   line(`${OK} ticket ${color.bold(started.session_id)} signed by the key in the contract config · seed hash ${color.dim(started.ticket.server_seed_hash)}`);
   const openAt = performance.now();
   const openTx = await player.send(t.floor, "open_session", { ticket: started.ticket, server_sig: started.ticket_signature }, 0n);
-  line(`${OK} open_session on chain in ${Math.round(performance.now() - openAt)} ms, ${usdc(LOCK)} escrowed ${color.dim(txLink(openTx))}`);
+  line(`${OK} open_session on chain in ${Math.round(performance.now() - openAt)} ms, ${money(LOCK)} escrowed ${color.dim(txLink(openTx))}`);
 
   let state: SignedState = started.state;
   const rounds: CompactRound[] = [];
@@ -319,7 +319,7 @@ async function playSession(
   if (closed.state.nonce !== state.nonce || closed.state.chain !== state.chain) throw new Error("the server closed on a state other than our last one");
   const local = verifySession(closed.server_seed, started.ticket, rounds, state);
   if (!local.ok) throw new Error(`revealed seed does not replay: ${local.error}`);
-  line(`${OK} closed: seed revealed, ${rounds.length} rounds replay locally · balance ${usdc(LOCK)} → ${usdc(state.balance)}`);
+  line(`${OK} closed: seed revealed, ${rounds.length} rounds replay locally · balance ${money(LOCK)} → ${money(state.balance)}`);
   for (let waited = 0; (await getChainSession(t, started.session_id))?.status !== "closed"; waited += POLL_MS) {
     if (waited > CHAIN_CLOSE_TIMEOUT_MS) throw new Error("the server did not settle and close on chain within 2 minutes");
     await sleep(POLL_MS);
@@ -361,7 +361,7 @@ export async function runDemo(cmd: DemoCommand): Promise<boolean> {
     const dealer = pickTable(live.dealers, plan.game, plan.stake);
     if (!dealer) {
       heading(`No ${plan.game} session`);
-      line(color.warn(`skipped: no seated, open ${plan.game} table takes a ${usdc(plan.stake)} bet right now (tables lose their seat when outbid or short of rent)`));
+      line(color.warn(`skipped: no seated, open ${plan.game} table takes a ${money(plan.stake)} bet right now (tables lose their seat when outbid or short of rent)`));
       continue;
     }
     played.push(await playSession(t, player, dealer, serverKey, plan.moves));
@@ -377,9 +377,9 @@ export async function runDemo(cmd: DemoCommand): Promise<boolean> {
   const allOk = played.length > 0 && verified.every(Boolean);
   heading("Summary");
   line(`${latencies.length} instant requests over ${played.length} sessions: median ${Math.round(percentile(latencies, 0.5))} ms, p90 ${Math.round(percentile(latencies, 0.9))} ms, max ${Math.round(Math.max(...latencies))} ms`);
-  line(`floor balance now ${usdc(await floorBalance(t, player.accountId))} · ${accountLink(player.accountId)}`);
+  line(`floor balance now ${money(await floorBalance(t, player.accountId))} · ${accountLink(player.accountId)}`);
   for (const [i, p] of played.entries()) {
-    line(`${verified[i] ? OK : BAD} ${p.game.padEnd(9)} ${p.sessionId}  re-check: pnpm --filter cli-demo verify-session ${p.sessionId}`);
+    line(`${verified[i] ? OK : BAD} ${p.game.padEnd(9)} ${p.sessionId}  re-check: pnpm --filter cli-demo verify-session ${p.sessionId}${targetFlags(t)}`);
   }
   console.log(allOk ? `\n  ${OK} ${color.ok("Demo complete: every round verified against the chain.")}` : `\n  ${BAD} ${color.bad("Demo incomplete")}`);
   return allOk;

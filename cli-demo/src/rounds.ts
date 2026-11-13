@@ -1,7 +1,7 @@
 import { cardLabel, handTotal, pocketColor, rouletteBetLabel } from "../../web/src/house";
 import { roundWager, rouletteSpots, type CompactRound } from "../../web/src/near/session-client";
 import type { Bet, BlackjackHand } from "../../web/src/near/views";
-import { color, usdc } from "./ui.ts";
+import { color, money } from "./ui.ts";
 
 function betText(bet: Bet, stake: string): string {
   if (bet === "blackjack") return "blackjack";
@@ -27,6 +27,6 @@ export function describeRound(round: CompactRound): string {
           ? `seat ${outcome.poker.seat + 1} · board ${outcome.poker.board.join(" ") || "—"}`
           : `${handText(outcome.blackjack)}${round.actions.length ? ` [${round.actions.join(",")}]` : ""}`;
   const payout = BigInt(round.payout);
-  const paid = payout > 0n ? color.ok(`paid ${usdc(payout)}`) : color.dim("lost");
-  return `#${String(round.nonce).padStart(2, "0")} ${betText(round.bet, round.stake)} · ${result} · ${usdc(roundWager(round))} → ${paid}`;
+  const paid = payout > 0n ? color.ok(`paid ${money(payout)}`) : color.dim("lost");
+  return `#${String(round.nonce).padStart(2, "0")} ${betText(round.bet, round.stake)} · ${result} · ${money(roundWager(round))} → ${paid}`;
 }

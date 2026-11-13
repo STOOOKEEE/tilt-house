@@ -27,11 +27,12 @@ import {
   type SignedState,
 } from "../../web/src/near/session-client";
 import { parsePlayer, record, str, type DealerView } from "../../web/src/near/views";
-import type { Command, Targets } from "./args.ts";
+import { targetFlags, type Command, type Targets } from "./args.ts";
 import { getArchivedHand, getChainSession, view } from "./chain.ts";
 import { ensureBalance, floorBalance, serverKeyHex, setUpPlayer, type Player } from "./demo.ts";
 import { readFloor } from "./floor.ts";
-import { accountLink, BAD, color, heading, line, OK, txLink, usdc } from "./ui.ts";
+import { formatUsdc } from "../../web/src/format";
+import { accountLink, BAD, color, heading, line, money, OK, txLink } from "./ui.ts";
 import { verifySessionById } from "./verify-session.ts";
 
 type PokerCommand = Extract<Command, { name: "poker" }>;
@@ -70,7 +71,7 @@ interface Seated {
   left: boolean;
 }
 
-const chips = (amount: string | bigint) => usdc(amount).replace(" tUSDC", "");
+const chips = (amount: string | bigint) => formatUsdc(amount);
 
 function actionText(action: PokerAction): string {
   if (typeof action === "object") return `raise to ${chips(action.raise_to)}`;
@@ -99,7 +100,7 @@ async function pickTable(t: Targets, poker: PokerClient): Promise<DealerView> {
     .filter((d) => (BigInt(d.max_bet) * TICKET_MAX_BET_PCT) / 100n >= BUY_IN)
     .sort((a, b) => a.rake_bp - b.rake_bp || a.id.localeCompare(b.id));
   const best = candidates[0];
-  if (!best) throw new Error(`no seated, open poker table takes a ${usdc(BUY_IN)} buy-in right now`);
+  if (!best) throw new Error(`no seated, open poker table takes a ${money(BUY_IN)} buy-in right now`);
   return best;
 }
 
@@ -117,7 +118,7 @@ async function sit(t: Targets, player: Player, label: Seated["label"], dealer: D
     throw new Error("the server's start state does not match its ticket");
   }
   const openTx = await player.send(t.floor, "open_session", { ticket: started.ticket, server_sig: started.ticket_signature }, 0n);
-  line(`${OK} ${label}: session ${color.bold(started.session_id)} · ${usdc(BUY_IN)} buy-in escrowed by open_session ${color.dim(txLink(openTx))}`);
+  line(`${OK} ${label}: session ${color.bold(started.session_id)} · ${money(BUY_IN)} buy-in escrowed by open_session ${color.dim(txLink(openTx))}`);
   const deadline = Date.now() + JOIN_TIMEOUT_MS;
   for (;;) {
     try {
@@ -225,7 +226,7 @@ function printHand(hand: LastHand, ours: readonly Seated[]): boolean {
   const winners = result.seats
     .filter((s) => BigInt(s.won) > 0n)
     .map((s) => `${nameOf(s.seat)} +${chips(s.won)}${s.value !== null ? ` (${categoryOf(s.value)})` : ""}`);
-  line(`pot ${usdc(pot)} · rake ${chips(result.rake)} · ${result.showdown ? "showdown" : "no showdown"} · winner ${winners.join(", ")}`);
+  line(`pot ${money(pot)} · rake ${chips(result.rake)} · ${result.showdown ? "showdown" : "no showdown"} · winner ${winners.join(", ")}`);
   const check = verifyHand(hand);
   const conserved = pot === won + BigInt(result.rake);
   if (!check.ok || !conserved) {
@@ -243,7 +244,7 @@ async function waitClosedOnChain(t: Targets, seated: readonly Seated[]): Promise
       if (Date.now() > deadline) throw new Error(`the server did not settle and close ${s.sessionId} on chain in time`);
       await sleep(1_500);
     }
-    line(`${OK} ${s.label}: settled and revealed on chain; the stack is back in the floor balance (${usdc(await floorBalance(t, s.player.accountId))})`);
+    line(`${OK} ${s.label}: settled and revealed on chain; the stack is back in the floor balance (${money(await floorBalance(t, s.player.accountId))})`);
   }
 }
 
@@ -322,7 +323,7 @@ export async function runPoker(cmd: PokerCommand): Promise<boolean> {
   line(`${played} hands played at ${dealer.name}, ${[...hands.values()].filter(ours).length} revealed and replayed`);
   for (const [i, s] of seated.entries()) {
     line(`${verified[i] ? OK : BAD} ${s.label} ${s.sessionId} · open ${txLink(s.openTx)}`);
-    line(color.dim(`   ${accountLink(s.player.accountId)} · re-check: pnpm --filter cli-demo verify-session ${s.sessionId}`));
+    line(color.dim(`   ${accountLink(s.player.accountId)} · re-check: pnpm --filter cli-demo verify-session ${s.sessionId}${targetFlags(t)}`));
   }
   console.log(allOk ? `\n  ${OK} ${color.ok("VERIFIED: every hand replays from its revealed seed and every round matches the chain.")}` : `\n  ${BAD} ${color.bad("NOT VERIFIED")}`);
   return allOk;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCommand } from "../src/args.ts";
+import { parseCommand, targetFlags } from "../src/args.ts";
 
 const DEFAULT_TARGETS = {
   floor: "floor.tilthouse.testnet",
@@ -27,6 +27,29 @@ describe("parseCommand", () => {
     expect(cmd).toMatchObject({
       targets: { floor: "f.testnet", session: "https://s.example", relayer: "http://relay:2" },
     });
+  });
+
+  it("--tilt points every target at the TILT floor, below explicit flags", () => {
+    const site = "https://tilt-house-beta.vercel.app";
+    expect(parseCommand(["demo", "--tilt"], { FLOOR_CONTRACT: "env-floor.testnet" })).toMatchObject({
+      targets: {
+        floor: "floor-tilt.tilthouse.testnet",
+        token: "tilt.tilthouse.testnet",
+        relayer: `${site}/tilt/relayer`,
+        session: `${site}/tilt/session`,
+        rpcUrl: DEFAULT_TARGETS.rpcUrl,
+      },
+    });
+    expect(parseCommand(["floor", "--tilt", "--session", "http://127.0.0.1:8793"], {})).toMatchObject({
+      targets: { floor: "floor-tilt.tilthouse.testnet", session: "http://127.0.0.1:8793" },
+    });
+  });
+
+  it("gives the flags that reach the same targets again", () => {
+    const targets = (argv: string[]) => (parseCommand(argv, {}) as { targets: Parameters<typeof targetFlags>[0] }).targets;
+    expect(targetFlags(targets(["floor"]))).toBe("");
+    expect(targetFlags(targets(["floor", "--tilt"]))).toBe(" --tilt");
+    expect(targetFlags(targets(["floor", "--floor", "f.testnet"]))).toBe(" --floor f.testnet");
   });
 
   it("tolerates the `--` pnpm forwards", () => {

@@ -4,7 +4,7 @@ import type { Targets } from "./args.ts";
 import type { LastHand } from "../../web/src/near/poker-client";
 import { archiveStart, findSessionTxs, getArchivedHand, getChainSession, getServerSession, view, type ChainSession, type SessionTxs } from "./chain.ts";
 import { describeRound } from "./rounds.ts";
-import { accountLink, BAD, color, heading, line, OK, txLink, usdc } from "./ui.ts";
+import { accountLink, BAD, color, heading, line, OK, txLink, money } from "./ui.ts";
 import { pokerReplayer, settledRoundsProblem, unarchivedRounds, verifyAgainstChain } from "./verify.ts";
 
 /** Beyond this, the round list is shortened to its head and tail. */
@@ -79,7 +79,7 @@ export async function verifySessionById(
     return false;
   }
   heading(`Verifying session ${chain.id}`);
-  line(`${color.bold(chain.player)} at ${color.bold(chain.dealer_id)} (${chain.game}), status ${chain.status}, lock ${usdc(chain.lock)}`);
+  line(`${color.bold(chain.player)} at ${color.bold(chain.dealer_id)} (${chain.game}), status ${chain.status}, lock ${money(chain.lock)}`);
   line(color.dim(`on chain: seed hash ${chain.server_seed_hash} · client seed ${chain.client_seed} · rake ${chain.rake_bp} bp`));
   line(color.dim(`          revealed seed ${chain.server_seed ?? "—"} · ${chain.settled_nonce} rounds settled · chain ${chain.chain}`));
 
@@ -125,8 +125,8 @@ export async function verifySessionById(
   const replayed = summary.rounds - unarchived.size;
   const replayText = unarchived.size === 0 ? `${replayed} rounds replay bit for bit` : `${replayed} of ${summary.rounds} rounds replayed`;
   line(`${OK} sha256(revealed seed) = on-chain commitment · ${replayText} · hash chain ends on chain's`);
-  line(`${OK} wagered ${usdc(summary.wagered)}, paid ${usdc(summary.paid)}, ${usdc(chain.lock)} → ${usdc(summary.balance)} paid out = chain` +
-    (chain.jackpot_won !== "0" ? color.money(` · jackpot ${usdc(chain.jackpot_won)}`) : ""));
+  line(`${OK} wagered ${money(summary.wagered)}, paid ${money(summary.paid)}, ${money(chain.lock)} → ${money(summary.balance)} paid out = chain` +
+    (chain.jackpot_won !== "0" ? color.money(` · jackpot ${money(chain.jackpot_won)}`) : ""));
   if (settleProblem !== null) {
     console.log(`\n  ${BAD} ${color.bad("NOT VERIFIED")}: ${settleProblem}`);
     return false;

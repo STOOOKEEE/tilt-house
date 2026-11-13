@@ -86,6 +86,7 @@ same vectors through the chain-anchored check, tampered rounds included.
 
 | Flag | Env | Default |
 |---|---|---|
+| `--tilt` | | the TILT floor: sets the four below to `floor-tilt.tilthouse.testnet`, `tilt.tilthouse.testnet`, `…/tilt/relayer`, `…/tilt/session` (explicit flags still win) |
 | `--floor` | `FLOOR_CONTRACT` | `floor.tilthouse.testnet` |
 | `--token` | `TOKEN_CONTRACT` | `tusdc.tilthouse.testnet` |
 | `--relayer` | `RELAYER_URL` | `https://tilt-house-beta.vercel.app/relayer` |
@@ -94,7 +95,7 @@ same vectors through the chain-anchored check, tampered rounds included.
 | | `SESSION_SERVER_ACCOUNT` | `sessions.tilthouse.testnet` (signer of settle/close txs) |
 | | `FUNDER_ACCOUNT`, `FUNDER_KEY` | none: the relayer funds the account |
 
-Only `.testnet` (or implicit) accounts are accepted.
+Only `.testnet` (or implicit) accounts are accepted. Amounts print with the token's own symbol (`ft_metadata`: tUSDC, TILT).
 
 ```sh
 pnpm --filter cli-demo test        # argument parsing, chain-anchored verification, poker rounds (Rust vectors)

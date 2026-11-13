@@ -23,7 +23,15 @@ const EXPLORER = "https://testnet.nearblocks.io";
 export const txLink = (hash: string): string => `${EXPLORER}/txns/${hash}`;
 export const accountLink = (id: string): string => `${EXPLORER}/address/${id}`;
 
-export const usdc = (amount: string | bigint): string => `${formatUsdc(amount)} tUSDC`;
+/** The chip token's symbol (`ft_metadata`), set once at start by `useToken`. */
+let symbol = "tUSDC";
+
+/** Amounts print with this token's symbol from now on. */
+export function useToken(tokenSymbol: string): void {
+  symbol = tokenSymbol;
+}
+
+export const money = (amount: string | bigint): string => `${formatUsdc(amount)} ${symbol}`;
 
 export function heading(text: string): void {
   console.log(`\n${color.title(`▸ ${text}`)}`);

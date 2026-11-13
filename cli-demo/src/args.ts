@@ -34,6 +34,13 @@ const DEFAULTS = {
   serverAccount: "sessions.tilthouse.testnet",
   nearblocksApi: "https://api-testnet.nearblocks.io",
 };
+/** `--tilt`: the TILT floor, the same contract with $TILT as the chip (docs/ops-tilt.md). */
+const TILT = {
+  floor: "floor-tilt.tilthouse.testnet",
+  token: "tilt.tilthouse.testnet",
+  relayer: `${SITE}/tilt/relayer`,
+  session: `${SITE}/tilt/session`,
+};
 const ACCOUNT_ID = /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
 const IMPLICIT_ACCOUNT = /^[0-9a-f]{64}$/;
 /** `open_session`'s rule for session ids. */
@@ -50,10 +57,26 @@ export const USAGE = `Tilt House on NEAR testnet, from a terminal.
   pnpm --filter cli-demo floor                    live economy: seats, rent, jackpot, tables, NPC gamblers
   pnpm --filter cli-demo poker [--hands N]        two throwaway accounts play N hold'em hands (default 3) with the bots → verify
 
-Options: --new (demo, poker: fresh accounts instead of reusing the ones in ~/.tilt-house/)
+Options: --tilt (the TILT floor: --floor floor-tilt.tilthouse.testnet --token tilt.tilthouse.testnet
+          --relayer ${SITE}/tilt/relayer --session ${SITE}/tilt/session; explicit flags still win)
+         --new (demo, poker: fresh accounts instead of reusing the ones in ~/.tilt-house/)
          --floor <account> --token <account> --relayer <url> --session <url> --rpc <url>
 Env:     FLOOR_CONTRACT TOKEN_CONTRACT RELAYER_URL SESSION_URL NEAR_RPC_URL SESSION_SERVER_ACCOUNT
          FUNDER_ACCOUNT + FUNDER_KEY (demo, poker: fund the throwaway accounts yourself instead of the relayer)`;
+
+/**
+ * The flags that point another command at the same targets, for the "re-check" hints: none for the
+ * defaults, `--tilt` for the TILT floor, else each target that differs.
+ */
+export function targetFlags(t: Targets): string {
+  const { floor, token, relayer, session } = t;
+  if (floor === TILT.floor && token === TILT.token && relayer === TILT.relayer && session === TILT.session) return " --tilt";
+  const flags = { floor, token, relayer, session };
+  return Object.entries(flags)
+    .filter(([name, value]) => DEFAULTS[name as keyof typeof flags] !== value)
+    .map(([name, value]) => ` --${name} ${value}`)
+    .join("");
+}
 
 export function testnetAccount(value: string, name: string): string {
   if (IMPLICIT_ACCOUNT.test(value)) return value;
@@ -101,16 +124,19 @@ export function parseCommand(argv: readonly string[], env: NodeJS.ProcessEnv): C
       player: { type: "string" },
       new: { type: "boolean", default: false },
       hands: { type: "string" },
+      tilt: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
   });
   const [name, ...rest] = positionals;
   if (values.help || name === undefined || name === "help") return { name: "help" };
+  // --tilt stands for its four flags: below explicit flags, above env.
+  const tilt = values.tilt ? TILT : null;
   const targets: Targets = {
-    floor: testnetAccount(values.floor ?? env1(env, "FLOOR_CONTRACT") ?? DEFAULTS.floor, "floor"),
-    token: testnetAccount(values.token ?? env1(env, "TOKEN_CONTRACT") ?? DEFAULTS.token, "token"),
-    relayer: httpUrl(values.relayer ?? env1(env, "RELAYER_URL") ?? DEFAULTS.relayer, "relayer"),
-    session: httpUrl(values.session ?? env1(env, "SESSION_URL") ?? DEFAULTS.session, "session"),
+    floor: testnetAccount(values.floor ?? tilt?.floor ?? env1(env, "FLOOR_CONTRACT") ?? DEFAULTS.floor, "floor"),
+    token: testnetAccount(values.token ?? tilt?.token ?? env1(env, "TOKEN_CONTRACT") ?? DEFAULTS.token, "token"),
+    relayer: httpUrl(values.relayer ?? tilt?.relayer ?? env1(env, "RELAYER_URL") ?? DEFAULTS.relayer, "relayer"),
+    session: httpUrl(values.session ?? tilt?.session ?? env1(env, "SESSION_URL") ?? DEFAULTS.session, "session"),
     rpcUrl: httpUrl(values.rpc ?? env1(env, "NEAR_RPC_URL") ?? DEFAULTS.rpcUrl, "rpc"),
     serverAccount: testnetAccount(env1(env, "SESSION_SERVER_ACCOUNT") ?? DEFAULTS.serverAccount, "SESSION_SERVER_ACCOUNT"),
     nearblocksApi: DEFAULTS.nearblocksApi,
