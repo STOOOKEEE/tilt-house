@@ -7,9 +7,9 @@
 
 ![Tilt House: NPC gamblers walk the floor, a multi-spot roulette spin, a poker hand verified after the deal](docs/media/tilt-house.gif)
 
-80-second demo video: [docs/media/tilt-house-demo.mp4](docs/media/tilt-house-demo.mp4). The roulette and poker clips
-use the practice tables (same rules, local seed, nothing signed); the terminal clip is a real `demo --new` run on
-testnet with the waits shortened.
+80-second demo video with voice-over: [docs/media/tilt-house-demo.mp4](docs/media/tilt-house-demo.mp4). The roulette
+and poker clips use the practice tables (same rules, local seed, nothing signed); the terminal clip is a real
+`demo --new` run on testnet with the waits shortened.
 
 **The problem.** An online casino asks players to trust a house they cannot inspect: the house sets
 the odds, holds the money and keeps the edge. Tilt House turns that around: the players own the
@@ -284,7 +284,9 @@ e.g. the live gamblers feed `https://tilt-house-beta.vercel.app/session/gamblers
   code base started on 2026-11-03 for this hackathon; its rules were written from scratch in `core/`.
 - Libraries: near-sdk, near-contract-standards, near-workspaces, cargo-near, near-api-js, axum,
   tokio, ed25519-dalek, borsh, Privy, Hono, Vite, React, three.js, vitest, @noble/hashes.
-- AI coding agents were used to write code and documentation.
+- AI coding agents were used to write code and documentation. The demo video's voice is synthetic (Kokoro TTS,
+  voice `af_heart`); its music is "Patron Saint of Heists" by Bryan Teoh (public domain, FreePD) and its sound
+  effects come from Kenney's audio packs and freesound.org (CC0).
 
 ## License
 
