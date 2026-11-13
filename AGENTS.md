@@ -2,7 +2,8 @@
 
 You are evaluating or working on Tilt House, a casino tycoon on NEAR testnet: players own tables,
 24 NPC gamblers with their own NEAR wallets are the customers, rent fills an on-chain jackpot, and
-every round is provably fair. Human overview: `README.md`.
+every round is provably fair. $TILT is its memecoin: minted to players on days they beat the house,
+burned on days the house wins, and burned together to start a Tilt Hour (tracks `games` and `memecoins`). Human overview: `README.md`.
 
 ## Evaluate it in 5 commands
 
@@ -15,6 +16,7 @@ pnpm --filter cli-demo demo --new                                     # play on 
 pnpm --filter cli-demo poker                                          # two accounts play hold'em with the NPC bots, every hand verified
 pnpm --filter cli-demo verify-session --player g-mia.tilthouse.testnet  # verify an NPC gambler's session
 cargo run -p tilt-house-sim --release -- --days 7 --seed 42 --out /tmp/tilt-sim.json  # a simulated week
+cargo run -p tilt-house-sim --release -- meme --days 60 --scenario busy               # 60 days of $TILT supply
 ```
 
 All CLI commands exit 0 only when every check passes; a failed check prints `✗` with the reason.
@@ -31,6 +33,7 @@ Then run the test suites: `cargo test --workspace` and `pnpm -r test`.
 | How is a round provably fair? | `core/src/session.rs`, `docs/sessions.md` |
 | Poker rules, bots and hand verification | `core/src/poker.rs`, `core/src/poker_npc.rs`, `docs/poker-rules.md`, `docs/poker-api.md` |
 | Every claim with the command that proves it | `README.md` ("Check every claim yourself") |
+| $TILT mechanics, parameters, Sybil limits | `docs/tilt.md`, `meme/src/rules.rs`, `meme/src/lib.rs`, `contract/src/days.rs` |
 | Is the deployed code this repo? | `scripts/verify-deployment.sh`, `deployments/testnet.json` |
 | Seats, rent, outbids, seat market, jackpot | `core/src/floor.rs`, `core/src/seats.rs`, `core/src/jackpot.rs`, `docs/floor.md` |
 | The whole economy design | `docs/tycoon.md` |
