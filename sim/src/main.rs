@@ -3,9 +3,11 @@
 //! timeline as JSON for the web `/sim` page.
 //!
 //! Usage: `sim [--days N] [--seed S] [--out PATH]` (defaults: 7 days, seed 42, stdout).
+//! `sim meme …`: the $TILT 60-day supply scenarios (`meme.rs`).
 
 mod gamblers;
 mod lps;
+mod meme;
 mod owners;
 mod world;
 
@@ -48,7 +50,22 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
 }
 
 fn main() -> ExitCode {
-    let args = match parse_args(std::env::args().skip(1)) {
+    let mut cli = std::env::args().skip(1).peekable();
+    if cli.peek().map(String::as_str) == Some("meme") {
+        return match meme::main(cli.skip(1)) {
+            Ok(json) => {
+                if !json.is_empty() {
+                    println!("{json}");
+                }
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::from(2)
+            }
+        };
+    }
+    let args = match parse_args(cli) {
         Ok(args) => args,
         Err(error) => {
             eprintln!("{error}\n{USAGE}");

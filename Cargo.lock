@@ -4010,6 +4010,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "tilt-house-meme"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "near-contract-standards",
+ "near-sdk",
+ "near-workspaces",
+ "openssl",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "tilt-house-session-server"
 version = "0.1.0"
 dependencies = [
@@ -4041,6 +4055,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tilt-house-core",
+ "tilt-house-meme",
 ]
 
 [[package]]

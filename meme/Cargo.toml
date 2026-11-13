@@ -1,0 +1,40 @@
+[package]
+name = "tilt-house-meme"
+version = "0.1.0"
+edition = "2021"
+description = "$TILT: the Tilt House memecoin (NEP-141). The house on tilt mints, the treasury burns, Tilt Hour rituals"
+license = "MIT"
+publish = false
+# NEP-330 `contract_source_metadata` link (near-sdk reads it at build time).
+repository = "https://github.com/STOOOKEEE/tilt-house"
+
+# `cargo near build reproducible-wasm` (run from meme/, committed tree): same pinned image as the
+# floor contract, so anyone rebuilds the same wasm bytes (docs/tilt.md, Build).
+[package.metadata.near.reproducible_build]
+image = "sourcescan/cargo-near:0.21.1-rust-1.96.0"
+image_digest = "sha256:ccb22bb4e677ed022d8b9d1aa1b32f0af52dd0471ef1c32e48dedbf68ee6ee17"
+passed_env = []
+container_build_command = ["cargo", "near", "build", "non-reproducible-wasm", "--locked"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# `contract` (default): the NEP-141 contract. Without it only `rules` is built, free of near-sdk,
+# for the simulator (near-sdk refuses to build for a native binary).
+[features]
+default = ["contract"]
+contract = ["dep:near-sdk", "dep:near-contract-standards"]
+
+[dependencies]
+near-sdk = { version = "5.30", optional = true }
+near-contract-standards = { version = "5.30", optional = true }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+near-sdk = { version = "5.30", features = ["unit-testing"] }
+near-workspaces = { version = "0.24", features = ["unstable"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde_json = "1"
+anyhow = "1"
+# near-workspaces pulls native-tls; build OpenSSL from source so tests need no system libssl-dev.
+openssl = { version = "0.10", features = ["vendored"] }

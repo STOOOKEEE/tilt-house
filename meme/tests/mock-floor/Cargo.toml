@@ -1,0 +1,22 @@
+# Test double for the $TILT sandbox tests only (own workspace, never deployed).
+[package]
+name = "mock-floor"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = "5.30"
+
+[workspace]
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true

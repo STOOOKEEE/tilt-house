@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "sim", "token", "contract", "session-server"]
+members = ["core", "sim", "token", "contract", "meme", "session-server"]
 
 # Signing and hashing run on every session round; unoptimized they eat most of the latency budget
 # in debug builds and tests.
