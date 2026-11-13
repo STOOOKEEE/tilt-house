@@ -5,7 +5,17 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![NEAR testnet](https://img.shields.io/badge/NEAR%20testnet-floor.tilthouse.testnet-00c08b)](https://testnet.nearblocks.io/address/floor.tilthouse.testnet)
 
-A casino tycoon on NEAR. Players own the tables; 24 NPC gamblers, each with its own NEAR wallet,
+![Tilt House: NPC gamblers walk the floor, a multi-spot roulette spin, a poker hand verified after the deal](docs/media/tilt-house.gif)
+
+80-second demo video: [docs/media/tilt-house-demo.mp4](docs/media/tilt-house-demo.mp4). The roulette and poker clips
+use the practice tables (same rules, local seed, nothing signed); the terminal clip is a real `demo --new` run on
+testnet with the waits shortened.
+
+**The problem.** An online casino asks players to trust a house they cannot inspect: the house sets
+the odds, holds the money and keeps the edge. Tilt House turns that around: the players own the
+tables, the odds and the money live in a NEAR contract, and every round can be replayed by anyone.
+
+**What it is.** A casino tycoon on NEAR. Players own the tables; 24 NPC gamblers, each with its own NEAR wallet,
 are the customers. Owners rent seats on the floor by the hour, set their house edge and compete for
 the gamblers, who compare every table and say why they sit where they sit. Rent fills a jackpot that
 any settled bet can win. Dice, roulette, blackjack and multiplayer no-limit hold'em, every round
