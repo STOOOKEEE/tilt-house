@@ -41,7 +41,8 @@ pnpm --filter cli-demo demo
 See: the relayer activates a brand-new account with no wallet and no gas, it deposits 20 test chips,
 plays dice, a multi-spot roulette spin and a blackjack hand (each round answered in ~30–50 ms), then
 replays every round from the seed revealed on chain and prints `✓ Demo complete: every round
-verified against the chain.` (exit code 0 only if every check passed).
+verified against the chain.` (exit code 0 only if every check passed). If the public RPC rate-limits
+your IP, the CLI switches to `https://near-testnet.drpc.org` by itself (`--rpc <url>` picks another).
 
 Then:
 
@@ -142,6 +143,9 @@ helper, `view <contract> <method> [json args]`, which calls a view over public R
 ```sh
 view() { node -e 'fetch("https://test.rpc.fastnear.com",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"query",params:{request_type:"call_function",finality:"final",account_id:process.argv[1],method_name:process.argv[2],args_base64:btoa(process.argv[3]??"{}")}})}).then(r=>r.json()).then(j=>console.log(Buffer.from(j.result.result).toString()))' "$@"; }
 ```
+
+If `test.rpc.fastnear.com` answers 429 from your IP (shared cloud IPs often do), use
+`https://near-testnet.drpc.org` in the helper and in claim 21.
 
 Outputs were pasted from runs on a clean checkout on 2026-11-12 and 2026-11-13. Live values
 (balances, rents, jackpot, who is seated, sessions) move all the time, so yours will differ; the
