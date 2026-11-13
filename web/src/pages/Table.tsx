@@ -1,9 +1,10 @@
 // A seat at one table, full screen: the player sits at the felt facing the dealer, places chips by
 // clicking the felt, and plays with the TILT button. Everything else floats over the 3D view.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router'
 import { formatUsdc } from '../format'
 import { diceWinPayout } from '../house'
+import { tablePath } from '../paths'
 import { useDemoSession } from '../near/useDemoSession'
 import { useNear } from '../near/useNear'
 import { TABLE_POLL_MS, useLobby, usePlayer } from '../near/usePoll'
@@ -52,6 +53,8 @@ export function Table() {
   if (lobby.error && !lobby.data) return <p className="loss">Could not load the table: {lobby.error}</p>
   if (!lobby.data) return <p className="muted">loading table…</p>
   if (!dealer) return <p>No dealer “{dealerId}”. <Link to="/">Back to the lobby</Link></p>
+  // A poker table is played in its room; this page would show it as a dice felt.
+  if (dealer.game === 'poker') return <Navigate to={tablePath(dealer)} replace />
 
   // The chain is the truth: a session closed by us, by the server (idle) or force-closed no longer
   // holds the player, even if this browser still keeps it for verification.

@@ -10,6 +10,7 @@ import { devEvict, floorSeats, getFloorState, type FloorState, type SeatedTable 
 import { useNear } from '../near/useNear'
 import { PAGE_POLL_MS, usePoll } from '../near/usePoll'
 import type { DealerView } from '../near/views'
+import { tablePath } from '../paths'
 import { createLobbyScene, type FloorFocus, type LobbySceneApi } from '../scene/lobby/LobbyScene'
 import {
   diffGamblers,
@@ -262,7 +263,7 @@ function DealerRow({ dealer, seat }: { dealer: DealerView; seat: SeatInfo | null
       </td>
       <td>
         {dealer.open && seat ? (
-          <Link className="button" to={`/table/${dealer.id}`}>
+          <Link className="button" to={tablePath(dealer)}>
             Play
           </Link>
         ) : dealer.open ? (
