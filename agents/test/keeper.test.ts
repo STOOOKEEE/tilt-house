@@ -224,6 +224,20 @@ describe("close_day (USD floor, after each UTC midnight)", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("stops retrying a day the floor refuses as unknown (played before its upgrade)", async () => {
+    const calls: Call[] = [];
+    const d = deps(async (call) => {
+      calls.push(call);
+      throw new Error("Smart contract panicked: no record for that day");
+    });
+    const state = { closed: null };
+    const at = midnight(DAY) + 5 * 60_000;
+    await closeDayPass(d, state, at);
+    await closeDayPass(d, state, at + 60_000);
+    expect(state.closed).toBe(DAY - 1);
+    expect(calls).toHaveLength(1);
+  });
+
   it("dry run prints the call without sending", async () => {
     const printed: string[] = [];
     await closeDayPass(deps(dryRunSend("floor.tilthouse.testnet", (l) => printed.push(l))), { closed: null }, midnight(DAY) + 5 * 60_000);

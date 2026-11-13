@@ -146,7 +146,7 @@ export async function closeDayPass(deps: KeeperDeps, state: CloseDayState, nowMs
   if (day === null || day === state.closed) return;
   try {
     const before = await deps.house.day(day);
-    if (before?.closed) {
+    if (before.closed) {
       state.closed = day;
       logLine(deps, { action: "close_day", day, skipped: "already closed", record: before });
       return;
@@ -156,7 +156,9 @@ export async function closeDayPass(deps: KeeperDeps, state: CloseDayState, nowMs
     logLine(deps, { action: "close_day", day, result: result ?? null, record: await deps.house.day(day) });
   } catch (error) {
     const message = errorMessage(error);
-    if (message.includes("already closed")) state.closed = day;
+    // "no record": the floor never counted that day (before its upgrade, or pruned). Like an
+    // already closed day, retrying would only burn gas and leave a failed tx at every pass.
+    if (message.includes("already closed") || message.includes("no record for that day")) state.closed = day;
     logLine(deps, { action: "close_day", day, error: message });
   }
 }
