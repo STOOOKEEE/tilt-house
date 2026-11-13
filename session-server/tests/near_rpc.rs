@@ -44,7 +44,7 @@ impl Mock {
     /// Spends one 429 if any is left.
     fn take_throttle(&self) -> bool {
         self.throttle
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| match left {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| match left {
                 0 => None,
                 u32::MAX => Some(u32::MAX),
                 n => Some(n - 1),
