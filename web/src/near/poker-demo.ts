@@ -333,6 +333,8 @@ export class PokerDemo {
         rake_cap: CONFIG.rake_cap.toString(),
         min_buy_in: (BIG_BLIND * 20n).toString(),
         max_buy_in: (BIG_BLIND * 100n).toString(),
+        open: true,
+        reason: null,
         rake_bp: RAKE_BP,
         action_ms: ACTION_MS,
         seed_ms: SEED_MS,

@@ -3,7 +3,7 @@
 import { useCallback } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { formatBp, formatUsdc } from '../format'
-import { pokerClient } from '../near/poker-client'
+import { buyInRange, pokerClient } from '../near/poker-client'
 import { useNear } from '../near/useNear'
 import { usePokerDemo, usePokerLive } from '../near/usePokerTable'
 import { PAGE_POLL_MS, TABLE_POLL_MS, useLobby, usePlayer, usePoll } from '../near/usePoll'
@@ -68,23 +68,26 @@ function PokerTables() {
             </tr>
           </thead>
           <tbody>
-            {tables.data.map((t) => (
-              <tr key={t.table_id}>
-                <td>
-                  <Link to={`/poker/${encodeURIComponent(t.table_id)}`}>{t.name}</Link>
-                </td>
-                <td>
-                  {formatUsdc(t.small_blind)}/{formatUsdc(t.big_blind)}
-                </td>
-                <td>
-                  {formatUsdc(t.min_buy_in)}–{formatUsdc(t.max_buy_in)}
-                </td>
-                <td>
-                  {t.humans} + {t.npcs} bot{t.npcs === 1 ? '' : 's'} / {t.seats}
-                </td>
-                <td>{formatBp(t.rake_bp)}</td>
-              </tr>
-            ))}
+            {tables.data.map((t) => {
+              const range = buyInRange(t)
+              return (
+                <tr key={t.table_id}>
+                  <td>
+                    <Link to={`/poker/${encodeURIComponent(t.table_id)}`}>{t.name}</Link>
+                  </td>
+                  <td>
+                    {formatUsdc(t.small_blind)}/{formatUsdc(t.big_blind)}
+                  </td>
+                  <td>
+                    {range ? `${formatUsdc(range.min)}–${formatUsdc(range.max)}` : <span className="muted">closed</span>}
+                  </td>
+                  <td>
+                    {t.humans} + {t.npcs} bot{t.npcs === 1 ? '' : 's'} / {t.seats}
+                  </td>
+                  <td>{formatBp(t.rake_bp)}</td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       ) : config.sessionUrl ? (

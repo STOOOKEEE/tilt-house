@@ -38,6 +38,9 @@ export interface TableSummary {
   big_blind: string
   min_buy_in: string
   max_buy_in: string
+  /** False: no buy-in now (the pool can't cover one), `reason` says why; old servers omit it (= open). */
+  open: boolean
+  reason: string | null
   rake_bp: number
   hand_number: number
 }
@@ -103,6 +106,9 @@ export interface TableConfigView {
   rake_cap: string
   min_buy_in: string
   max_buy_in: string
+  /** As in `TableSummary`. */
+  open: boolean
+  reason: string | null
   rake_bp: number
   action_ms: number
   seed_ms: number
@@ -163,6 +169,21 @@ export interface TableState {
 }
 
 // ---- actions -------------------------------------------------------------------------------
+
+/** Base units of 0.01: buy-ins are shown and typed in cents. */
+const CENT = 10_000n
+
+export const NO_BUY_IN = "This table's pool can't cover a buy-in right now"
+
+/**
+ * The buy-in range at 2 decimals: min rounded up, max rounded down, so both ends shown are
+ * accepted. Null when the table is closed or no buy-in fits (an old server reported min > max).
+ */
+export function buyInRange(config: Pick<TableConfigView, 'open' | 'min_buy_in' | 'max_buy_in'>): { min: bigint; max: bigint } | null {
+  const min = ((BigInt(config.min_buy_in) + CENT - 1n) / CENT) * CENT
+  const max = (BigInt(config.max_buy_in) / CENT) * CENT
+  return !config.open || min > max ? null : { min, max }
+}
 
 /**
  * Why `action` is not allowed by the server's `legal` (null: allowed), the same rule as core
@@ -368,6 +389,8 @@ function parseSummary(value: unknown, path: string): TableSummary {
     big_blind: amount(t.big_blind, `${path}.big_blind`),
     min_buy_in: amount(t.min_buy_in, `${path}.min_buy_in`),
     max_buy_in: amount(t.max_buy_in, `${path}.max_buy_in`),
+    open: optional(t.open, (v) => bool(v, `${path}.open`)) ?? true,
+    reason: optional(t.reason, (v) => str(v, `${path}.reason`)),
     rake_bp: int(t.rake_bp, `${path}.rake_bp`),
     hand_number: int(t.hand_number, `${path}.hand_number`),
   }
@@ -547,6 +570,8 @@ export function parseTableState(value: unknown): TableState {
       rake_cap: amount(c.rake_cap, 'table.config.rake_cap'),
       min_buy_in: amount(c.min_buy_in, 'table.config.min_buy_in'),
       max_buy_in: amount(c.max_buy_in, 'table.config.max_buy_in'),
+      open: optional(c.open, (v) => bool(v, 'table.config.open')) ?? true,
+      reason: optional(c.reason, (v) => str(v, 'table.config.reason')),
       rake_bp: int(c.rake_bp, 'table.config.rake_bp'),
       action_ms: int(c.action_ms, 'table.config.action_ms'),
       seed_ms: int(c.seed_ms, 'table.config.seed_ms'),

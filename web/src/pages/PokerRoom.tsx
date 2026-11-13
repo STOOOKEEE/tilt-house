@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { LoginPrompt } from '../components/LoginPrompt'
 import { formatBp, formatUsdc, parseUsdc } from '../format'
-import { actionProblem, raiseAction, raisePresets, type TableState } from '../near/poker-client'
+import { NO_BUY_IN, actionProblem, buyInRange, raiseAction, raisePresets, type TableState } from '../near/poker-client'
 import type { Legal, PokerAction } from '../near/poker-rules'
 import type { PokerTableApi } from '../near/usePokerTable'
 import { createPokerScene, type PokerSceneApi } from '../scene/poker/PokerScene'
@@ -131,17 +131,18 @@ interface SeatCardProps {
 }
 
 function SeatCard({ table, api, demo, loggedIn, wallet }: SeatCardProps) {
-  const { config } = table
-  const min = BigInt(config.min_buy_in)
-  const max = BigInt(config.max_buy_in)
-  const preferred = BigInt(config.big_blind) * DEFAULT_BUY_IN_BB
-  const [text, setText] = useState(() => formatUsdc(preferred < min ? min : preferred > max ? max : preferred, 0))
+  const range = buyInRange(table.config)
+  const preferred = BigInt(table.config.big_blind) * DEFAULT_BUY_IN_BB
+  const [text, setText] = useState(() =>
+    formatUsdc(range === null ? preferred : preferred < range.min ? range.min : preferred > range.max ? range.max : preferred, 0),
+  )
   const buyIn = parseUsdc(text)
   const humans = table.seats.filter((s) => s && !s.npc).length
   const full = humans >= table.seats.length
-  const problem =
-    buyIn === null || buyIn < min || buyIn > max
-      ? `buy in between ${formatUsdc(min)} and ${formatUsdc(max)}`
+  const problem = !range
+    ? NO_BUY_IN + (table.config.reason ? ` (${table.config.reason})` : '')
+    : buyIn === null || buyIn < range.min || buyIn > range.max
+      ? `buy in between ${formatUsdc(range.min)} and ${formatUsdc(range.max)}`
       : wallet !== null && buyIn > wallet
         ? 'not enough balance: deposit first'
         : full
@@ -158,7 +159,7 @@ function SeatCard({ table, api, demo, loggedIn, wallet }: SeatCardProps) {
         <input value={text} inputMode="decimal" onChange={(event) => setText(event.target.value)} />
         {wallet !== null ? <span className="muted">balance {formatUsdc(wallet)}</span> : null}
       </label>
-      {(loggedIn || demo) && problem ? <p className="loss">{problem}</p> : null}
+      {(loggedIn || demo || !range) && problem ? <p className="loss">{problem}</p> : null}
       <button type="button" className="tilt-button" disabled={!canSit} onClick={() => buyIn !== null && void api.sit(buyIn)}>
         {api.progress || 'Sit down'}
       </button>

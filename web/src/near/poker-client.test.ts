@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   actionProblem,
+  buyInRange,
   expectedRound,
   parseHandHistory,
   parseLegal,
@@ -149,6 +150,24 @@ describe('action checks', () => {
   })
 })
 
+describe('buyInRange', () => {
+  const config = (min: string, max: string, open = true) => ({ open, min_buy_in: min, max_buy_in: max })
+
+  it('shows both bounds at 2 decimals, inside what the server accepts', () => {
+    // 3.729863 shown as 3.72: the bound shown is a buy-in the server takes.
+    expect(buyInRange(config('2000001', '3729863'))).toEqual({ min: 2_010_000n, max: 3_720_000n })
+    expect(buyInRange(config('2000000', '10000000'))).toEqual({ min: 2_000_000n, max: 10_000_000n })
+  })
+
+  it('never offers an impossible range: min above max or a closed table', () => {
+    // The live bug on /poker/faye: min 4.00, max 3.729863.
+    expect(buyInRange(config('4000000', '3729863'))).toBeNull()
+    // No 2-decimal amount between 3.721 and 3.729.
+    expect(buyInRange(config('3721000', '3729000'))).toBeNull()
+    expect(buyInRange(config('0', '0', false))).toBeNull()
+  })
+})
+
 describe('parseTableState', () => {
   const state = {
     table_id: 'poker-demo',
@@ -169,6 +188,15 @@ describe('parseTableState', () => {
     expect(t.seats[0]?.last_action).toEqual({ raise_to: 50n })
     expect(t.you?.legal).toEqual(parseLegal(state.you.legal, 'legal'))
     expect(t.you?.hole).toEqual(['As', 'Kd'])
+    // Old servers omit `open`: the table takes buy-ins.
+    expect(t.config).toMatchObject({ open: true, reason: null })
+  })
+
+  it('reads a closed table and why', () => {
+    const reason = 'max bet too low for poker: buy-ins would be under 10 big blinds'
+    const closed = { ...state.config, min_buy_in: '0', max_buy_in: '0', open: false, reason }
+    expect(parseTableState({ ...state, config: closed }).config).toMatchObject({ open: false, reason })
+    expect(() => parseTableState({ ...state, config: { ...state.config, open: 'no' } })).toThrow(/open/)
   })
 
   it('fails closed on numbers for amounts, bad cards and unknown actions', () => {
