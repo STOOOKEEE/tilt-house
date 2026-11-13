@@ -5,24 +5,29 @@ You are evaluating or working on Tilt House, a casino tycoon on NEAR testnet: pl
 every round is provably fair. $TILT is its memecoin: minted to players on days they beat the house,
 burned on days the house wins, and burned together to start a Tilt Hour (tracks `games` and `memecoins`). Human overview: `README.md`.
 
-## Evaluate it in 5 commands
+## Evaluate it
 
-Node 22+, pnpm, Rust stable. No keys, no config: everything targets the public testnet deployment.
+Node 22+, pnpm (`corepack enable` or `npm i -g pnpm`), Rust stable (plus `wasm32-unknown-unknown`
+and `cargo-near` for the contract sandbox tests). No keys, no config: everything targets the public
+testnet deployment.
 
 ```sh
 pnpm install
 pnpm --filter cli-demo floor                                          # the live economy right now
-pnpm --filter cli-demo demo --new                                     # play on testnet with a fresh account, verify every round
+pnpm --filter cli-demo demo                                           # play on testnet (the first run makes a throwaway account), verify every round
 pnpm --filter cli-demo poker                                          # two accounts play hold'em with the NPC bots, every hand verified
 pnpm --filter cli-demo verify-session --player g-mia.tilthouse.testnet  # verify an NPC gambler's session
 cargo run -p tilt-house-sim --release -- --days 7 --seed 42 --out /tmp/tilt-sim.json  # a simulated week
-cargo run -p tilt-house-sim --release -- meme --days 60 --scenario busy               # 60 days of $TILT supply
+cargo run -p tilt-house-sim --release -- meme --days 60 --scenario busy > /tmp/tilt-meme.json  # 60 days of $TILT supply (JSON)
 ```
 
 All CLI commands exit 0 only when every check passes; a failed check prints `✗` with the reason.
-`demo` makes its own throwaway testnet account (key in `~/.tilt-house/cli-demo-account.json`).
+`demo` makes its own throwaway testnet account (key in `~/.tilt-house/cli-demo-account.json`) and
+reuses it on later runs; `--new` makes a fresh one (the relayer activates a limited number per hour).
 
-Then run the test suites: `cargo test --workspace` and `pnpm -r test`.
+Then run the test suites: `pnpm -r test` (~30 s) and `cargo test --workspace` (~30 min on a cold
+machine, ~20 of them in the contract sandbox, which needs `wasm32-unknown-unknown` and `cargo-near`;
+`cargo test --workspace --exclude tilt-house-contract` skips it).
 
 ## Where to look
 

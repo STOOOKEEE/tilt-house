@@ -151,7 +151,7 @@ least … to register the account`, `Invalid economics: …`.
 
 ```json
 { "floor": "floor.tilthouse.testnet", "welcome_operator": "relayer.tilthouse.testnet",
-  "house_receiver": "tilthouse.testnet", "launch_day": 20405,
+  "house_receiver": "tilthouse.testnet", "launch_day": 20770,
   "treasury_initial": "1000000000000", "house_allocation": "300000000000",
   "welcome_pool": "500000000000", "welcome_amount": "100000000", "welcome_daily_claims": 200,
   "mint_rate_bp": 100000, "streak_bonus_bp": 1000, "streak_bonus_max_days": 7,
@@ -165,7 +165,7 @@ least … to register the account`, `Invalid economics: …`.
 ```json
 { "total_supply": "1300000000000", "treasury": "1000000000000", "circulating": "300000000000",
   "welcome_remaining": "500000000000", "welcome_claims": 0, "welcome_claims_today": 0,
-  "minted_total": "1300000000000", "burned_total": "0", "today": 20405,
+  "minted_total": "1300000000000", "burned_total": "0", "today": 20770,
   "last_reported_day": null, "streak": 0, "longest_streak": 0, "longest_streak_day": null,
   "tilt_hour": { "round": 0, "burned": "0", "burners": 0, "window_end_ns": "0", "triggers": 0,
                  "last_started_ns": null },
@@ -181,7 +181,7 @@ empty, `window_end_ns` `"0"`). Whether a Tilt Hour is running: the USD floor's
 
 ```json
 { "seq": 3, "kind": "mint", "reason": "daily", "account": "alice.testnet", "amount": "40000000",
-  "day": 20404, "timestamp_ns": "1763107200000000000" }
+  "day": 20770, "timestamp_ns": "1794614520000000000" }
 ```
 
 | kind | reasons | account | amount |

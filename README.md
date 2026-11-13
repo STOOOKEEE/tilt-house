@@ -7,9 +7,9 @@
 
 ![Tilt House: NPC gamblers walk the floor, a multi-spot roulette spin, a poker hand verified after the deal](docs/media/tilt-house.gif)
 
-80-second demo video with voice-over: [docs/media/tilt-house-demo.mp4](docs/media/tilt-house-demo.mp4). The roulette
-and poker clips use the practice tables (same rules, local seed, nothing signed); the terminal clip is a real
-`demo --new` run on testnet with the waits shortened.
+80-second demo video with voice-over: https://tilt-house-beta.vercel.app/tilt-house-demo.mp4 (file:
+`web/public/tilt-house-demo.mp4`). The roulette and poker clips use the practice tables (same rules, local
+seed, nothing signed); the terminal clip is a real `demo --new` run on testnet with the waits shortened.
 
 **The problem.** An online casino asks players to trust a house they cannot inspect: the house sets
 the odds, holds the money and keeps the edge. Tilt House turns that around: the players own the
@@ -30,12 +30,12 @@ to put the whole casino "on tilt" for an hour.
 
 ## Judge it in one minute
 
-Node 22+ and pnpm (`corepack enable`). No keys, no config: the command makes its own throwaway
-testnet account.
+Node 22+ and pnpm (`corepack enable`, or `npm i -g pnpm`). No keys, no config: the first run makes
+its own throwaway testnet account and later runs reuse it (`--new` makes a fresh one).
 
 ```sh
 git clone https://github.com/STOOOKEEE/tilt-house && cd tilt-house && pnpm install
-pnpm --filter cli-demo demo --new
+pnpm --filter cli-demo demo
 ```
 
 See: the relayer activates a brand-new account with no wallet and no gas, it deposits 20 test chips,
@@ -49,7 +49,7 @@ Then:
 pnpm --filter cli-demo floor                                            # the live economy: seats, rents, prices and why, gamblers and why
 pnpm --filter cli-demo poker                                            # two accounts play hold'em with the NPC bots, every hand verified
 pnpm --filter cli-demo verify-session --player g-mia.tilthouse.testnet  # verify an NPC gambler's latest session from chain data
-cargo run -p tilt-house-sim --release -- meme --days 60 --scenario busy # 60 days of $TILT supply under the contract's own rules
+cargo run -p tilt-house-sim --release -- meme --days 60 --scenario busy > /tmp/tilt-meme.json  # 60 days of $TILT supply under the contract's own rules (summary: claim 22)
 ```
 
 ## Track fit (`games`: Games With Real Economies)
@@ -60,7 +60,7 @@ Hints: Agent NPCs, Social login, NEAR Intents, NEP-245.
 
 | Criterion | What Tilt House does | Check it |
 | --- | --- | --- |
-| NPCs with wallets | 24 NPC gamblers, each its own NEAR account `g-<name>.tilthouse.testnet` with its own in-contract balance; they sign their own `open_session` transactions. 5 NPC dealers (`ada`, `bruno`, `chloe`, `dmitri`, `eve`) control their tables from their own accounts. Every choice comes from one readable rules file. | `core/src/gambler_rules.rs`, `core/src/dealer_rules.rs`; claims 1–3 below |
+| NPCs with wallets | 24 NPC gamblers, each its own NEAR account `g-<name>.tilthouse.testnet` with its own in-contract balance; they sign their own `open_session` transactions. 6 NPC dealers (`ada`, `bruno`, `chloe`, `dmitri`, `eve`, `faye`) control their tables from their own accounts. Every choice comes from one readable rules file. | `core/src/gambler_rules.rs`, `core/src/dealer_rules.rs`; claims 1–3 below |
 | Player-owned markets | Any player opens a table (an LP pool they found), rents one of 6 seats by the hour, outbids the weakest seat, buys or sells seats on the seat market (seat leases are NEP-245 tokens `seat-<n>`), and anyone can buy LP shares of any table. | `docs/floor.md`, `docs/tycoon.md`; claims 7–10 |
 | Economies that evolve without a dev patch | NPC dealers reprice from on-chain rules, gamblers move to better offers, unpaid rent evicts, rent fills a jackpot that pays a bettor, the only inflow is a capped hourly salary. A simulated week (seed 42) produces 165 price wars, 37 jackpots, 73 evictions, a seat sale and busted tables reopened by new liquidity, with money conserved at every frame. | claims 4–6, 10 |
 | Players never notice the chain | Social login (Privy: email, Google, X) with an embedded NEAR wallet; a function-call key limited to the session methods; moves relayed as NEP-366 meta-transactions, so no gas and no popups; rounds answer in ~40 ms off chain and settle on chain in batches. | `relayer/src/policy.ts`, `docs/sessions.md`; claims 11, 16, 18 |
@@ -94,7 +94,7 @@ From `docs/tycoon.md` and `docs/floor.md`, by time scale (constants from the cod
   loyalty and the jackpot, then walks to the best one or leaves, and says why ("Ada's 1.0 % beats
   Bruno's 2.4 %"). Seated, it bets a round every 3 s; a human's round answers in ~40 ms. Every
   settled bet can hit the jackpot.
-- **Every 5 min: the market moves.** The keeper passes every minute: it collects rent into the
+- **Every few minutes: the market moves.** The keeper passes every 3 minutes on the live floor (every minute by default): it collects rent into the
   jackpot, reprices autopilot and NPC tables from `core/src/dealer_rules.rs` (cut the edge after
   20 min without players, raise it when busy, undercut a rival that took the players, boosts of up
   to 15 min once an hour) and places NPC rent bids. Owners watch footfall and P&L on "My table"
@@ -143,6 +143,15 @@ helper, `view <contract> <method> [json args]`, which calls a view over public R
 view() { node -e 'fetch("https://test.rpc.fastnear.com",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"query",params:{request_type:"call_function",finality:"final",account_id:process.argv[1],method_name:process.argv[2],args_base64:btoa(process.argv[3]??"{}")}})}).then(r=>r.json()).then(j=>console.log(Buffer.from(j.result.result).toString()))' "$@"; }
 ```
 
+Outputs were pasted from runs on a clean checkout on 2026-11-12 and 2026-11-13. Live values
+(balances, rents, jackpot, who is seated, sessions) move all the time, so yours will differ; the
+shape and the `✓`/`ok` lines will not. Chain claims read through public RPC (the `view` helper);
+the nearblocks address pages are for humans and refuse most scripted clients. CI
+(`.github/workflows/ci.yml`) runs fmt, clippy, every Rust test including the sandbox, `pnpm -r
+typecheck`, `pnpm -r test` and the site build on every push to `main`; "Verify deployment"
+(`.github/workflows/verify-deployment.yml`) rebuilds the deployed contracts daily and compares the
+hashes with the chain.
+
 | # | Claim | Command | Output |
 | --- | --- | --- | --- |
 | 1 | NPC gamblers sign their own transactions from their own wallets | `node -e 'fetch("https://api-testnet.nearblocks.io/v3/accounts/g-mia.tilthouse.testnet/txns").then(r=>r.json()).then(j=>j.data.slice(0,3).forEach(t=>console.log(t.signer_account_id,t.actions[0].method,t.receiver_account_id)))'` | `g-mia.tilthouse.testnet open_session floor.tilthouse.testnet` (×3) |
@@ -157,12 +166,12 @@ view() { node -e 'fetch("https://test.rpc.fastnear.com",{method:"POST",headers:{
 | 10 | Unpaid rent evicts the table and feeds the jackpot | `cargo test -p tilt-house-contract --test sandbox` (one run covers claims 8–13) | `test unpaid_rent_evicts_and_feeds_the_jackpot ... ok` |
 | 11 | A session opens, settles on chain and reveals a seed anyone can verify; every token stays accounted for (`assert_conserved`) | `cargo test -p tilt-house-contract --test sandbox` (one run covers claims 8–13) | `test session_open_settle_close_reveals_a_verifiable_seed ... ok` |
 | 12 | Multi-spot roulette spins settle and verify | `cargo test -p tilt-house-contract --test sandbox` (one run covers claims 8–13) | `test multi_spot_roulette_rounds_settle_and_verify ... ok` |
-| 13 | If the server stalls, the player exits on their last signed state, and is paid stake + max win if the seed is never revealed | `cargo test -p tilt-house-contract --test sandbox` (one run covers claims 8–13) | `test force_close_after_timeout_then_claim_unrevealed ... ok`, then `test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` (~8 min on 2026-11-13; the run also covers claim 25, NPC lock-down, poker settlement, table rename/retire and the v3→v4 upgrade: `test upgrade_from_v3_keeps_every_balance_and_session ... ok`) |
+| 13 | If the server stalls, the player exits on their last signed state, and is paid stake + max win if the seed is never revealed | `cargo test -p tilt-house-contract --test sandbox` (one run covers claims 8–13) | `test force_close_after_timeout_then_claim_unrevealed ... ok`, then `test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` (~8 min on a warm machine, ~20 min cold; the run also covers claim 25, NPC lock-down, poker settlement, table rename/retire and the v3→v4 upgrade: `test upgrade_from_v3_keeps_every_balance_and_session ... ok`) |
 | 14 | Every table's total edge stays within 1–5 % | `cargo test -p tilt-house-core --test edges` | `test dice_total_edge_bounds ... ok`, `test roulette_total_edge_bounds ... ok`, `test blackjack_total_edge_bounds ... ok`, `test blackjack_base_edge ... ok`, `test result: ok. 4 passed; 0 failed` |
 | 15 | The browser/CLI verifier matches the Rust protocol (shared vectors) and refuses forged or rewritten rounds | `cargo test -p tilt-house-session-server --test vectors && pnpm --filter @tilt-house/web exec vitest run src/near/session-client.test.ts` | `test web_vectors_match_the_rust_protocol ... ok`, `test result: ok. 1 passed; 0 failed`, then `Test Files  1 passed (1)`, `Tests  29 passed (29)` |
-| 16 | The relayer refuses everything outside its allow-list | `pnpm --filter @tilt-house/relayer test` | `Test Files  7 passed (7)`, `Tests  158 passed (158)` |
+| 16 | The relayer refuses everything outside its allow-list | `pnpm --filter @tilt-house/relayer test` | `Test Files  8 passed (8)`, `Tests  211 passed (211)` |
 | 17 | The contracts on chain are reproducible builds of this repo (NEP-330 names the commit; pinned docker image): the USD floor, $TILT and the TILT floor | `scripts/verify-deployment.sh testnet` (needs docker and cargo-near; ~2–5 min) | `PASS  floor floor.tilthouse.testnet: reproducible build of contract/ at faa7636 = chain (54kbcER1UUe3p7CKuMogjnwijQvPvSTvnqgTd13A8xei)`, `PASS  tilt tilt.tilthouse.testnet: reproducible build of meme/ at 9120a49 = chain (EN6Q6tDX9SGAUbrFS7vEEVkA4CSGiacWZ4kut22wpc5H)`, `PASS  floor_tilt floor-tilt.tilthouse.testnet: reproducible build of contract/ at faa7636 = chain (54kbcER1UUe3p7CKuMogjnwijQvPvSTvnqgTd13A8xei)`, `PASS  token tusdc.tilthouse.testnet: chain code_hash 6P86ptN89U9Pj7RaUKsHE6T25AvWv35XkB3UnPEnK3M9 = recorded`, `SKIP  token …: not built reproducibly`, `PASS` (each contract also checks `chain code_hash … = recorded`) |
-| 18 | Play end to end on testnet with a brand-new account, no wallet and no gas: rounds answer in tens of milliseconds and every one is verified against the chain | `pnpm --filter cli-demo demo --new` | `✓ the relayer activated it: gas money, token registration, 100 tUSDC`, `✓ deposited 20.00 tUSDC into floor.tilthouse.testnet (ft_transfer_call)`, … `21 instant requests over 3 sessions: median 30 ms, p90 81 ms, max 94 ms`, `✓ dice …`, `✓ roulette …`, `✓ blackjack …`, `✓ Demo complete: every round verified against the chain.` (exit 0) |
+| 18 | Play end to end on testnet with a brand-new account, no wallet and no gas: rounds answer in tens of milliseconds and every one is verified against the chain | `pnpm --filter cli-demo demo --new` | `✓ the relayer activated it: gas money, token registration, welcome chips`, `✓ deposited 20.00 tUSDC into floor.tilthouse.testnet (ft_transfer_call)`, … `21 instant requests over 3 sessions: median 30 ms, p90 81 ms, max 94 ms`, `✓ dice …`, `✓ roulette …`, `✓ blackjack …`, `✓ Demo complete: every round verified against the chain.` (exit 0) |
 | 19 | The NPC gamblers are a fixed list registered in the floor contract (their money can only go to tables) | `view floor.tilthouse.testnet get_npcs` | `["g-mia.tilthouse.testnet","g-noah.tilthouse.testnet","g-zoe.tilthouse.testnet",…` (24 accounts) |
 | 20 | $TILT's parameters are fixed at launch and readable | `view tilt.tilthouse.testnet get_params` | `{"floor":"floor.tilthouse.testnet","welcome_operator":"relayer.tilthouse.testnet","house_receiver":"tilthouse.testnet","launch_day":20770,"treasury_initial":"1000000000000","house_allocation":"300000000000","welcome_pool":"500000000000","welcome_amount":"100000000","welcome_daily_claims":200,"mint_rate_bp":100000,"streak_bonus_bp":1000,"streak_bonus_max_days":7,"player_day_cap":"500000000","day_cap":"5000000000","burn_bp":100,"tilt_hour_amount":"500000000","tilt_hour_min_burners":5,"tilt_hour_min_burn":"20000000","tilt_hour_window_secs":3600,"max_players":50,"log_capacity":256}` |
 | 21 | $TILT has no owner, no setter, no admin method: the method list embedded in the deployed wasm | `node -e 'fetch("https://test.rpc.fastnear.com",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:1,method:"query",params:{request_type:"call_function",finality:"final",account_id:"tilt.tilthouse.testnet",method_name:"__contract_abi",args_base64:""}})}).then(r=>r.json()).then(j=>{for(const f of JSON.parse(require("zlib").zstdDecompressSync(Buffer.from(j.result.result))).body.functions)console.log(f.kind,f.name,(f.modifiers\|\|[]).join(","))})'` (Node ≥ 22.15 for zstd) | `call burn_for_tilt_hour payable`, `call claim_welcome_for payable`, `view contract_source_metadata`, `view ft_balance_of`, `view ft_metadata`, `call ft_resolve_transfer private`, `view ft_total_supply`, `call ft_transfer payable`, `call ft_transfer_call payable`, `view get_log`, `view get_params`, `view get_state`, `view has_claimed_welcome`, `call new init`, `call on_tilt_hour_started private`, `call report_day`, `view storage_balance_bounds`, `view storage_balance_of`, `call storage_deposit payable`, `call storage_unregister payable`, `call storage_withdraw payable`. (`report_day` refuses any caller but the floor, `claim_welcome_for` any caller but the relayer. The account still has its full-access key, so the code can be redeployed until the lock step in `docs/tilt.md` is run.) |
@@ -283,7 +292,8 @@ e.g. the live gamblers feed `https://tilt-house-beta.vercel.app/session/gamblers
 - Tilt is an earlier casino project by the same team on Solana (private). Tilt House is a separate
   code base started on 2026-11-03 for this hackathon; its rules were written from scratch in `core/`.
 - Libraries: near-sdk, near-contract-standards, near-workspaces, cargo-near, near-api-js, axum,
-  tokio, ed25519-dalek, borsh, Privy, Hono, Vite, React, three.js, vitest, @noble/hashes.
+  tokio, ed25519-dalek, borsh, Privy, Hono, Vite, React, three.js, vitest, @noble/hashes; plus serde,
+  sha2, hmac, bs58, anyhow, react-router and the rest listed in each `Cargo.toml` and `package.json`.
 - AI coding agents were used to write code and documentation. The demo video's voice is synthetic (Kokoro TTS,
   voice `af_heart`); its music is "Patron Saint of Heists" by Bryan Teoh (public domain, FreePD) and its sound
   effects come from Kenney's audio packs and freesound.org (CC0).

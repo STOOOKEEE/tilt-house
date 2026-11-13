@@ -1,6 +1,7 @@
 # Mainnet runbook
 
-Tilt House on NEAR mainnet runs next to testnet, with the same code. Chips on mainnet are **play
+Tilt House on NEAR mainnet would run next to testnet, with the same code (it is not deployed: the
+hackathon build runs on testnet only). Chips on mainnet are **play
 money**: the token has no value and no redemption. Every mainnet script is a **dry run** unless
 `CONFIRM_MAINNET` names the account it would create; agents only ever dry-run. The orchestrator
 runs the real deployment after a human funds the root account.
@@ -14,7 +15,7 @@ from it. near-cli-rs is `~/.cargo/bin/near`: `export PATH=$HOME/.cargo/bin:$PATH
 | --- | --- |
 | NPC gamblers: at most 24, registered in the floor | floor `register_npcs` (cap in `core/src/gambler_rules.rs`) |
 | NPCs hold **one** key: function-call, floor only, `open_session, close_session, force_close, claim_unrevealed`, 1 NEAR gas allowance; no full-access key | `scripts/create-gamblers.sh` (mainnet) |
-| The floor refuses `withdraw`, `invest`, `divest`, seat and table moves, `mt_transfer` for registered NPCs | contract v3 (`docs/contract-api.md`) |
+| The floor refuses `withdraw`, `invest`, `divest`, seat and table moves, `mt_transfer` for registered NPCs | floor contract, since v3 (`docs/contract-api.md`) |
 | NPC salary goes straight into the NPC's in-contract balance, only from the keeper, capped at 200 chips | floor `credit_npc` + `agents/` `SALARY_MODE=credit_npc` (forced on mainnet) |
 | The relayer activates only Privy-authenticated users (ES256 JWT, JWKS of app `cmw3anyvt021d0hjy746afxqi`), one account per Privy user, persisted. Testnet's anonymous activation for the CLI demo (`ANONYMOUS_ACTIVATION`) refuses to start on mainnet | `relayer/src/privy.ts`, `relayer/src/state.ts`, `relayer/src/config.ts` |
 | Activation sends the minimum NEAR (0.01: ~0.0038 of storage for the account and its two keys) | `relayer/src/config.ts` |
@@ -47,7 +48,7 @@ sign-with-legacy-keychain send`). Anyone can top up an NPC; nobody can take NEAR
 ## Prerequisites
 
 - `ROOT` exists on mainnet, funded (45 NEAR), its key in `~/.near-credentials/mainnet/ROOT.json`.
-- Floor contract v3 (`credit_npc`, `register_npcs`, NPC refusals) committed: the build is
+- Floor contract v3 or later (v4 runs on testnet) (`credit_npc`, `register_npcs`, NPC refusals) committed: the build is
   reproducible (`deploy-floor.sh` uses Docker; commit first).
 - Session server at b36839e or later (`GAMBLER_ACCOUNT_SUFFIX`: NPC accounts `g-<name><suffix>`,
   testnet default `.tilthouse.testnet`; set `.ROOT` in its env), built to
