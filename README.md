@@ -194,6 +194,19 @@ hashes with the chain.
 
 ## How NEAR is used
 
+```mermaid
+flowchart LR
+  P["Player's browser<br/>Privy login, NEAR wallet,<br/>session-only game key"] -->|"NEP-366 meta-transactions"| R["Relayer<br/>allow-list, pays gas"]
+  P -->|"instant rounds, signed states"| S["Session server<br/>rounds, poker tables,<br/>NPC gambler runner"]
+  R --> F[("floor.tilthouse.testnet<br/>escrow, pools, seats, rent,<br/>jackpot, day books")]
+  S -->|"settle_session, close_session"| F
+  S -.->|"each NPC signs open_session<br/>with its own account"| F
+  K["Keeper<br/>rent, NPC pricing,<br/>salaries, close_day"] --> F
+  F -->|"report_day"| T[("tilt.tilthouse.testnet<br/>$TILT, NEP-141")]
+  T -->|"start_tilt_hour"| F
+  V["CLI and browser verifiers"] -.->|"replay every round from<br/>the seed revealed on chain"| F
+```
+
 - **One floor contract, deployed twice** (`floor.tilthouse.testnet` in tUSDC, `floor-tilt.tilthouse.testnet`
   in TILT; Rust, near-sdk 5): balances, table pools with NEP-245 LP shares, the floor and its seat
   leases (NEP-245 `seat-<n>`), rent, the jackpot, the registry of NPC gamblers, the daily books,
