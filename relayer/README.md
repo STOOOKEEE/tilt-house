@@ -15,6 +15,10 @@ The relayer account pays for every transaction, the activations (0.02 NEAR on te
 0.01 on mainnet) and token storage deposits, and must be the minter of `TOKEN_CONTRACT`
 (`mint_to`). Settings: `.env.example`.
 
+RPC: `NEAR_RPC_URLS`, preferred first (testnet default: fastnear, then drpc). An endpoint that
+answers 429, 408 or 5xx cools down (1 s, doubling to 30 s) and reads move to the next one;
+transactions go to the first only (`src/rpc.ts`). Contract errors are never retried.
+
 ## Spending guards
 
 - **Kill switch**: `RELAYER_PAUSED=1` makes every `POST` answer `503 paused`; `/health`

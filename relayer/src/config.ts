@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { nearToYocto } from "near-api-js";
+import { rpcUrls } from "./rpc.ts";
 
 export type Network = "testnet" | "mainnet";
 
@@ -22,7 +23,8 @@ export interface Config {
   faucetMode: FaucetMode;
   relayerAccount: string;
   relayerPrivateKey: string;
-  rpcUrl: string;
+  /** Preferred first (`NEAR_RPC_URLS`): reads fail over, transactions use the first (rpc.ts). */
+  rpcUrls: string[];
   /** Interface to listen on: loopback unless a deployment says otherwise. */
   host: string;
   port: number;
@@ -54,9 +56,10 @@ const DEFAULT_HOST = "127.0.0.1";
  * Testnet keeps its historical 0.02.
  */
 const NETWORKS = {
-  testnet: { rpc: "https://test.rpc.fastnear.com", suffix: ".testnet", activation: "0.02", budget: "5" },
-  mainnet: { rpc: "https://rpc.mainnet.fastnear.com", suffix: ".near", activation: "0.01", budget: undefined },
-} as const satisfies Record<Network, { rpc: string; suffix: string; activation: string; budget: string | undefined }>;
+  // drpc: reads only in practice (it times out on send_tx); rpc.testnet.near.org is deprecated.
+  testnet: { rpc: ["https://test.rpc.fastnear.com", "https://near-testnet.drpc.org"], suffix: ".testnet", activation: "0.02", budget: "5" },
+  mainnet: { rpc: ["https://rpc.mainnet.fastnear.com"], suffix: ".near", activation: "0.01", budget: undefined },
+} as const satisfies Record<Network, { rpc: readonly string[]; suffix: string; activation: string; budget: string | undefined }>;
 
 export const ACCOUNT_ID = /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
 const NEAR_AMOUNT = /^\d+(\.\d{1,24})?$/;
@@ -133,7 +136,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     faucetMode: mode,
     relayerAccount: accountId(env, "RELAYER_ACCOUNT", defaults.suffix),
     relayerPrivateKey: required(env, "RELAYER_PRIVATE_KEY"),
-    rpcUrl: env.NEAR_RPC_URL ?? defaults.rpc,
+    rpcUrls: rpcUrls(env, defaults.rpc),
     host: env.HOST ?? DEFAULT_HOST,
     port,
     activationYocto: nearAmount(env.ACTIVATION_NEAR ?? defaults.activation, "ACTIVATION_NEAR"),

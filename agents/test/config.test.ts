@@ -13,7 +13,7 @@ describe("loadConfig", () => {
       token: "tusdc.tilthouse.testnet",
       sessionsAccount: "sessions.tilthouse.testnet",
       relayerAccount: "relayer.tilthouse.testnet",
-      rpcUrl: "https://test.rpc.fastnear.com",
+      rpcUrls: ["https://test.rpc.fastnear.com", "https://near-testnet.drpc.org"],
       alertWebhookUrl: null,
       dryRun: false,
     });
@@ -30,7 +30,7 @@ describe("loadConfig", () => {
       salaryMode: "credit_npc",
       keeper: "tilthouse.near",
       token: "tusdc.tilthouse.near",
-      rpcUrl: "https://rpc.mainnet.fastnear.com",
+      rpcUrls: ["https://rpc.mainnet.fastnear.com"],
       dryRun: true,
     });
     expect(config.keysDir).toMatch(/\.near-credentials\/mainnet$/);

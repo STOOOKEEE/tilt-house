@@ -38,6 +38,10 @@ Every 15 minutes it checks the NEAR left on the keeper, the session server's sig
 (`ALERT_*_NEAR`, `.env.example`) an account raises a JSON line at level `error` (stderr), also
 POSTed to `ALERT_WEBHOOK_URL` when set.
 
+RPC: `NEAR_RPC_URLS`, preferred first (testnet default: fastnear, then drpc); 429/408/5xx answers
+cool the endpoint down (1 s doubling to 30 s) and reads move to the next, transactions use the
+first only (`src/rpc.ts`, same as the relayer's).
+
 One JSON line is logged per call; a failing call never stops the loop. `--dry-run` reads the chain,
 prints each change call as `{"dry_run":true,"signer","receiver","method","args"}`, sends nothing and
 exits after one pass.

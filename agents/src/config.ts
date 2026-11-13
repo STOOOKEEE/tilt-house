@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { nearToYocto } from "near-api-js";
+import { rpcUrls } from "./rpc.ts";
 
 export type Network = "testnet" | "mainnet";
 
@@ -24,7 +25,8 @@ export interface AlertThresholds {
 export interface Config {
   network: Network;
   house: string;
-  rpcUrl: string;
+  /** Preferred first (`NEAR_RPC_URLS`): reads fail over, transactions use the first (rpc.ts). */
+  rpcUrls: string[];
   token: string;
   /** The contract's configured keeper: signs `collect_rent`, `reprice`, `rent_bid` and pays salaries. */
   keeper: string;
@@ -46,9 +48,10 @@ export interface Config {
 }
 
 const NETWORKS = {
-  testnet: { rpc: "https://test.rpc.fastnear.com", suffix: ".testnet", root: "tilthouse.testnet" },
-  mainnet: { rpc: "https://rpc.mainnet.fastnear.com", suffix: ".near", root: undefined },
-} as const satisfies Record<Network, { rpc: string; suffix: string; root: string | undefined }>;
+  // drpc: reads only in practice (it times out on send_tx); rpc.testnet.near.org is deprecated.
+  testnet: { rpc: ["https://test.rpc.fastnear.com", "https://near-testnet.drpc.org"], suffix: ".testnet", root: "tilthouse.testnet" },
+  mainnet: { rpc: ["https://rpc.mainnet.fastnear.com"], suffix: ".near", root: undefined },
+} as const satisfies Record<Network, { rpc: readonly string[]; suffix: string; root: string | undefined }>;
 
 /**
  * Defaults from testnet's measured burn (docs/mainnet.md): keeper ~1.5 NEAR/day, session server
@@ -115,7 +118,7 @@ export function loadConfig(env: NodeJS.ProcessEnv, argv: readonly string[]): Con
   return {
     network: net,
     house: accountId(env.HOUSE_CONTRACT, "HOUSE_CONTRACT", suffix),
-    rpcUrl: env.NEAR_RPC_URL ?? rpc,
+    rpcUrls: rpcUrls(env, rpc),
     token: accountId(env.TOKEN_CONTRACT ?? `tusdc.${accountSuffix}`, "TOKEN_CONTRACT", suffix),
     keeper: accountId(env.KEEPER_ACCOUNT ?? accountSuffix, "KEEPER_ACCOUNT", suffix),
     accountSuffix,

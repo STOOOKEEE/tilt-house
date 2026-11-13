@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
-import { JsonRpcProvider } from "near-api-js";
 import { loadConfig, type AlertThresholds, type SalaryMode } from "./config.ts";
 import { errorMessage, houseViews, sendFor, sleep, type House, type Send } from "./near.ts";
+import { FailoverProvider } from "./rpc.ts";
 
 /** core/src/gambler_rules.rs: `GAMBLER_SALARY_PER_HOUR`, `GAMBLER_MAX_BALANCE` and `LINEUP`. */
 export const SALARY_PER_HOUR = 5_000_000n;
@@ -208,7 +208,7 @@ export function alertFor(webhookUrl: string | null, logError: (line: string) => 
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env, process.argv);
-  const provider = new JsonRpcProvider({ url: config.rpcUrl });
+  const provider = new FailoverProvider(config.rpcUrls);
   const deps: KeeperDeps = {
     house: houseViews(provider, config.house, config.token),
     send: sendFor(config.dryRun, provider, config.house, config.keysDir),

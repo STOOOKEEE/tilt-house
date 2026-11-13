@@ -1,6 +1,5 @@
 import {
   Account,
-  JsonRpcProvider,
   KeyPair,
   KeyPairSigner,
   actions,
@@ -12,6 +11,7 @@ import {
 } from "near-api-js";
 import { AccountDoesNotExistError, AccessKeyDoesNotExistError } from "near-api-js/rpc-errors";
 import type { Config } from "./config.ts";
+import { FailoverProvider } from "./rpc.ts";
 import type { DecodedSignedDelegate } from "./policy.ts";
 
 export interface AccessKeyInfo {
@@ -97,7 +97,7 @@ class HashRecordingSigner extends KeyPairSigner {
 
 export function nearChain(config: Config): Chain {
   if (!isKeyPairString(config.relayerPrivateKey)) throw new Error("RELAYER_PRIVATE_KEY must be ed25519:… or secp256k1:…");
-  const provider = new JsonRpcProvider({ url: config.rpcUrl });
+  const provider = new FailoverProvider(config.rpcUrls);
   const keyPair = KeyPair.fromString(config.relayerPrivateKey);
   const signer = new KeyPairSigner(keyPair);
   const relayer = new Account(config.relayerAccount, provider, signer);

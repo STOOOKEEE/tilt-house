@@ -19,7 +19,7 @@ const MAINNET = {
 describe("loadConfig", () => {
   it("defaults to testnet, unpaused, 0.02 NEAR activations and a 5 NEAR daily budget", () => {
     const config = loadConfig(TESTNET);
-    expect(config).toMatchObject({ network: "testnet", paused: false, rpcUrl: "https://test.rpc.fastnear.com" });
+    expect(config).toMatchObject({ network: "testnet", paused: false, rpcUrls: ["https://test.rpc.fastnear.com", "https://near-testnet.drpc.org"] });
     expect(config.activationYocto).toBe(20_000_000_000_000_000_000_000n);
     expect(config.dailyBudgetYocto).toBe(5_000_000_000_000_000_000_000_000n);
     expect(config.dataDir).toMatch(/relayer-testnet$/);
@@ -27,7 +27,7 @@ describe("loadConfig", () => {
 
   it("mainnet: mainnet RPC, 0.01 NEAR activations, its own data dir", () => {
     const config = loadConfig(MAINNET);
-    expect(config).toMatchObject({ network: "mainnet", rpcUrl: "https://rpc.mainnet.fastnear.com" });
+    expect(config).toMatchObject({ network: "mainnet", rpcUrls: ["https://rpc.mainnet.fastnear.com"] });
     expect(config.activationYocto).toBe(10_000_000_000_000_000_000_000n);
     expect(config.dailyBudgetYocto).toBe(2_000_000_000_000_000_000_000_000n);
     expect(config.dataDir).toMatch(/relayer-mainnet$/);
