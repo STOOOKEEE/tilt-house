@@ -55,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
         Some("--no-chain") => true,
         Some(other) => bail!("unknown argument {other}; usage: [--no-chain]"),
     };
+    let gamblers = gamblers_on()?;
     if no_chain {
         let signer = match env("SESSION_SERVER_PRIVATE_KEY") {
             Some(key) => Signer::from_near_secret(&key)?,
@@ -64,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
             }
         };
         let dir = env("SESSION_DATA_DIR").unwrap_or_else(|| DEFAULT_NO_CHAIN_DATA_DIR.into());
-        return serve(signer, NoChain::default(), dir.into(), None).await;
+        return serve(signer, NoChain::default(), dir.into(), None, gamblers).await;
     }
     let key = required("SESSION_SERVER_PRIVATE_KEY")?;
     let chain = NearChain::new(
@@ -83,6 +84,7 @@ async fn main() -> anyhow::Result<()> {
         chain,
         required("SESSION_DATA_DIR")?.into(),
         Some(&keys_dir),
+        gamblers,
     )
     .await
 }
@@ -92,6 +94,7 @@ async fn serve<C: Chain>(
     chain: C,
     data_dir: PathBuf,
     keys_dir: Option<&Path>,
+    gamblers_on: bool,
 ) -> anyhow::Result<()> {
     let addr: SocketAddr = env("SESSION_SERVER_ADDR")
         .unwrap_or_else(|| DEFAULT_ADDR.into())
@@ -104,7 +107,7 @@ async fn serve<C: Chain>(
         app.public_key(),
         data_dir.display()
     );
-    let gamblers = if gamblers_on()? {
+    let gamblers = if gamblers_on {
         let gamblers = Arc::new(Gamblers::new(
             Arc::clone(&app),
             Clock::system(),
