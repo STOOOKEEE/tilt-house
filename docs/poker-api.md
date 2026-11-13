@@ -23,8 +23,9 @@ big blinds, none without a flop.
 
 1. `GET /poker/tables`: pick a table.
 2. `POST /sessions` `{player, dealer_id: <table id>, lock: <buy-in>, client_seed}` (docs/sessions.md):
-   `lock` must be within 4..=20 chips (`400` otherwise) and at most the table's current `max_buy_in`
-   (`409 buy-in above this table's max buy-in now` otherwise). Keep `session_id` and `token`.
+   `lock` must be within the table's `min_buy_in`..=20 chips (`400` otherwise) and at most its
+   current `max_buy_in` (`409 buy-in above this table's max buy-in now` otherwise); a closed table
+   (`open: false`) answers `409`. Keep `session_id` and `token`.
 3. Sign `open_session` on chain, exactly as at the other tables.
 4. `POST /poker/tables/{id}/join` with `Authorization: Bearer <token>` and `{"session_id": "..."}`.
    `409 session not open on chain yet` until the open tx has executed: retry every second.
@@ -54,8 +55,10 @@ interface TableSummary {
   npcs: number             // seated NPC players (leavers not)
   small_blind: string
   big_blind: string
-  min_buy_in: string
-  max_buy_in: string       // capped at the ticket's max bet (refreshed on this call); below min_buy_in: no buy-in now
+  min_buy_in: string       // 20 BB (4 chips); lowered to max_buy_in when the cap is under it (never under 10 BB)
+  max_buy_in: string       // 100 BB, capped at the ticket's max bet (refreshed on this call)
+  open: boolean            // false: the cap is under 10 BB, no buy-in now (both buy-ins "0")
+  reason: string | null    // why the table is closed
   rake_bp: number          // the dealer's rake when the table was first used
   hand_number: number      // the table's last hand number (0: none yet); goes on across restarts
 }
@@ -137,7 +140,7 @@ interface TableState {
   queued: number           // humans waiting for an NPC's seat
   config: {
     small_blind: string; big_blind: string; rake_cap: string
-    min_buy_in: string; max_buy_in: string
+    min_buy_in: string; max_buy_in: string; open: boolean; reason: string | null
     rake_bp: number; action_ms: number; seed_ms: number
   }
   hand: HandView | null    // null between hands

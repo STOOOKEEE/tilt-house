@@ -216,6 +216,22 @@ impl<C: Chain> Gamblers<C> {
                 key,
             });
         }
+        Self::with_members(app, clock, data_dir, members, seed)
+    }
+
+    /// No NPC gamblers (`GAMBLERS=off`): nobody walks the floor or sits at a poker table, and
+    /// the gamblers API answers with an empty floor. For a floor without an NPC lineup (TILT).
+    pub fn off(app: Arc<App<C>>, clock: Clock, data_dir: &Path) -> anyhow::Result<Self> {
+        Self::with_members(app, clock, data_dir, Vec::new(), [0; 32])
+    }
+
+    fn with_members(
+        app: Arc<App<C>>,
+        clock: Clock,
+        data_dir: &Path,
+        members: Vec<Member>,
+        seed: [u8; 32],
+    ) -> anyhow::Result<Self> {
         let snapshots = members
             .iter()
             .map(|m| GamblerSnapshot {

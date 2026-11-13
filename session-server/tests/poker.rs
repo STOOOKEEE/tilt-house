@@ -13,6 +13,7 @@ use axum::http::{Request, StatusCode};
 use axum::Router;
 use core_rules::poker::{deck_for, replay_hand, verify_poker_round, Card, PokerAction};
 use core_rules::session::{sha256, Hash32, SessionTicket, SettleBatch};
+use core_rules::Game;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tilt_house_session_server::app::{App, CreateReply};
@@ -43,14 +44,15 @@ fn config() -> PokerConfig {
 }
 
 fn serve(dir: &std::path::Path) -> Router {
-    serve_on(dir, NoChain::default())
+    serve_on(dir, NoChain::default(), true)
 }
 
-fn serve_on<C: Chain>(dir: &std::path::Path, chain: C) -> Router {
+/// `npcs` false: the `GAMBLERS=off` server, no lineup to borrow from.
+fn serve_on<C: Chain>(dir: &std::path::Path, chain: C, npcs: bool) -> Router {
     let (store, events) = Store::open(dir).unwrap();
     let app = Arc::new(App::load(Signer::random().unwrap(), chain, store, events).unwrap());
     // Gamblers not started: all away, so the table can borrow them.
-    let gamblers = Arc::new(
+    let gamblers = if npcs {
         Gamblers::new(
             Arc::clone(&app),
             Clock::system(),
@@ -59,8 +61,10 @@ fn serve_on<C: Chain>(dir: &std::path::Path, chain: C) -> Router {
             DEFAULT_ACCOUNT_SUFFIX,
             [0; 32],
         )
-        .unwrap(),
-    );
+    } else {
+        Gamblers::off(Arc::clone(&app), Clock::system(), dir)
+    };
+    let gamblers = Arc::new(gamblers.unwrap());
     let poker = Arc::new(Poker::new(
         Arc::clone(&app),
         Arc::clone(&gamblers),
@@ -704,7 +708,7 @@ impl Chain for NpcsCannotSit {
 #[tokio::test]
 async fn failing_npcs_are_not_called_in_a_loop() {
     let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-    let bare = serve_on(dir.path(), NpcsCannotSit::default());
+    let bare = serve_on(dir.path(), NpcsCannotSit::default(), true);
     let alice = sit(&bare, 2, "alice.testnet").await;
     let before = READS.load(Ordering::SeqCst);
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -713,6 +717,177 @@ async fn failing_npcs_are_not_called_in_a_loop() {
     assert!(reads <= 12, "{reads} chain reads in 3 s");
     let table = state(&alice.router, Some(alice.token())).await;
     assert!(table.seats.iter().flatten().all(|s| !s.npc));
+}
+
+/// The demo floor with the poker table's max bet pinned to `max_bet` (repricing lowered it).
+struct CappedPoker {
+    inner: NoChain,
+    max_bet: u128,
+}
+
+impl CappedPoker {
+    fn new(max_bet: u128) -> Self {
+        Self {
+            inner: NoChain::default(),
+            max_bet,
+        }
+    }
+}
+
+impl Chain for CappedPoker {
+    async fn dealer(&self, dealer_id: &str) -> anyhow::Result<Option<DealerInfo>> {
+        let dealer = self.inner.dealer(dealer_id).await?;
+        Ok(dealer.map(|d| match d.game {
+            Game::Poker => DealerInfo {
+                max_bet: self.max_bet,
+                ..d
+            },
+            _ => d,
+        }))
+    }
+    async fn floor(&self) -> anyhow::Result<FloorInfo> {
+        let mut floor = self.inner.floor().await?;
+        for table in floor.tables.iter_mut().filter(|t| t.game == Game::Poker) {
+            table.max_bet = self.max_bet;
+        }
+        Ok(floor)
+    }
+    async fn balance(&self, account: &str) -> anyhow::Result<u128> {
+        self.inner.balance(account).await
+    }
+    async fn open_session(
+        &self,
+        player: &str,
+        key: Option<&str>,
+        ticket: &SessionTicket,
+        sig: &[u8; 64],
+    ) -> anyhow::Result<()> {
+        self.inner.open_session(player, key, ticket, sig).await
+    }
+    async fn session_opened(&self, id: &str) -> anyhow::Result<bool> {
+        self.inner.session_opened(id).await
+    }
+    async fn settle(&self, batch: &SettleBatch) -> anyhow::Result<()> {
+        self.inner.settle(batch).await
+    }
+    async fn close(&self, id: &str, seed: &Hash32) -> anyhow::Result<()> {
+        self.inner.close(id, seed).await
+    }
+}
+
+async fn open_poker(router: &Router, player: &str, lock: u128) -> (StatusCode, Value) {
+    call(
+        router,
+        "POST",
+        "/sessions",
+        None,
+        Some(json!({
+            "player": player,
+            "dealer_id": TABLE,
+            "lock": lock.to_string(),
+            "client_seed": format!("{player}-seed"),
+        })),
+    )
+    .await
+}
+
+/// Regression (Faye on testnet, 2026-11-13): a max bet capping buy-ins at 3.73 showed "buy in
+/// between 4.00 and 3.73" and nobody could sit. Under 20 BB the minimum drops to the cap.
+#[tokio::test]
+async fn a_capped_table_lowers_its_minimum_buy_in() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let router = with_peer(&serve_on(dir.path(), CappedPoker::new(4_662_500), true), 1);
+    let (status, tables) = call(&router, "GET", "/poker/tables", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(tables[0]["min_buy_in"], "3730000", "{tables}");
+    assert_eq!(tables[0]["max_buy_in"], "3730000");
+    assert_eq!(tables[0]["open"], true);
+    assert_eq!(tables[0]["reason"], Value::Null);
+    let (status, body) = call(
+        &router,
+        "GET",
+        &format!("/poker/tables/{TABLE}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["config"]["min_buy_in"], "3730000", "{body}");
+    assert_eq!(body["config"]["open"], true);
+    assert_eq!(
+        open_poker(&router, "alice.testnet", 3_730_000).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        open_poker(&router, "bob.testnet", 3_729_999).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        open_poker(&router, "carol.testnet", 4_000_000).await.0,
+        StatusCode::CONFLICT
+    );
+}
+
+/// Under 10 BB the table says it is closed instead of advertising a range nobody fits.
+#[tokio::test]
+async fn a_table_capped_under_ten_big_blinds_is_closed() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let router = with_peer(&serve_on(dir.path(), CappedPoker::new(2_000_000), true), 1);
+    let (status, tables) = call(&router, "GET", "/poker/tables", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(tables[0]["open"], false, "{tables}");
+    assert!(tables[0]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("10 big blinds"));
+    assert_eq!(tables[0]["min_buy_in"], "0");
+    assert_eq!(tables[0]["max_buy_in"], "0");
+    let (_, body) = call(
+        &router,
+        "GET",
+        &format!("/poker/tables/{TABLE}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(body["config"]["open"], false, "{body}");
+    let (status, body) = open_poker(&router, "alice.testnet", 1_600_000).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    // No NPC sits at a closed table either.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let (_, body) = call(
+        &router,
+        "GET",
+        &format!("/poker/tables/{TABLE}"),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        body["seats"].as_array().unwrap().iter().all(Value::is_null),
+        "{body}"
+    );
+}
+
+/// `GAMBLERS=off` (the TILT floor): humans play among themselves, no NPC is ever seated and the
+/// gamblers floor stays empty.
+#[tokio::test]
+async fn without_gamblers_humans_play_alone() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let bare = serve_on(dir.path(), NoChain::default(), false);
+    let router = with_peer(&bare, 1);
+    let alice = sit(&bare, 2, "alice.testnet").await;
+    let bob = sit(&bare, 3, "bob.testnet").await;
+    let both = [(&alice, Plan::Passive), (&bob, Plan::Passive)];
+    for number in 1..=2 {
+        let (record, seen) = play_hand(&router, &both, number).await;
+        check_record(&router, &record, &seen).await;
+        assert_eq!(record.players.len(), 2, "{:?}", record.players);
+        assert!(record.players.iter().all(|p| !p.npc));
+    }
+    let (status, floor) = call(&router, "GET", "/gamblers/floor", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(floor, json!([]));
 }
 
 /// The archive outlives the server: a restarted server still serves every hand, and goes on

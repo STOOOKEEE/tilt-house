@@ -45,6 +45,30 @@ pub fn ticket_max_bet(dealer_max_bet: u128) -> u128 {
     (dealer_max_bet * POOL_FREE_HEADROOM_PCT / 100).max(SESSION_MIN_BET.min(dealer_max_bet))
 }
 
+/// A poker buy-in (the session lock) must fit the stakes and the range the table takes now
+/// (`poker::buy_in_range`: the contract takes a poker lock only up to the ticket's max bet).
+fn check_poker_buy_in(lock: u128, dealer_max_bet: u128) -> Result<(), ApiError> {
+    let Some((min, max)) = crate::poker::buy_in_range(dealer_max_bet) else {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "this poker table takes no buy-in now: its max bet is under 10 big blinds",
+        ));
+    };
+    if lock < min || lock > crate::poker::table_config().max_buy_in() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "poker buy-in (lock) outside the table's min_buy_in..=max_buy_in",
+        ));
+    }
+    if lock > max {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            format!("buy-in above this table's max buy-in now ({max}, see GET /poker/tables)"),
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct ApiError {
     pub status: StatusCode,
@@ -265,24 +289,8 @@ impl<C: Chain> App<C> {
         let pool_free = dealer.pool_free * POOL_FREE_HEADROOM_PCT / 100;
         let max_win = session_max_win(request.lock, pool_free);
         let max_bet = ticket_max_bet(dealer.max_bet);
-        let poker_buy_in_ok = dealer.game != Game::Poker || {
-            let stakes = crate::poker::table_config();
-            (stakes.min_buy_in()..=stakes.max_buy_in()).contains(&request.lock)
-        };
-        if !poker_buy_in_ok {
-            return Err(ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "poker buy-in (lock) outside the table's min_buy_in..=max_buy_in",
-            ));
-        }
-        // The contract takes a poker buy-in only up to the ticket's max bet.
-        if dealer.game == Game::Poker && request.lock > max_bet {
-            return Err(ApiError::new(
-                StatusCode::CONFLICT,
-                format!(
-                    "buy-in above this table's max buy-in now ({max_bet}, see GET /poker/tables)"
-                ),
-            ));
+        if dealer.game == Game::Poker {
+            check_poker_buy_in(request.lock, dealer.max_bet)?;
         }
         if !dealer.open || max_bet < SESSION_MIN_BET || max_win == 0 {
             return Err(ApiError::new(

@@ -57,6 +57,25 @@ fn max_buy_in(dealer_max_bet: u128) -> u128 {
         .min(crate::app::ticket_max_bet(dealer_max_bet))
 }
 
+/// The shortest stack a table seats when its max bet caps buy-ins under the stakes' minimum
+/// (20 BB): below 10 BB a player can barely post blinds for a few hands.
+const SHORT_BUY_IN_BB: u128 = 10;
+
+/// What a poker table takes as buy-in now (`min..=max`), or `None` when its max bet caps buy-ins
+/// under `SHORT_BUY_IN_BB` big blinds: the table is closed rather than showing a range nobody fits.
+/// A cap under the stakes' minimum lowers the minimum to the cap.
+pub fn buy_in_range(dealer_max_bet: u128) -> Option<(u128, u128)> {
+    let stakes = table_config();
+    let max = max_buy_in(dealer_max_bet);
+    if max < stakes.big_blind.saturating_mul(SHORT_BUY_IN_BB) {
+        return None;
+    }
+    Some((stakes.min_buy_in().min(max), max))
+}
+
+/// Why a table with no buy-in range is closed (`open: false`).
+const CLOSED_REASON: &str = "max bet too low for poker: buy-ins would be under 10 big blinds";
+
 /// The stakes of every poker table.
 pub fn table_config() -> TableConfig {
     TableConfig::standard(BIG_BLIND)
@@ -189,6 +208,9 @@ pub struct ConfigView {
     pub min_buy_in: u128,
     #[serde(with = "core_rules::amount_str")]
     pub max_buy_in: u128,
+    /// False when the table takes no buy-in now (both buy-ins then read 0); `reason` says why.
+    pub open: bool,
+    pub reason: Option<String>,
     pub rake_bp: u16,
     pub action_ms: u64,
     pub seed_ms: u64,
@@ -223,6 +245,9 @@ pub struct TableSummary {
     pub min_buy_in: u128,
     #[serde(with = "core_rules::amount_str")]
     pub max_buy_in: u128,
+    /// False when the table takes no buy-in now (both buy-ins then read 0); `reason` says why.
+    pub open: bool,
+    pub reason: Option<String>,
     pub rake_bp: u16,
     pub hand_number: u64,
 }
@@ -458,9 +483,9 @@ struct Table {
     name: String,
     floor_seat: Option<usize>,
     stakes: TableConfig,
-    /// Biggest buy-in the contract takes now: the stakes' maximum, capped at the ticket's max
-    /// bet (refreshed with the floor on `GET /poker/tables`).
-    max_buy_in: u128,
+    /// Buy-ins taken now (`buy_in_range`; `None`: closed), refreshed with the floor on
+    /// `GET /poker/tables`.
+    buy_in: Option<(u128, u128)>,
     rake_bp: u16,
     config: PokerConfig,
     seats: Vec<Option<Seat>>,
@@ -991,8 +1016,10 @@ impl Table {
                 small_blind: self.stakes.small_blind,
                 big_blind: self.stakes.big_blind,
                 rake_cap: self.stakes.rake_cap,
-                min_buy_in: self.stakes.min_buy_in(),
-                max_buy_in: self.max_buy_in,
+                min_buy_in: self.buy_in.map_or(0, |(min, _)| min),
+                max_buy_in: self.buy_in.map_or(0, |(_, max)| max),
+                open: self.buy_in.is_some(),
+                reason: self.closed_reason(),
                 rake_bp: self.rake_bp,
                 action_ms: duration_ms(self.config.action),
                 seed_ms: duration_ms(self.config.seeding),
@@ -1012,11 +1039,17 @@ impl Table {
             npcs: self.npcs(),
             small_blind: self.stakes.small_blind,
             big_blind: self.stakes.big_blind,
-            min_buy_in: self.stakes.min_buy_in(),
-            max_buy_in: self.max_buy_in,
+            min_buy_in: self.buy_in.map_or(0, |(min, _)| min),
+            max_buy_in: self.buy_in.map_or(0, |(_, max)| max),
+            open: self.buy_in.is_some(),
+            reason: self.closed_reason(),
             rake_bp: self.rake_bp,
             hand_number: self.hand_number,
         }
+    }
+
+    fn closed_reason(&self) -> Option<String> {
+        self.buy_in.is_none().then(|| CLOSED_REASON.to_string())
     }
 }
 
@@ -1225,7 +1258,7 @@ impl<C: Chain> Poker<C> {
             name,
             floor_seat,
             stakes: table_config(),
-            max_buy_in: max_buy_in(dealer.max_bet),
+            buy_in: buy_in_range(dealer.max_bet),
             rake_bp: dealer.rake_bp,
             config: self.config,
             seats: vec![None; SEATS],
@@ -1265,7 +1298,7 @@ impl<C: Chain> Poker<C> {
         for (id, _, _, max_bet) in self.poker_dealers().await? {
             let cell = self.cell(&id).await?;
             let mut table = cell.table.lock().await;
-            table.max_buy_in = max_buy_in(max_bet);
+            table.buy_in = buy_in_range(max_bet);
             out.push(table.summary());
         }
         Ok(out)
@@ -1567,19 +1600,22 @@ impl<C: Chain> Poker<C> {
 
     /// Seats a claimed NPC; false (and the NPC given back) when it cannot sit.
     async fn npc_session(&self, cell: &Cell, id: &str, npc: PokerNpc) -> bool {
-        let stakes = table_config();
         let balance = self.gamblers.npc_balance(npc.index).await.unwrap_or(0);
         // The contract takes a poker buy-in only up to the ticket's max bet.
-        let max_bet = match self.app.chain().dealer(id).await {
-            Ok(Some(dealer)) => crate::app::ticket_max_bet(dealer.max_bet),
-            Ok(None) => 0,
+        let range = match self.app.chain().dealer(id).await {
+            Ok(Some(dealer)) => buy_in_range(dealer.max_bet),
+            Ok(None) => None,
             Err(err) => {
                 eprintln!("poker npc {}: dealer read: {err:#}", npc.id);
-                0
+                None
             }
         };
-        let buy_in = stakes.max_buy_in().min(balance).min(max_bet);
-        if buy_in < stakes.min_buy_in() {
+        let Some((min, max)) = range else {
+            self.gamblers.release_from_poker(npc.index).await;
+            return false;
+        };
+        let buy_in = max.min(balance);
+        if buy_in < min {
             self.gamblers.release_from_poker(npc.index).await;
             return false;
         }
@@ -1710,5 +1746,33 @@ mod tests {
     fn max_buy_in_is_capped_at_the_ticket_max_bet() {
         assert_eq!(max_buy_in(9_324_000), 7_459_200);
         assert_eq!(max_buy_in(100_000_000), table_config().max_buy_in());
+    }
+
+    /// Faye on testnet showed "buy in between 4.00 and 3.73": a cap under 20 BB lowers the
+    /// minimum to the cap, down to 10 BB; under that the table is closed.
+    #[test]
+    fn a_low_cap_lowers_the_minimum_then_closes_the_table() {
+        let stakes = table_config();
+        let bb = stakes.big_blind;
+        assert_eq!(
+            buy_in_range(100_000_000),
+            Some((stakes.min_buy_in(), stakes.max_buy_in()))
+        );
+        // Cap 3.73 under 20 BB (4.00): the range is 3.73..=3.73.
+        let faye = 4_662_500;
+        assert_eq!(max_buy_in(faye), 3_730_000);
+        assert_eq!(buy_in_range(faye), Some((3_730_000, 3_730_000)));
+        // A cap of exactly 10 BB (2.00, max bet 2.50) still opens; any less closes.
+        let ten_bb = 10 * bb;
+        assert_eq!(ten_bb, 2_000_000);
+        assert_eq!(buy_in_range(2_500_000), Some((ten_bb, ten_bb)));
+        assert_eq!(max_buy_in(2_499_999), 1_999_999);
+        assert_eq!(buy_in_range(2_499_999), None);
+        // Every open range is non-empty and at least 10 BB.
+        for max_bet in (0..30_000_000).step_by(12_345) {
+            if let Some((min, max)) = buy_in_range(max_bet) {
+                assert!(min <= max && min >= ten_bb, "{max_bet}: {min}..={max}");
+            }
+        }
     }
 }

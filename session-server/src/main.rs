@@ -7,6 +7,8 @@
 //! (near-cli legacy keychain holding the NPC gamblers' keys, default `~/.near-credentials/testnet`;
 //! `--no-chain` gamblers need no keys). `GAMBLER_ACCOUNT_SUFFIX` (default `.tilthouse.testnet`):
 //! the NPC gamblers' accounts are `g-<name>` + this, e.g. `.tilthouse.near` on mainnet.
+//! `GAMBLERS` (`on` by default, or `off`): `off` runs no NPC gambler and seats no NPC at poker
+//! tables (a floor without an NPC lineup, e.g. the TILT floor); `GAMBLER_KEYS_DIR` is then unused.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -35,6 +37,15 @@ fn env(name: &str) -> Option<String> {
 
 fn required(name: &str) -> anyhow::Result<String> {
     env(name).with_context(|| format!("missing env {name}"))
+}
+
+/// `GAMBLERS`: unknown spellings refuse to start rather than guess.
+fn gamblers_on() -> anyhow::Result<bool> {
+    match env("GAMBLERS").as_deref() {
+        None | Some("on") => Ok(true),
+        Some("off") => Ok(false),
+        Some(other) => bail!("GAMBLERS must be on or off, not {other}"),
+    }
 }
 
 #[tokio::main]
@@ -93,15 +104,21 @@ async fn serve<C: Chain>(
         app.public_key(),
         data_dir.display()
     );
-    let gamblers = Arc::new(Gamblers::new(
-        Arc::clone(&app),
-        Clock::system(),
-        &data_dir,
-        keys_dir,
-        &env("GAMBLER_ACCOUNT_SUFFIX").unwrap_or_else(|| DEFAULT_ACCOUNT_SUFFIX.into()),
-        random_bytes()?,
-    )?);
-    gamblers.start();
+    let gamblers = if gamblers_on()? {
+        let gamblers = Arc::new(Gamblers::new(
+            Arc::clone(&app),
+            Clock::system(),
+            &data_dir,
+            keys_dir,
+            &env("GAMBLER_ACCOUNT_SUFFIX").unwrap_or_else(|| DEFAULT_ACCOUNT_SUFFIX.into()),
+            random_bytes()?,
+        )?);
+        gamblers.start();
+        gamblers
+    } else {
+        println!("NPC gamblers off");
+        Arc::new(Gamblers::off(Arc::clone(&app), Clock::system(), &data_dir)?)
+    };
     let ticker = Arc::clone(&app);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(TICK);
