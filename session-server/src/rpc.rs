@@ -38,7 +38,7 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 pub struct RpcStats {
     /// HTTP requests sent.
     pub requests: AtomicU64,
-    /// Requests answered 429 or 5xx.
+    /// Requests refused by a rate limit or 5xx, or timed out.
     pub throttled: AtomicU64,
     /// View reads served from the view cache (`near.rs`), no request sent.
     pub cache_hits: AtomicU64,

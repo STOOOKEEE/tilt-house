@@ -100,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
             interval.tick().await;
             let (requests, throttled, cache_hits) = stats.take();
             println!(
-                "rpc last minute: {requests} requests, {throttled} throttled (429/5xx), {cache_hits} view cache hits"
+                "rpc last minute: {requests} requests, {throttled} throttled (rate limit/5xx/timeout), {cache_hits} view cache hits"
             );
         }
     });
