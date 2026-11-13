@@ -17,6 +17,8 @@
 #   ROOT          funding and parent account (default tilthouse.testnet)
 #   TILT_BALANCE  NEAR given to tilt.<ROOT> (default '4 NEAR': ~2.2 NEAR of code, ~0.4 of log,
 #                 the rest pays winners' storage registrations, see docs/tilt.md)
+#   WASM          deploy this wasm instead of building (e.g. a reproducible build made in a clean
+#                 clone of the launch commit, docs/tilt.md "Build and deploy")
 #   DRY_RUN=1     print the commands instead of sending them
 set -euo pipefail
 
@@ -32,7 +34,8 @@ TILT_BALANCE=${TILT_BALANCE:-4 NEAR}
 STORAGE_DEPOSIT='0.00125 NEAR'
 DRY_RUN=${DRY_RUN:-0}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-WASM=$REPO/target/near/tilt_house_meme/tilt_house_meme.wasm
+BUILT_WASM=$REPO/target/near/tilt_house_meme/tilt_house_meme.wasm
+WASM=${WASM:-}
 
 # Runs a command, or prints it on a dry run.
 run() {
@@ -44,8 +47,11 @@ run() {
   fi
 }
 
-# Reproducible: the image is pinned in meme/Cargo.toml; the tree must be committed.
-run bash -c "cd '$REPO/meme' && cargo near build reproducible-wasm"
+if [[ -z $WASM ]]; then
+  # Reproducible: the image is pinned in meme/Cargo.toml; the tree must be committed.
+  run bash -c "cd '$REPO/meme' && cargo near build reproducible-wasm"
+  WASM=$BUILT_WASM
+fi
 [[ $DRY_RUN == 1 ]] || echo "wasm sha256: $(sha256sum "$WASM" | cut -d' ' -f1)"
 
 ECONOMICS=$(cd "$REPO" && cargo run -q -p tilt-house-sim --release -- meme --days 1 |

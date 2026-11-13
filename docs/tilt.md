@@ -241,12 +241,27 @@ Reproducible build (Docker, image pinned by digest in `meme/Cargo.toml`, committ
 cd meme && cargo near build reproducible-wasm     # → target/near/tilt_house_meme/tilt_house_meme.wasm
 ```
 
+The wasm embeds the commit it was built from (NEP-330), so build in a clean clone of the commit you
+deploy. Launch build: commit `9120a49`, 215,753 bytes, sha256
+`c68f3b1cfc6db3d670c5b0046de10640708437bc5c22ca2251b40fa650961cfc` (NEAR code hash
+`EN6Q6tDX9SGAUbrFS7vEEVkA4CSGiacWZ4kut22wpc5H`):
+
+```sh
+git clone https://github.com/STOOOKEEE/tilt-house /tmp/tilt-repro && cd /tmp/tilt-repro && git checkout 9120a49
+cd meme && cargo near build reproducible-wasm
+```
+
 Deploy (testnet; the orchestrator runs it): `scripts/deploy-tilt.sh` creates `tilt.tilthouse.testnet`
 (4 NEAR from `tilthouse.testnet`: ~2.2 NEAR of code, ~0.4 NEAR of log, the rest pays winners'
 storage), deploys and calls `new` with the floor `floor.tilthouse.testnet`, the welcome operator
 `relayer.tilthouse.testnet`, the house receiver `tilthouse.testnet` and the economics printed by the
 simulator, registers `floor-tilt.tilthouse.testnet` for TILT storage, then prints the lock step.
-`DRY_RUN=1` prints every command instead.
+`DRY_RUN=1` prints every command instead; `WASM=<path>` deploys a wasm built as above instead of
+building in the working tree:
+
+```sh
+WASM=/tmp/tilt-repro/target/near/tilt_house_meme/tilt_house_meme.wasm scripts/deploy-tilt.sh
+```
 
 Tests: `cargo test -p tilt-house-meme` (rules, contract unit tests, and sandbox tests against a mock
 floor in `meme/tests/mock-floor`: daily mint, caps, burn, refused reports, Tilt Hour call and its
