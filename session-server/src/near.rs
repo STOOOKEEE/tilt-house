@@ -7,7 +7,7 @@
 //! The floor-wide views (`get_lobby`, `get_floor`) are cached for `VIEW_TTL`, one request in
 //! flight per view (the gamblers, the poker tables and every new ticket read them); per-player
 //! views (`get_player`, `get_session`) always go to the chain. Requests go through `Rpc`
-//! (failover and backoff on 429/5xx).
+//! (failover and backoff on rate limits, 5xx and timeouts; transactions resent as signed).
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -223,7 +223,7 @@ impl NearChain {
         *last_nonce = nonce;
         let response = self
             .rpc
-            .send(&methods::send_tx::RpcSendTransactionRequest {
+            .send_tx(&methods::send_tx::RpcSendTransactionRequest {
                 signed_transaction: transaction.sign(signer),
                 wait_until: TxExecutionStatus::Final,
             })

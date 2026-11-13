@@ -95,9 +95,10 @@ echo 'CLOSE_DAY=1' >> agents/.env                             # th-keeper closes
 ```
 
 RPC (all six services): `NEAR_RPC_URLS=https://test.rpc.fastnear.com,https://near-testnet.drpc.org`
-(the default when unset). Reads fail over to drpc on 429/5xx with backoff; transactions go to
-the first URL only (drpc times out on `send_tx`). Remove any lone `NEAR_RPC_URL` pointing at
-drpc. The session servers log `rpc last minute: N requests, …` once a minute.
+(the default when unset). Requests fail over to drpc with backoff on rate limits (HTTP 429 or a
+`-429` JSON-RPC body), 5xx and timeouts. Transactions prefer fastnear and fail over too, resent
+as the same signed bytes; a timed-out transaction is retried, then looked up by hash before it is
+reported as failed. Remove any lone `NEAR_RPC_URL` pointing at drpc. The session servers log `rpc last minute: N requests, …` once a minute.
 
 ## 6. Start
 

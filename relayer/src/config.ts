@@ -56,7 +56,8 @@ const DEFAULT_HOST = "127.0.0.1";
  * Testnet keeps its historical 0.02.
  */
 const NETWORKS = {
-  // drpc: reads only in practice (it times out on send_tx); rpc.testnet.near.org is deprecated.
+  // drpc: failover for reads and transactions (its free-plan timeouts are retried, rpc.ts);
+  // rpc.testnet.near.org is deprecated.
   testnet: { rpc: ["https://test.rpc.fastnear.com", "https://near-testnet.drpc.org"], suffix: ".testnet", activation: "0.02", budget: "5" },
   mainnet: { rpc: ["https://rpc.mainnet.fastnear.com"], suffix: ".near", activation: "0.01", budget: undefined },
 } as const satisfies Record<Network, { rpc: readonly string[]; suffix: string; activation: string; budget: string | undefined }>;

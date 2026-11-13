@@ -1,9 +1,15 @@
 //! NEAR JSON-RPC over one or more endpoints (`NEAR_RPC_URLS`, preferred first) that backs off
-//! instead of hammering: an endpoint answering 429 or 5xx cools down (1 s, doubling up to 30 s,
-//! reset by a success) and the request moves to the next endpoint, or waits for the first one to
-//! cool down. Retrying is safe for every request the server sends: views, and transactions that
-//! are resent signed as they were (same hash, same nonce). Transactions go to the first endpoint
-//! only (`send`): a failover endpoint may serve reads well and time out on `send_tx`.
+//! instead of hammering: an endpoint that is rate-limiting (HTTP 429, or a JSON-RPC error body
+//! such as FastNear's `{"code":-429,"message":"Rate limits exceeded…"}`), overloaded (5xx),
+//! timing out or unreachable cools down (1 s, doubling up to 30 s, reset by a success) and the
+//! request moves to the next endpoint, or waits for the first one to cool down.
+//!
+//! Retrying is safe for every request the server sends: views, and transactions resent signed as
+//! they were (same hash, same nonce), which is idempotent: a node that already has the
+//! transaction answers with its outcome. Transactions (`send_tx`) still prefer the first
+//! endpoint but fail over like reads, and are retried after a timeout. When an attempt may have
+//! reached a node (a timeout) and the last one fails, the status is asked by hash on any
+//! endpoint, so a transaction that landed is reported as such rather than as an error.
 
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,8 +17,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use near_jsonrpc_client::errors::{
-    JsonRpcError, JsonRpcServerError, JsonRpcServerResponseStatusError,
+    JsonRpcError, JsonRpcServerError, JsonRpcServerResponseStatusError, JsonRpcTransportSendError,
+    RpcTransportError,
 };
+use near_jsonrpc_client::methods::send_tx::{
+    RpcSendTransactionRequest, RpcTransactionError, RpcTransactionResponse,
+};
+use near_jsonrpc_client::methods::tx::{RpcTransactionStatusRequest, TransactionInfo};
 use near_jsonrpc_client::methods::RpcMethod;
 use near_jsonrpc_client::{JsonRpcClient, MethodCallResult};
 use tokio::time::{sleep_until, Instant};
@@ -73,21 +84,59 @@ impl Cooling {
     }
 }
 
-/// 429, 5xx and internal errors: the endpoint is overloaded or down; anything else is the
-/// request's own answer.
-pub fn is_overload<E>(error: &JsonRpcError<E>) -> bool {
+/// Why an endpoint, not the request, failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Failure {
+    /// Refused (rate limit, overload): try elsewhere.
+    Overload,
+    /// Timed out or the connection broke: try elsewhere, but the request may have reached a node.
+    Timeout,
+}
+
+/// FastNear answers a rate limit with a JSON-RPC error `{"code":-429,…}`, sometimes on HTTP 200.
+const RATE_LIMIT_CODE: i64 = -429;
+
+/// The endpoint's trouble (`Some`) or the request's own answer (`None`).
+pub fn classify<E>(error: &JsonRpcError<E>) -> Option<Failure> {
     use JsonRpcServerResponseStatusError as Status;
     match error {
         JsonRpcError::ServerError(JsonRpcServerError::ResponseStatusError(status)) => {
             match status {
-                Status::TooManyRequests | Status::ServiceUnavailable => true,
-                Status::Unexpected { status } => status.is_server_error(),
-                Status::Unauthorized | Status::BadRequest | Status::TimeoutError => false,
+                Status::TooManyRequests | Status::ServiceUnavailable => Some(Failure::Overload),
+                Status::TimeoutError => Some(Failure::Timeout),
+                Status::Unexpected { status } if status.is_server_error() => {
+                    Some(Failure::Overload)
+                }
+                Status::Unexpected { .. } | Status::Unauthorized | Status::BadRequest => None,
             }
         }
         // HTTP 500 lands here too.
-        JsonRpcError::ServerError(JsonRpcServerError::InternalError { .. }) => true,
-        _ => false,
+        JsonRpcError::ServerError(JsonRpcServerError::InternalError { .. }) => {
+            Some(Failure::Overload)
+        }
+        // An error body without a NEAR error structure comes from a gateway, not from nearcore:
+        // rate limits and plan limits ("Request timeout on the free plan").
+        JsonRpcError::ServerError(JsonRpcServerError::NonContextualError(rpc_error)) => {
+            let message = rpc_error.message.to_ascii_lowercase();
+            if rpc_error.code != RATE_LIMIT_CODE && message.contains("timeout") {
+                Some(Failure::Timeout)
+            } else {
+                Some(Failure::Overload)
+            }
+        }
+        // Sending failed (connection refused, reset, or timed out): it may have been delivered.
+        JsonRpcError::TransportError(RpcTransportError::SendError(
+            JsonRpcTransportSendError::PayloadSendError(_),
+        )) => Some(Failure::Timeout),
+        _ => None,
+    }
+}
+
+/// `classify`, plus nearcore's own `send_tx` timeout (the transaction is in flight).
+pub fn classify_tx(error: &JsonRpcError<RpcTransactionError>) -> Option<Failure> {
+    match error.handler_error() {
+        Some(RpcTransactionError::TimeoutError(_)) => Some(Failure::Timeout),
+        _ => classify(error),
     }
 }
 
@@ -136,11 +185,10 @@ impl Rpc {
         }
     }
 
-    /// Among the first `usable` endpoints: the preferred one that is not cooling down, else the
-    /// one that cools down first.
-    fn pick(&self, usable: usize, now: Instant) -> (usize, Option<Instant>) {
+    /// The preferred endpoint that is not cooling down, else the one that cools down first.
+    fn pick(&self, now: Instant) -> (usize, Option<Instant>) {
         let mut earliest: Option<(usize, Instant)> = None;
-        for index in 0..usable.min(self.endpoints.len()) {
+        for index in 0..self.endpoints.len() {
             match self.cooling(index).ready_at() {
                 Some(until) if until > now => {
                     if earliest.is_none_or(|(_, at)| until < at) {
@@ -159,51 +207,86 @@ impl Rpc {
         M: RpcMethod,
         M::Error: Debug,
     {
-        self.request(method, self.endpoints.len()).await
+        self.request(method, classify).await.0
     }
 
-    /// A transaction: the first endpoint only.
-    pub async fn send<M>(&self, method: &M) -> MethodCallResult<M::Response, M::Error>
+    /// A transaction, resent as signed (same bytes) after a refusal or a timeout. If an attempt
+    /// may have reached a node and the last one fails, its status decides: landed is success.
+    pub async fn send_tx(
+        &self,
+        request: &RpcSendTransactionRequest,
+    ) -> MethodCallResult<RpcTransactionResponse, RpcTransactionError> {
+        let (result, maybe_delivered) = self.request(request, classify_tx).await;
+        let Err(error) = result else {
+            return result;
+        };
+        if !maybe_delivered {
+            return Err(error);
+        }
+        let transaction = &request.signed_transaction;
+        let status = RpcTransactionStatusRequest {
+            transaction_info: TransactionInfo::TransactionId {
+                tx_hash: transaction.get_hash(),
+                sender_account_id: transaction.transaction.signer_id().clone(),
+            },
+            wait_until: request.wait_until.clone(),
+        };
+        match self.call(&status).await {
+            Ok(landed) => {
+                eprintln!(
+                    "rpc: transaction {} landed despite {error:?}",
+                    transaction.get_hash()
+                );
+                Ok(landed)
+            }
+            Err(_) => Err(error),
+        }
+    }
+
+    /// Tries up to `MAX_ATTEMPTS` times while `failure` blames the endpoint. Also says whether an
+    /// attempt timed out (the request may have reached a node).
+    async fn request<M>(
+        &self,
+        method: &M,
+        failure: impl Fn(&JsonRpcError<M::Error>) -> Option<Failure>,
+    ) -> (MethodCallResult<M::Response, M::Error>, bool)
     where
         M: RpcMethod,
         M::Error: Debug,
     {
-        self.request(method, 1).await
-    }
-
-    async fn request<M>(&self, method: &M, usable: usize) -> MethodCallResult<M::Response, M::Error>
-    where
-        M: RpcMethod,
-        M::Error: Debug,
-    {
+        let mut timed_out = false;
         let mut attempt = 1;
         loop {
-            let (index, wait) = self.pick(usable, Instant::now());
+            let (index, wait) = self.pick(Instant::now());
             if let Some(at) = wait {
                 sleep_until(at).await;
             }
             self.stats.requests.fetch_add(1, Ordering::Relaxed);
             let endpoint = &self.endpoints[index];
-            match endpoint.client.call(method).await {
-                Err(error) if is_overload(&error) => {
-                    self.stats.throttled.fetch_add(1, Ordering::Relaxed);
-                    self.update(index, |c| c.failed(Instant::now()));
-                    if attempt >= MAX_ATTEMPTS {
-                        return Err(error);
-                    }
-                    eprintln!(
-                        "rpc {}: {error:?}, backing off (attempt {attempt})",
-                        endpoint.url
-                    );
-                    attempt += 1;
+            let result = endpoint.client.call(method).await;
+            let blamed = match &result {
+                Ok(_) => {
+                    self.update(index, Cooling::succeeded);
+                    None
                 }
-                result => {
-                    if result.is_ok() {
-                        self.update(index, Cooling::succeeded);
-                    }
-                    return result;
-                }
+                Err(error) => failure(error),
+            };
+            let Some(blamed) = blamed else {
+                return (result, timed_out);
+            };
+            timed_out |= blamed == Failure::Timeout;
+            self.stats.throttled.fetch_add(1, Ordering::Relaxed);
+            self.update(index, |c| c.failed(Instant::now()));
+            if attempt >= MAX_ATTEMPTS {
+                return (result, timed_out);
             }
+            if let Err(error) = &result {
+                eprintln!(
+                    "rpc {}: {blamed:?}: {error:?}, retrying (attempt {attempt})",
+                    endpoint.url
+                );
+            }
+            attempt += 1;
         }
     }
 }
@@ -230,25 +313,74 @@ mod tests {
     }
 
     #[test]
-    fn only_overload_answers_are_retried() {
+    fn only_the_endpoints_trouble_is_retried() {
         use JsonRpcServerResponseStatusError as Status;
         let status =
             |s| JsonRpcError::<()>::ServerError(JsonRpcServerError::ResponseStatusError(s));
-        assert!(is_overload(&status(Status::TooManyRequests)));
-        assert!(is_overload(&status(Status::ServiceUnavailable)));
-        assert!(is_overload(&status(Status::Unexpected {
-            status: reqwest_status(502)
-        })));
-        assert!(!is_overload(&status(Status::Unexpected {
-            status: reqwest_status(404)
-        })));
-        assert!(!is_overload(&status(Status::BadRequest)));
-        assert!(is_overload(&JsonRpcError::<()>::ServerError(
-            JsonRpcServerError::InternalError { info: None }
-        )));
-        assert!(!is_overload(&JsonRpcError::<()>::ServerError(
-            JsonRpcServerError::HandlerError(())
-        )));
+        let overload = Some(Failure::Overload);
+        assert_eq!(classify(&status(Status::TooManyRequests)), overload);
+        assert_eq!(classify(&status(Status::ServiceUnavailable)), overload);
+        assert_eq!(
+            classify(&status(Status::Unexpected {
+                status: reqwest_status(502)
+            })),
+            overload
+        );
+        assert_eq!(
+            classify(&status(Status::TimeoutError)),
+            Some(Failure::Timeout)
+        );
+        assert_eq!(
+            classify(&status(Status::Unexpected {
+                status: reqwest_status(404)
+            })),
+            None
+        );
+        assert_eq!(classify(&status(Status::BadRequest)), None);
+        assert_eq!(
+            classify(&JsonRpcError::<()>::ServerError(
+                JsonRpcServerError::InternalError { info: None }
+            )),
+            overload
+        );
+        assert_eq!(
+            classify(&JsonRpcError::<()>::ServerError(
+                JsonRpcServerError::HandlerError(())
+            )),
+            None
+        );
+    }
+
+    fn gateway_error(body: serde_json::Value) -> JsonRpcError<RpcTransactionError> {
+        let error: near_jsonrpc_primitives::errors::RpcError =
+            serde_json::from_value(body).unwrap();
+        JsonRpcError::from(error)
+    }
+
+    #[test]
+    fn a_rate_limit_body_is_an_overload_and_a_gateway_timeout_a_timeout() {
+        let rate_limited = gateway_error(serde_json::json!({
+            "code": -429,
+            "message": "Rate limits exceeded. For higher rate limits get a subscription at https://fastnear.com"
+        }));
+        assert_eq!(classify_tx(&rate_limited), Some(Failure::Overload));
+        let plan_timeout = gateway_error(serde_json::json!({
+            "code": 30,
+            "message": "Request timeout on the free plan, please upgrade to paid plan"
+        }));
+        assert_eq!(classify_tx(&plan_timeout), Some(Failure::Timeout));
+    }
+
+    #[test]
+    fn nearcores_send_tx_timeout_is_a_timeout_and_its_refusals_are_answers() {
+        let timeout = JsonRpcError::ServerError(JsonRpcServerError::HandlerError(
+            RpcTransactionError::TimeoutError(None),
+        ));
+        assert_eq!(classify_tx(&timeout), Some(Failure::Timeout));
+        let unknown = JsonRpcError::ServerError(JsonRpcServerError::HandlerError(
+            RpcTransactionError::DoesNotTrackShard,
+        ));
+        assert_eq!(classify_tx(&unknown), None);
     }
 
     fn reqwest_status(code: u16) -> axum::http::StatusCode {

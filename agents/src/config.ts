@@ -48,7 +48,8 @@ export interface Config {
 }
 
 const NETWORKS = {
-  // drpc: reads only in practice (it times out on send_tx); rpc.testnet.near.org is deprecated.
+  // drpc: failover for reads and transactions (its free-plan timeouts are retried, rpc.ts);
+  // rpc.testnet.near.org is deprecated.
   testnet: { rpc: ["https://test.rpc.fastnear.com", "https://near-testnet.drpc.org"], suffix: ".testnet", root: "tilthouse.testnet" },
   mainnet: { rpc: ["https://rpc.mainnet.fastnear.com"], suffix: ".near", root: undefined },
 } as const satisfies Record<Network, { rpc: readonly string[]; suffix: string; root: string | undefined }>;

@@ -1,13 +1,20 @@
+import { createHash } from "node:crypto";
 import { setTimeout as defaultSleep } from "node:timers/promises";
-import { JsonRpcProvider } from "near-api-js";
+import { JsonRpcProvider, baseEncode, decodeSignedTransaction, encodeTransaction } from "near-api-js";
+import { RpcError, TransactionTimeoutError } from "near-api-js/rpc-errors";
 
 /**
  * A JSON-RPC provider over several endpoints (`NEAR_RPC_URLS`, preferred first) that backs off
- * instead of hammering: an endpoint answering 429, 408 or 5xx (or unreachable) cools down (1 s,
- * doubling up to 30 s, reset by a success) and the request moves to the next endpoint, or waits
- * for the first one to cool down. Transactions go to the first endpoint only: a failover endpoint
- * may serve reads well and time out on `send_tx`. Resending a signed transaction is safe (same
- * hash, same nonce). Any other error is the request's own answer and is thrown as is.
+ * instead of hammering. An endpoint that is rate-limiting, overloaded, timing out or unreachable
+ * cools down (1 s, doubling up to 30 s, reset by a success) and the request moves to the next
+ * endpoint, or waits for the first one to cool down. Any other error is the request's own answer
+ * and is thrown as is.
+ *
+ * Transactions fail over too, still preferring the first endpoint: the same signed bytes are sent
+ * again (same hash, same nonce), which is idempotent: a node that already has the transaction
+ * answers with its outcome. When an attempt may have reached a node (a timeout) and the last one
+ * fails, the transaction's status is asked by hash on any endpoint, so a landed transaction is
+ * reported as such rather than as an error.
  *
  * near-api-js's `FailoverRpcProvider` switches on every error, contract errors included, and
  * rethrows them wrapped, which hides `AccessKeyDoesNotExistError` and the like from the caller.
@@ -15,17 +22,57 @@ import { JsonRpcProvider } from "near-api-js";
 
 type RpcMethodName = Parameters<JsonRpcProvider["sendJsonRpc"]>[0];
 
-const OVERLOAD_STATUS: Record<number, true> = { 408: true, 429: true, 500: true, 502: true, 503: true, 504: true };
+/** `overload`: the endpoint refused, try elsewhere. `timeout`: same, but the request may have reached the node. */
+export type Failure = "overload" | "timeout";
+
+const OVERLOAD_STATUS: Record<number, true> = { 429: true, 500: true, 502: true, 503: true, 504: true };
+const TIMEOUT_STATUS = 408;
 const TX_METHODS: Record<string, true> = { send_tx: true, broadcast_tx_commit: true, broadcast_tx_async: true };
+// near-api-js's message for a JSON-RPC error without a NEAR error name: gateways answer that way
+// (FastNear `{"code":-429,"message":"Rate limits exceeded…"}`, dRPC plan limits); nearcore never does.
+const NON_NEAR_ERROR = "Unknown RPC error";
+const DEFAULT_WAIT_UNTIL = "EXECUTED_OPTIMISTIC";
 export const MAX_ATTEMPTS = 4;
 const FIRST_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
 
-/** near-api-js puts the HTTP status in `cause` (ProviderError); fetch failures are TypeErrors. */
-export function isOverload(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  if (typeof error.cause === "number") return OVERLOAD_STATUS[error.cause] === true;
-  return /fetch failed|Failed to fetch|RetriesExceeded/.test(`${error.name} ${error.message}`);
+/**
+ * Whether an error is the endpoint's trouble rather than the request's answer. near-api-js puts
+ * the HTTP status in `cause` (ProviderError, the 429 body in the message); nearcore's own send_tx
+ * timeout is a TransactionTimeoutError; network failures are TypeErrors.
+ */
+export function classify(error: unknown): Failure | null {
+  if (error instanceof TransactionTimeoutError) return "timeout";
+  if (!(error instanceof Error)) return null;
+  if (typeof error.cause === "number") {
+    if (error.cause === TIMEOUT_STATUS) return "timeout";
+    return OVERLOAD_STATUS[error.cause] === true ? "overload" : null;
+  }
+  if (error instanceof RpcError && error.message === NON_NEAR_ERROR) return "overload";
+  if (/Rate limits? exceeded/i.test(error.message)) return "overload";
+  // The connection broke: a transaction may have been delivered before it did.
+  if (/fetch failed|Failed to fetch/.test(`${error.name} ${error.message}`)) return "timeout";
+  if (error.name === "RetriesExceeded") return "overload";
+  return null;
+}
+
+/** The `tx` status request for a `send_tx` / `broadcast_tx_*` request, or null if its params are not a signed transaction. */
+export function statusRequest(params: unknown): { tx_hash: string; sender_account_id: string; wait_until: string } | null {
+  let encoded: unknown;
+  let waitUntil: unknown = DEFAULT_WAIT_UNTIL;
+  if (Array.isArray(params)) encoded = params[0];
+  else if (typeof params === "object" && params !== null && "signed_tx_base64" in params) {
+    encoded = params.signed_tx_base64;
+    if ("wait_until" in params && typeof params.wait_until === "string") waitUntil = params.wait_until;
+  }
+  if (typeof encoded !== "string" || typeof waitUntil !== "string") return null;
+  try {
+    const { transaction } = decodeSignedTransaction(Buffer.from(encoded, "base64"));
+    const hash = createHash("sha256").update(encodeTransaction(transaction)).digest();
+    return { tx_hash: baseEncode(hash), sender_account_id: transaction.signerId, wait_until: waitUntil };
+  } catch {
+    return null;
+  }
 }
 
 export interface Endpoint {
@@ -42,10 +89,10 @@ export function cooled(endpoint: Endpoint, now: number): void {
   endpoint.backoffMs = Math.min(backoff * 2, MAX_BACKOFF_MS);
 }
 
-/** Among the first `usable`: the preferred endpoint not cooling down, else the first to cool down. */
-export function pick(endpoints: readonly Endpoint[], usable: number, now: number): { index: number; waitMs: number } {
+/** The preferred endpoint not cooling down, else the first to cool down. */
+export function pick(endpoints: readonly Endpoint[], now: number): { index: number; waitMs: number } {
   let earliest = { index: 0, waitMs: Infinity };
-  for (const [index, endpoint] of endpoints.slice(0, usable).entries()) {
+  for (const [index, endpoint] of endpoints.entries()) {
     const waitMs = endpoint.coolUntil - now;
     if (waitMs <= 0) return { index, waitMs: 0 };
     if (waitMs < earliest.waitMs) earliest = { index, waitMs };
@@ -79,9 +126,10 @@ export class FailoverProvider extends JsonRpcProvider {
   }
 
   override async sendJsonRpc<M extends RpcMethodName, P, R>(method: M, params: P): Promise<R> {
-    const usable = TX_METHODS[method] === true ? 1 : this.endpoints.length;
+    const isTx = TX_METHODS[method] === true;
+    let maybeDelivered = false;
     for (let attempt = 1; ; attempt++) {
-      const { index, waitMs } = pick(this.endpoints, usable, this.now());
+      const { index, waitMs } = pick(this.endpoints, this.now());
       if (waitMs > 0) await this.sleep(waitMs);
       const endpoint = this.endpoints[index];
       const provider = this.providers[index];
@@ -92,11 +140,30 @@ export class FailoverProvider extends JsonRpcProvider {
         endpoint.coolUntil = 0;
         return result;
       } catch (error) {
-        if (!isOverload(error)) throw error;
+        const failure = classify(error);
+        if (failure === "timeout") maybeDelivered = true;
+        // A refusal after a possible delivery (e.g. the nonce is now used) may be the first copy landing.
+        if (failure === null || attempt >= MAX_ATTEMPTS) {
+          if (failure !== null) cooled(endpoint, this.now());
+          if (isTx && maybeDelivered) return this.landedOr<R>(params, error);
+          throw error;
+        }
         cooled(endpoint, this.now());
-        if (attempt >= MAX_ATTEMPTS) throw error;
-        this.log(`rpc ${endpoint.url} ${method}: ${error instanceof Error ? error.message : String(error)}, backing off (attempt ${attempt})`);
+        this.log(`rpc ${endpoint.url} ${method}: ${failure}: ${error instanceof Error ? error.message : String(error)}, retrying (attempt ${attempt})`);
       }
+    }
+  }
+
+  /** The outcome of a transaction that may have landed, or `error` if the chain does not know it. */
+  private async landedOr<R>(params: unknown, error: unknown): Promise<R> {
+    const request = statusRequest(params);
+    if (!request) throw error;
+    try {
+      const outcome = await this.sendJsonRpc<"tx", typeof request, R>("tx", request);
+      this.log(`rpc: transaction ${request.tx_hash} landed despite the errors`);
+      return outcome;
+    } catch {
+      throw error;
     }
   }
 }
