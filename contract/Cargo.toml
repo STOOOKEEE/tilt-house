@@ -1,6 +1,6 @@
 [package]
 name = "tilt-house-contract"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "Tilt House floor: NPC and player-owned tables as LP pools, seats, rent, jackpot and provably fair sessions (NEAR)"
 license = "MIT"

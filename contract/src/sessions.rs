@@ -249,10 +249,13 @@ impl House {
         );
         require!(dealer.is_open(), "the table is closed");
         require!(ticket.game == dealer.game, "wrong game for this table");
+        // Never under the rake in force now (during Tilt Hour: the game's minimum), which keeps
+        // the pool's edge; a ticket priced just before a boost or a Tilt Hour, at a higher rake
+        // within the bounds, still opens at the rake the player accepted.
         let (min_rake, max_rake) = rake_bounds(dealer.game);
         require!(
             (min_rake..=max_rake).contains(&ticket.rake_bp)
-                && ticket.rake_bp >= dealer.offer.effective_rake_bp(dealer.game, now),
+                && ticket.rake_bp >= self.effective_rake_bp(&dealer, now),
             "rake differs from the table's offer"
         );
         require!(
@@ -363,6 +366,7 @@ impl House {
                 self.pay_jackpot(&mut dealer, &session, round.nonce, won);
             }
         }
+        self.record_day_play(&session.player, wagered, paid);
         self.save_dealer(dealer);
         emit(
             "session_settled",

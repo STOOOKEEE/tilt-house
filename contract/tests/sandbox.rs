@@ -1,6 +1,7 @@
-//! Sandbox tests of the floor contract (v2) against a mock NEP-141 token (`tests/mock-ft`). The
-//! test plays the session server: it holds the server key, draws the seed, plays rounds with
-//! `core_rules::session` and signs tickets and states like the real server.
+//! Sandbox tests of the floor contract (v4) against a mock NEP-141 token (`tests/mock-ft`) and a
+//! mock $TILT contract (`tests/mock-meme`). The test plays the session server: it holds the
+//! server key, draws the seed, plays rounds with `core_rules::session` and signs tickets and
+//! states like the real server.
 
 use core_rules::poker::{Hand, HandStart, PokerAction, SeatStart, TableConfig};
 use core_rules::session::{
@@ -29,14 +30,17 @@ const LAUNCH: [(&str, &str, &str); 5] = [
     ("eve", "blackjack", "promoter"),
 ];
 
-static WASMS: OnceCell<[Vec<u8>; 2]> = OnceCell::const_new();
+static WASMS: OnceCell<[Vec<u8>; 3]> = OnceCell::const_new();
 
-async fn wasms() -> &'static [Vec<u8>; 2] {
+async fn wasms() -> &'static [Vec<u8>; 3] {
     WASMS
         .get_or_init(|| async {
             [
                 near_workspaces::compile_project("./").await.unwrap(),
                 near_workspaces::compile_project("./tests/mock-ft")
+                    .await
+                    .unwrap(),
+                near_workspaces::compile_project("./tests/mock-meme")
                     .await
                     .unwrap(),
             ]
@@ -405,6 +409,21 @@ async fn offer(
     lock: u128,
     max_bet: u128,
 ) -> anyhow::Result<(Play, Value)> {
+    offer_at(env, player, dealer_id, id, seed_byte, lock, max_bet, None).await
+}
+
+/// `offer` at `rake_bp` (None: the table's rake in force, as the server prices it).
+#[allow(clippy::too_many_arguments)]
+async fn offer_at(
+    env: &Env,
+    player: &Account,
+    dealer_id: &str,
+    id: &str,
+    seed_byte: u8,
+    lock: u128,
+    max_bet: u128,
+    rake_bp: Option<u16>,
+) -> anyhow::Result<(Play, Value)> {
     let dealer = env.dealer(dealer_id).await?;
     let free = amount(&dealer["bankroll"]) - amount(&dealer["reserved"]);
     let seed = [seed_byte; 32];
@@ -415,7 +434,7 @@ async fn offer(
         seed,
         client_seed: "lucky-7".to_string(),
         lock,
-        rake_bp: dealer["rake_bp"].as_u64().unwrap() as u16,
+        rake_bp: rake_bp.unwrap_or(dealer["rake_bp"].as_u64().unwrap() as u16),
         max_bet,
         max_win: session_max_win(lock, free),
         balance: lock,
@@ -1223,15 +1242,24 @@ async fn controller_renames_and_retires_an_off_floor_table() -> anyhow::Result<(
     Ok(())
 }
 
-/// The live v2 code (tests/fixtures/floor-v2.wasm, fetched from floor.tilthouse.testnet)
-/// upgraded in place: `migrate` keeps every balance, table, log and open session.
+/// The live v3 code (tests/fixtures/floor-v3.wasm, fetched from floor.tilthouse.testnet, code
+/// hash 4w1gvFSNptiPii6ckeiokJ13KkX5XKZR9MQhNTZvmQee) upgraded in place: `migrate` keeps every
+/// balance, table, log, NPC, retired table and open session, and starts the day books.
 #[tokio::test]
-async fn upgrade_from_v2_keeps_every_balance_and_session() -> anyhow::Result<()> {
-    let v2 = std::fs::read("tests/fixtures/floor-v2.wasm")?;
-    let env = setup_code(&v2, 1).await?;
+async fn upgrade_from_v3_keeps_every_balance_and_session() -> anyhow::Result<()> {
+    let v3 = std::fs::read("tests/fixtures/floor-v3.wasm")?;
+    let env = setup_code(&v3, 1).await?;
     let player = env.player(50 * USDC).await?;
     let alice = env.player(TABLE_SEED).await?;
     env.open_table(&alice, "alice-dice").await?;
+    env.ok(&alice, "retire_table", json!({"dealer_id": "alice-dice"}))
+        .await?;
+    env.ok(
+        &env.owner,
+        "register_npcs",
+        json!({"accounts": ["g-1.test.near"]}),
+    )
+    .await?;
     let mut play = open(&env, &player, "ada", "s-up", 8).await?;
     for _ in 0..3 {
         play.round(USDC);
@@ -1249,6 +1277,7 @@ async fn upgrade_from_v2_keeps_every_balance_and_session() -> anyhow::Result<()>
     let session_before = env.view("get_session", session_args.clone()).await?;
     let history_before = env.view("get_history", history_args.clone()).await?;
     let lobby_before = env.view("get_lobby", json!({})).await?;
+    let retired_before = env.view("get_retired", json!({})).await?;
 
     let code = &wasms().await[0];
     env.floor
@@ -1283,10 +1312,34 @@ async fn upgrade_from_v2_keeps_every_balance_and_session() -> anyhow::Result<()>
             assert_eq!(after[field], before[field], "{field} kept");
         }
     }
-    assert_eq!(env.view("get_npcs", json!({})).await?, json!([]));
-    assert_eq!(env.view("get_retired", json!({})).await?, json!([]));
+    assert_eq!(
+        env.view("get_npcs", json!({})).await?,
+        json!(["g-1.test.near"])
+    );
+    let retired = env.view("get_retired", json!({})).await?;
+    assert_eq!(retired.as_array().unwrap().len(), 1);
+    for field in ["id", "controller", "bankroll", "shares"] {
+        assert_eq!(retired[0][field], retired_before[0][field], "{field} kept");
+    }
+    assert_eq!(
+        env.view("get_config", json!({})).await?["meme"],
+        json!(null)
+    );
+    assert_eq!(
+        env.view("get_floor", json!({})).await?["tilt_hour_until"],
+        json!(0)
+    );
+    let today = env.view("get_day", json!({"day": null})).await?;
+    assert_eq!(today["players"], json!([]));
+    assert_eq!(today["closed"], json!(false));
+    // Days before the upgrade are unknown.
+    let before_upgrade = today["day"].as_u64().unwrap() - 1;
+    assert_eq!(
+        env.view("get_day", json!({"day": before_upgrade})).await?,
+        json!(null)
+    );
 
-    // Only the contract itself migrates, and only a v2 state.
+    // Only the contract itself migrates, and only a v3 state.
     env.fails(&env.owner, "migrate", json!({}), "private")
         .await?;
     let again = env
@@ -1298,7 +1351,7 @@ async fn upgrade_from_v2_keeps_every_balance_and_session() -> anyhow::Result<()>
         .await?;
     expect_failure(again, "migrate", "Cannot deserialize")?;
 
-    // The session opened under v2 plays on and closes under v3; v3 methods run on old state.
+    // The session opened under v3 plays on and closes under v4, and now counts in the day.
     play.round(USDC);
     env.ok(
         &env.owner,
@@ -1313,14 +1366,9 @@ async fn upgrade_from_v2_keeps_every_balance_and_session() -> anyhow::Result<()>
     )
     .await?;
     assert_eq!(env.balance(&player).await?, 40 * USDC + play.balance);
-    env.ok(
-        &env.owner,
-        "register_npcs",
-        json!({"accounts": ["g-1.test.near"]}),
-    )
-    .await?;
-    env.ok(&alice, "retire_table", json!({"dealer_id": "alice-dice"}))
-        .await?;
+    let today = env.view("get_day", json!({"day": null})).await?;
+    assert_eq!(today["wagered"], json!(USDC.to_string()));
+    assert_eq!(today["players"][0]["account_id"], json!(player.id()));
     assert_conserved(
         &env,
         &[&env.owner, &player, &alice],
@@ -1457,5 +1505,317 @@ async fn poker_hand_settles_for_both_players_and_the_pool_keeps_the_rake() -> an
         10_000 * USDC + 100 * USDC,
     )
     .await?;
+    Ok(())
+}
+
+/// Deploys the mock $TILT contract and makes it the floor's meme contract.
+async fn meme(env: &Env) -> anyhow::Result<Contract> {
+    let meme = env.worker.dev_deploy(&wasms().await[2]).await?;
+    env.ok(&env.owner, "set_meme", json!({"account_id": meme.id()}))
+        .await?;
+    Ok(meme)
+}
+
+/// Root state tail of a floor: `day_keys: Vec<u64>` then `days_known_from: u64` (borsh), the
+/// last two fields of `House`.
+fn day_tail(day_keys: &[u64], known_from: u64) -> Vec<u8> {
+    let mut tail = (day_keys.len() as u32).to_le_bytes().to_vec();
+    for day in day_keys {
+        tail.extend(day.to_le_bytes());
+    }
+    tail.extend(known_from.to_le_bytes());
+    tail
+}
+
+/// Storage key of a day book: `StorageKey::Days` (borsh variant 6) then the day.
+fn book_key(day: u64) -> Vec<u8> {
+    [vec![6u8], day.to_le_bytes().to_vec()].concat()
+}
+
+/// Makes the floor's state look as if it had been deployed one day earlier: waiting for a real
+/// UTC midnight takes ~45 minutes of sandbox blocks. With `copy_book`, today's book (the only
+/// one) is also copied to yesterday, as if the same play had happened then. Checks the state
+/// layout first, so a layout change fails here instead of patching garbage.
+async fn back_one_day(
+    env: &Env,
+    floor: &Contract,
+    today: u64,
+    copy_book: bool,
+) -> anyhow::Result<()> {
+    let yesterday = today - 1;
+    let state = env.worker.view_state(floor.id()).await?;
+    let root = state.get(b"STATE".as_slice()).expect("root state");
+    let (old_tail, new_tail) = if copy_book {
+        (
+            day_tail(&[today], today),
+            day_tail(&[yesterday, today], yesterday),
+        )
+    } else {
+        (day_tail(&[], today), day_tail(&[], yesterday))
+    };
+    assert!(root.ends_with(&old_tail), "unexpected floor state layout");
+    let mut patched = root[..root.len() - old_tail.len()].to_vec();
+    patched.extend(new_tail);
+    if copy_book {
+        let book = state.get(&book_key(today)).expect("today's book");
+        env.worker
+            .patch_state(floor.id(), &book_key(yesterday), book)
+            .await?;
+    }
+    env.worker
+        .patch_state(floor.id(), b"STATE", &patched)
+        .await?;
+    Ok(())
+}
+
+/// Day books count human players only (NPC gamblers excluded), `close_day` works once per
+/// finished day and reports the day to the meme contract, and a refused report is logged.
+#[tokio::test]
+async fn day_books_count_humans_and_close_day_reports_to_the_meme() -> anyhow::Result<()> {
+    let env = setup(1).await?;
+    let human = env.player(50 * USDC).await?;
+    let npc = env.player(50 * USDC).await?;
+    env.ok(&env.owner, "register_npcs", json!({"accounts": [npc.id()]}))
+        .await?;
+    env.fails(
+        &human,
+        "set_meme",
+        json!({"account_id": human.id()}),
+        "only the owner",
+    )
+    .await?;
+    let meme = meme(&env).await?;
+    env.fails(
+        &env.owner,
+        "set_meme",
+        json!({"account_id": human.id()}),
+        "already set",
+    )
+    .await?;
+    assert_eq!(
+        env.view("get_config", json!({})).await?["meme"],
+        json!(meme.id())
+    );
+
+    let mut human_play = open(&env, &human, "ada", "s-h", 1).await?;
+    let mut npc_play = open(&env, &npc, "ada", "s-n", 2).await?;
+    for _ in 0..4 {
+        human_play.round(USDC);
+        npc_play.round(USDC / 2);
+    }
+    for play in [&mut human_play, &mut npc_play] {
+        env.ok(
+            &env.owner,
+            "settle_session",
+            json!({"batch": play.batch(&env)}),
+        )
+        .await?;
+    }
+    let book = env.view("get_day", json!({"day": null})).await?;
+    let day = book["day"].as_u64().unwrap();
+    let net = (human_play.balance as i128 - 10 * USDC as i128).to_string();
+    let wagered = (4 * USDC).to_string();
+    assert_eq!(book["players_net"], json!(net));
+    assert_eq!(book["wagered"], json!(wagered));
+    assert_eq!(
+        book["players"],
+        json!([{"account_id": human.id(), "wagered": wagered, "net": net}])
+    );
+    assert_eq!(book["closed"], json!(false));
+    env.fails(&human, "close_day", json!({"day": day}), "not over yet")
+        .await?;
+    // The day before the deploy is unknown: never reported as an empty day.
+    env.fails(
+        &human,
+        "close_day",
+        json!({"day": day - 1}),
+        "no record for that day",
+    )
+    .await?;
+
+    // As if the floor had been deployed yesterday and the same play had happened then.
+    back_one_day(&env, &env.floor, day, true).await?;
+    let yesterday = day - 1;
+    let starved = human
+        .call(env.floor.id(), "close_day")
+        .args_json(json!({"day": yesterday}))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?;
+    expect_failure(starved, "close_day", "at least 200 Tgas")?;
+    env.ok(&human, "close_day", json!({"day": yesterday}))
+        .await?;
+    let reports: Value = meme.view("get_reports").await?.json()?;
+    assert_eq!(
+        reports,
+        json!([{"day": yesterday, "players_net": net, "wagers": [[human.id(), wagered]]}])
+    );
+    let book = env.view("get_day", json!({"day": yesterday})).await?;
+    assert_eq!(
+        (book["closed"].clone(), book["report"].clone()),
+        (json!(true), json!("reported"))
+    );
+    env.fails(
+        &human,
+        "close_day",
+        json!({"day": yesterday}),
+        "already closed",
+    )
+    .await?;
+    env.fails(
+        &human,
+        "close_day",
+        json!({"day": yesterday - 1}),
+        "no record for that day",
+    )
+    .await?;
+    assert_eq!(
+        env.view("get_day", json!({"day": day})).await?["closed"],
+        json!(false)
+    );
+
+    // A second floor whose meme contract refuses every report. A day with no human play
+    // closes empty; the refused report is logged, not retried.
+    let floor2 = env.worker.dev_deploy(&wasms().await[0]).await?;
+    floor2
+        .call("new")
+        .args_json(json!({
+            "owner": env.owner.id(), "token": env.ft.id(), "keeper": env.owner.id(),
+            "server_pubkey_hex": hex::encode([0u8; 32]),
+        }))
+        .transact()
+        .await?
+        .into_result()?;
+    let refusing = env.worker.dev_deploy(&wasms().await[2]).await?;
+    refusing
+        .call("set_refuse")
+        .args_json(json!({"refuse": true}))
+        .transact()
+        .await?
+        .into_result()?;
+    env.owner
+        .call(floor2.id(), "set_meme")
+        .args_json(json!({"account_id": refusing.id()}))
+        .transact()
+        .await?
+        .into_result()?;
+    back_one_day(&env, &floor2, day, false).await?;
+    let close = npc
+        .call(floor2.id(), "close_day")
+        .args_json(json!({"day": yesterday}))
+        .gas(GAS)
+        .transact()
+        .await?;
+    assert!(close.is_success(), "{:?}", close.failures());
+    let book: Value = floor2
+        .view("get_day")
+        .args_json(json!({"day": yesterday}))
+        .await?
+        .json()?;
+    assert_eq!(book["report"], json!("failed"));
+    assert_eq!(book["players"], json!([]));
+    assert_eq!(book["players_net"], json!("0"));
+    let reports: Value = refusing.view("get_reports").await?.json()?;
+    assert_eq!(reports, json!([]));
+    let again = npc
+        .call(floor2.id(), "close_day")
+        .args_json(json!({"day": yesterday}))
+        .gas(GAS)
+        .transact()
+        .await?;
+    expect_failure(again, "close_day", "already closed")?;
+    Ok(())
+}
+
+/// Only the meme contract starts a Tilt Hour; during it every table's rake in force is its
+/// game's minimum, a ticket priced higher still opens, and the bounds still hold.
+#[tokio::test]
+async fn tilt_hour_only_from_the_meme_lowers_the_rake_in_force() -> anyhow::Result<()> {
+    let env = setup(1).await?;
+    let (min_rake, max_rake) = core_rules::rake_bounds(Game::Dice);
+    let player = env.player(50 * USDC).await?;
+    env.fails(
+        &env.owner,
+        "start_tilt_hour",
+        json!({}),
+        "only the meme contract",
+    )
+    .await?;
+    let ada = env.dealer("ada").await?;
+    let offer_rake = ada["offer_rake_bp"].as_u64().unwrap() as u16;
+    assert!(offer_rake > min_rake);
+    assert_eq!(ada["rake_bp"], json!(offer_rake));
+    // Before: a ticket under the table's rake is refused.
+    let (_, cheap) = offer_at(
+        &env,
+        &player,
+        "ada",
+        "s-cheap",
+        1,
+        10 * USDC,
+        USDC,
+        Some(min_rake),
+    )
+    .await?;
+    env.fails(&player, "open_session", cheap.clone(), "rake differs")
+        .await?;
+
+    let meme = meme(&env).await?;
+    env.fails(
+        &env.owner,
+        "start_tilt_hour",
+        json!({}),
+        "only the meme contract",
+    )
+    .await?;
+    meme.call("start_tilt_hour")
+        .args_json(json!({"floor": env.floor.id()}))
+        .gas(GAS)
+        .transact()
+        .await?
+        .into_result()?;
+    let now = env.now().await?;
+    let until = env.view("get_floor", json!({})).await?["tilt_hour_until"]
+        .as_u64()
+        .unwrap();
+    assert!(until > now && until <= now + 3_600, "{until} {now}");
+    let ada = env.dealer("ada").await?;
+    assert_eq!(ada["rake_bp"], json!(min_rake));
+    assert_eq!(ada["offer_rake_bp"], json!(offer_rake));
+
+    // The same cheap ticket opens now; one priced at the usual rake still opens too.
+    env.ok(&player, "open_session", cheap).await?;
+    let other = env.player(50 * USDC).await?;
+    let (_, usual) = offer_at(
+        &env,
+        &other,
+        "ada",
+        "s-usual",
+        2,
+        10 * USDC,
+        USDC,
+        Some(offer_rake),
+    )
+    .await?;
+    env.ok(&other, "open_session", usual).await?;
+    // Out of the game's bounds is still refused.
+    let third = env.player(50 * USDC).await?;
+    let (_, wild) = offer_at(
+        &env,
+        &third,
+        "ada",
+        "s-wild",
+        3,
+        10 * USDC,
+        USDC,
+        Some(max_rake + 1),
+    )
+    .await?;
+    env.fails(&third, "open_session", wild, "rake differs")
+        .await?;
+
+    // After the hour the offer's rake is back.
+    env.wait_secs(until + 1 - env.now().await?).await?;
+    assert_eq!(env.dealer("ada").await?["rake_bp"], json!(offer_rake));
     Ok(())
 }

@@ -1,4 +1,4 @@
-//! Tilt House v2: the casino floor (docs/floor.md, docs/sessions.md, docs/tycoon.md).
+//! Tilt House v4: the casino floor (docs/floor.md, docs/sessions.md, docs/tycoon.md).
 //!
 //! Players keep a tUSDC balance in the contract. Each dealer is a table (one game) backed by an
 //! LP pool (NEP-245 shares, token id = dealer id), run by an NPC or by the player who opened it.
@@ -9,6 +9,7 @@
 //!
 //! Times are seconds (block time). Amounts are token base units (`u128`, decimal strings in JSON).
 
+mod days;
 mod dealers;
 mod floor;
 mod ft;
@@ -46,6 +47,8 @@ enum StorageKey {
     History,
     Sessions,
     Floor,
+    /// v4. Day books (`days.rs`), keyed by UTC day.
+    Days,
 }
 
 #[near(serializers = [borsh])]
@@ -79,12 +82,22 @@ pub struct House {
     npcs: Vec<AccountId>,
     /// v3. Retired tables, oldest first: out of the lobby and of the `MAX_DEALERS` count.
     retired_ids: Vec<String>,
+    /// v4. The $TILT contract (`set_meme`, once): receives `report_day`, may `start_tilt_hour`.
+    meme: Option<AccountId>,
+    /// v4. Until this time (seconds) every table plays at its game's minimum rake.
+    tilt_hour_until: u64,
+    /// v4. Day books (`days.rs`): at most `DAYS_KEPT`, their days in `day_keys` (ascending).
+    days: LookupMap<u64, days::DayBook>,
+    day_keys: Vec<u64>,
+    /// v4. A day from here on with no book had no human play: it may close empty. Earlier days
+    /// without a book are unknown (before the upgrade, or dropped) and refused.
+    days_known_from: u64,
 }
 
-/// The v2 root state (deployed on testnet before v3), read once by `migrate`.
+/// The v3 root state (deployed on testnet before v4), read once by `migrate`.
 #[derive(BorshDeserialize)]
 #[borsh(crate = "near_sdk::borsh")]
-struct HouseV2 {
+struct HouseV3 {
     owner: AccountId,
     token: AccountId,
     keeper: AccountId,
@@ -96,6 +109,8 @@ struct HouseV2 {
     history: LookupMap<(String, u64), LogEntry>,
     floor: Lazy<core_rules::Floor>,
     sessions: LookupMap<String, Session>,
+    npcs: Vec<AccountId>,
+    retired_ids: Vec<String>,
 }
 
 /// Block time in seconds.
@@ -148,16 +163,22 @@ impl House {
             sessions: LookupMap::new(StorageKey::Sessions),
             npcs: Vec::new(),
             retired_ids: Vec::new(),
+            meme: None,
+            tilt_hour_until: 0,
+            days: LookupMap::new(StorageKey::Days),
+            day_keys: Vec::new(),
+            days_known_from: days::today(),
         }
     }
 
-    /// Upgrade from v2: deploy the v3 code with this as the init call (signed by the contract
-    /// account). Only the root state changes; every collection keeps its storage prefix. A v3
-    /// state does not read as v2, so a second call fails.
+    /// Upgrade from v3: deploy the v4 code with this as the init call (signed by the contract
+    /// account). Only the root state changes; every collection keeps its storage prefix. Day
+    /// accounting starts with the upgrade day (counted from the upgrade on). A v4 state does
+    /// not read as v3, so a second call fails.
     #[private]
     #[init(ignore_state)]
     pub fn migrate() -> Self {
-        let old: HouseV2 = env::state_read().unwrap_or_else(|| fail("no state to migrate"));
+        let old: HouseV3 = env::state_read().unwrap_or_else(|| fail("no state to migrate"));
         Self {
             owner: old.owner,
             token: old.token,
@@ -170,8 +191,13 @@ impl House {
             history: old.history,
             floor: old.floor,
             sessions: old.sessions,
-            npcs: Vec::new(),
-            retired_ids: Vec::new(),
+            npcs: old.npcs,
+            retired_ids: old.retired_ids,
+            meme: None,
+            tilt_hour_until: 0,
+            days: LookupMap::new(StorageKey::Days),
+            day_keys: Vec::new(),
+            days_known_from: days::today(),
         }
     }
 

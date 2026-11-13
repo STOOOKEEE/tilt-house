@@ -1,10 +1,11 @@
-# Floor contract API v3 (`contract/`, crate `tilt-house-contract`)
+# Floor contract API v4 (`contract/`, crate `tilt-house-contract`)
 
-Deployed to `floor.tilthouse.testnet` (v2 upgraded in place with `migrate`) and, with play-money chips, to the
-mainnet floor (`floor.<root>`, `scripts/deploy-floor.sh`). Rules come from `core_rules` (docs/floor.md,
-docs/sessions.md, docs/tycoon.md); this file is the JSON contract between the chain, the web, the session
-server, the relayer and the agents. v3 adds: the NPC gambler registry and their salary (`register_npcs`,
-`credit_npc`), table rename and retirement, poker tables, the reproducible build.
+Deployed to `floor.tilthouse.testnet` (bets in tUSDC; v2 → v3 → v4 upgraded in place with `migrate`) and
+`floor-tilt.tilthouse.testnet` (same code, bets in $TILT, `scripts/deploy-floor.sh tilt`). Rules come from
+`core_rules` (docs/floor.md, docs/sessions.md, docs/tycoon.md); this file is the JSON contract between the chain,
+the web, the session server, the relayer and the agents. v3 added the NPC gambler registry and their salary
+(`register_npcs`, `credit_npc`), table rename and retirement, poker tables, the reproducible build. v4 adds the
+$TILT hooks (docs/tilt.md): day books and `close_day` → `report_day`, Tilt Hour (`start_tilt_hour`), `set_meme`.
 
 ## Conventions
 
@@ -22,12 +23,13 @@ server, the relayer and the agents. v3 adds: the NPC gambler registry and their 
 
 | Role | Who | Can |
 |---|---|---|
-| owner | `tilthouse.testnet` | `add_dealer`, `launch_floor`, `set_server_pubkey`, `set_keeper`, `register_npcs` |
+| owner | `tilthouse.testnet` | `add_dealer`, `launch_floor`, `set_server_pubkey`, `set_keeper`, `register_npcs`, `set_meme` (once) |
+| meme contract | config `meme` (`tilt.tilthouse.testnet` on the tUSDC floor) | `start_tilt_hour` |
 | keeper | config `keeper` | `reprice` (any dealer on autopilot), `rent_bid` (NPC dealers), NPC salary (`credit_npc` deposit msg) |
 | controller | NPC dealer account (`ada.tilthouse.testnet`) or the player who opened the table | `bid_for_seat`, `set_offer`, `set_autopilot`, `set_temperament`, `list_seat`, `buy_seat`, `reprice`, `rent_bid` (NPC), `set_table_name`, `retire_table` |
 | NPC gambler | an account in `get_npcs()` (at most `MAX_NPC_GAMBLERS = 24`, core `gambler_rules`) | sessions only: `open_session`, `close_session`, `force_close`, `claim_unrevealed`. Refused: `withdraw`, `invest` (also the `invest` deposit msg), `divest`, `open_table`, `list_seat`, `buy_seat`, `mt_transfer` (`"NPC gamblers can only play sessions"`). Their keys are function-call keys limited to the four session methods. |
 | session server | holds the ed25519 key whose public half is config `server_pubkey` | signs tickets and states (no on-chain role besides `settle_session`, which anyone may send) |
-| anyone | | `collect_rent`, `settle_session`, `close_session` (with the seed) |
+| anyone | | `collect_rent`, `settle_session`, `close_session` (with the seed), `close_day` |
 
 Relayer allow-list (function-call, 0 deposit): `open_table`, `bid_for_seat`, `set_offer`, `set_autopilot`,
 `set_temperament`, `set_table_name`, `retire_table`, `list_seat`, `buy_seat`, `invest`, `divest`, `open_session`,
@@ -43,7 +45,37 @@ Relayer allow-list (function-call, 0 deposit): `open_table`, `bid_for_seat`, `se
 | `add_dealer` | `{id, name, game: "dice"\|"roulette"\|"blackjack"\|"poker", temperament: "greedy"\|"promoter"\|"cautious", look: string\|null, dealer_account, seed_amount}` | owner. An **NPC** dealer, controlled by `dealer_account`, always on autopilot, off the floor. Seed from the owner's in-contract balance, minted as the owner's LP shares (`"0"`: empty pool). |
 | `launch_floor` | `{dealer_ids: string[]}` | owner, only while nobody is seated. `core::Floor::launch`: seats them in order (seat 1 first) at their seat's minimum rent, rent accruing from now (no prepay). Retired tables are refused. |
 | `register_npcs` | `{accounts: string[]}` | owner. Appends NPC gamblers (already registered ones are skipped); panics past `MAX_NPC_GAMBLERS = 24` in total. No removal. |
-| `migrate` | `{}` | `#[private]` init, run once as the init call of the v3 deploy over a v2 state (`near contract deploy … with-init-call migrate`). Keeps every collection; adds an empty NPC list and retired list. A v3 state does not read as v2, so a second call panics. |
+| `set_meme` | `{account_id}` | owner, **once** (`"the meme contract is already set"`): the $TILT contract. It receives `report_day` from `close_day` and is the only caller of `start_tilt_hour`. Logs `meme_set`. |
+| `migrate` | `{}` | `#[private]` init, run once as the init call of the v4 deploy over a v3 state (`near contract deploy … with-init-call migrate`). Keeps every collection, the NPC list and the retired tables; adds `meme: null`, `tilt_hour_until: 0`, empty day books, and day accounting from the upgrade day (that day counts from the upgrade on). A v4 state does not read as v3, so a second call panics. Checked against the live v3 code (`contract/tests/fixtures/floor-v3.wasm`, code hash `4w1gvFSNptiPii6ckeiokJ13KkX5XKZR9MQhNTZvmQee`). |
+
+## Day books and Tilt Hour (v4, docs/tilt.md)
+
+A **day** is a UTC day number: `block_timestamp_secs / 86400` (`get_floor().day` is today).
+
+- **Day book**: every `settle_session` adds the batch's rounds of a **human** player (NPC gamblers from
+  `get_npcs` excluded) to today's book: `players_net += Σ payout − Σ stake` (players against the house, > 0 when
+  they won; every game counts the same, poker included) and the player's `wagered += Σ stake`, `net += …`.
+  Rounds only appear in a book when settled (a `force_close` with unsettled rounds and jackpots are not counted).
+  Storage is bounded: the floor keeps the **2 latest books** (the current and the previous day; an older one leaves
+  storage when a newer day is written), and a book tracks at most **200 players**, the top wagerers: when full, a
+  new player replaces the smallest wagerer only if this batch wagered more, else it is not tracked; either way its
+  rounds stay in the day's `players_net` and `wagered`. A player evicted and back later restarts from its new rounds.
+- `close_day({day})` — anyone, 0 deposit, **≥ 200 Tgas** when a meme contract is set (`"close_day needs at least
+  200 Tgas"`; send 300). Only for a finished day (`"the day is not over yet"`), once (`"the day is already
+  closed"`). A day with no book closes **empty** (no human play: `players_net = 0`, no players) if it is not older
+  than the floor's knowledge (`days_known_from`: the upgrade day, raised past every book that left storage);
+  otherwise `"no record for that day"` (fail closed: a dropped day is never reported as empty). Close days in
+  order, once each after 00:00 UTC; a book not closed by the end of the next day is gone. Logs `day_closed`. With
+  a meme contract it then calls `meme.report_day({day, players_net: "<i128>", wagers: [[account_id, "<u128>"], …]})`
+  (150 Tgas, 0 deposit, the **50 largest wagerers**, largest first, ties by account id, no zero wager) and
+  `on_day_reported` stores `report: "reported"` or `"failed"` and logs `day_reported`. A failed report is not
+  retried: the day stays closed.
+- **Tilt Hour**: `start_tilt_hour()` — the config `meme` account only (`"only the meme contract can start a tilt
+  hour"`), no args, 0 deposit. Sets `tilt_hour_until = max(tilt_hour_until, now + 3600)` (extends, never
+  shortens) and logs `tilt_hour`. While `now < tilt_hour_until` **every table's rake in force is its game's
+  minimum** (`rake_bounds(game).0`): `get_lobby` `rake_bp`/`total_edge_bp` show it and `open_session` accepts any
+  ticket rake from that minimum up to the game's maximum. Tickets priced before (at a higher rake) still open at the
+  rake they carry; a session's rake is frozen at open, so a session opened before the hour keeps its rake.
 
 ## Money in and out
 
@@ -147,7 +179,7 @@ chips put in the pot, `payout` = chips won after rake (0 for a loser), `"outcome
 **open_session** checks: server signature over `ticket_message(ticket)`; `now ≤ expires_at`; caller = `player`;
 `session_id` 1–64 chars of `[A-Za-z0-9_-]`, unused; `client_seed_is_valid`; no other `open` session for the player;
 the dealer is seated (rent settled first), open, of `game`; `lock ≥ 0.1 tUSDC` and ≤ balance;
-`rake_bp` within `rake_bounds(game)` and ≥ the dealer's rake in force now; `0.1 tUSDC ≤ max_bet ≤` the dealer's max
+`rake_bp` within `rake_bounds(game)` and ≥ the dealer's rake in force now (Tilt Hour: the game's minimum); `0.1 tUSDC ≤ max_bet ≤` the dealer's max
 bet now (poker: also `lock ≤ max_bet`); `max_win ≤ session_max_win(lock, pool.free)`. Then `lock` leaves the balance (escrow), the pool reserves
 `max_win`, the offer is frozen.
 
@@ -193,7 +225,9 @@ Statuses: `"open" | "force_closed" | "closed" | "forfeited"`. Done = `closed` or
   ],
   "lowest_rent": "1000000",       // null when nobody is seated
   "outbid_min": "600000",         // cheapest empty seat's minimum, else ⌈lowest × 1.1⌉
-  "jackpot": "12000000", "jackpot_odds_unit": "2000000000", "min_jackpot": "10000000"
+  "jackpot": "12000000", "jackpot_odds_unit": "2000000000", "min_jackpot": "10000000",
+  "tilt_hour_until": 0,           // v4: Tilt Hour runs while now < tilt_hour_until (0: never)
+  "day": 20405                    // v4: today's UTC day number (block time / 86400)
 }
 ```
 
@@ -220,7 +254,8 @@ Statuses: `"open" | "force_closed" | "closed" | "forfeited"`. Done = `closed` or
 }
 ```
 
-`rake_bp` = rake in force now (the game's minimum during a boost); `offer_rake_bp` = the dealer's set rake.
+`rake_bp` = rake in force now (the game's minimum during a boost or a Tilt Hour); `offer_rake_bp` = the dealer's set
+rake. `total_edge_bp` = `base_edge_bp + rake_bp`.
 `max_bet` = min(offer max bet, free / worst_case_multiple). `seat`, `rent_per_hour`, `paid_until`, `ask`: null off
 the floor. `earnings_1h` = −`player_net_1h` (what players lost at the table), `pnl_1h` = earnings − rent paid.
 `game_share_bp` = this table's share of the bets at seated tables of its game over the hour (10 000 if none).
@@ -275,13 +310,32 @@ Last 100 entries per dealer, oldest first; `limit` ≤ 50.
 `outbid`; `amount` = rent paid at eviction), `rent` (seated dealer's rent change, `amount` = new rent/h),
 `listed` (`amount` = ask, 0 = unlisted), `sold` / `bought` (`amount` = price, `detail` = `"seat-<n>"`, `account_id` = the other side), `jackpot` (`account_id` won `amount`), `renamed` (`detail` = new name), `retired` (`amount` = paid to the controller).
 
+### `get_day({day: number|null})` → `DayView | null` (v4)
+
+`day: null` = today. A day with a book, or a day with none the floor knows had no human play (from
+`days_known_from` to today), shows; an older or a future day is `null`.
+
+```json
+{"day": 20405, "closed": true, "report": "reported",
+ "players_net": "-1250000", "wagered": "40000000",
+ "players": [{"account_id": "alice.testnet", "wagered": "30000000", "net": "-2000000"},
+             {"account_id": "bob.testnet", "wagered": "10000000", "net": "750000"}]}
+```
+
+`players_net` (signed): human players against the house, > 0 when they won. `players`: the tracked players (≤ 200),
+largest wagerers first (ties by account id), zero wagers left out. `report`: `null` (open, or closed without a
+meme contract), `"pending"` (sent, answer not back), `"reported"`, `"failed"`.
+
 ### `get_config()`
 
 ```json
 {"owner": "tilthouse.testnet", "token": "tusdc.tilthouse.testnet", "keeper": "tilthouse.testnet",
  "server_pubkey_hex": "…", "min_bet": "100000", "history_per_dealer": 100, "sessions_per_player": 20,
- "session_timeout_secs": 600, "reveal_timeout_secs": 3600, "dealer_ids": ["ada", "bruno"]}
+ "session_timeout_secs": 600, "reveal_timeout_secs": 3600, "dealer_ids": ["ada", "bruno"],
+ "meme": "tilt.tilthouse.testnet"}
 ```
+
+`meme`: the $TILT contract (`set_meme`), `null` until set (and on the TILT floor).
 
 ## Events (NEP-297, `standard: "tilthouse"`, `version: "2.0.0"`)
 
@@ -307,6 +361,10 @@ Last 100 entries per dealer, oldest first; `limit` ≤ 50.
 | `npc_credited` | `{account_id, amount}` (keeper salary) |
 | `table_renamed` | `{dealer_id, name}` |
 | `table_retired` | `{dealer_id, controller, paid, to_jackpot}` |
+| `meme_set` | `{account_id}` (v4) |
+| `tilt_hour` | `{until}` (v4, `start_tilt_hour`) |
+| `day_closed` | `{day, players_net, wagered, players, meme}` (v4; `players` = tracked players with a wager, `meme` = the reported-to account or null) |
+| `day_reported` | `{day, ok}` (v4, the `report_day` answer) |
 
 ## Verifying a session
 

@@ -46,6 +46,10 @@ pub struct FloorView {
     pub jackpot: U128,
     pub jackpot_odds_unit: U128,
     pub min_jackpot: U128,
+    /// Tilt Hour runs while `now < tilt_hour_until` (seconds; 0: never started).
+    pub tilt_hour_until: u64,
+    /// The current UTC day (`block time / 86 400`), as in `get_day` / `close_day`.
+    pub day: u64,
 }
 
 #[near(serializers = [json])]
@@ -63,6 +67,7 @@ pub struct DealerView {
     pub traits: Value,
     pub temperament_changed_at: u64,
     pub last_boost_at: u64,
+    /// The rake in force now: the offer's, the game's minimum during a boost or a Tilt Hour.
     pub rake_bp: u16,
     pub offer_rake_bp: u16,
     pub base_edge_bp: u16,
@@ -173,6 +178,8 @@ pub struct ConfigView {
     pub session_timeout_secs: u64,
     pub reveal_timeout_secs: u64,
     pub dealer_ids: Vec<String>,
+    /// The $TILT contract (`set_meme`), null until set.
+    pub meme: Option<AccountId>,
 }
 
 /// Core types are exposed as JSON values: they carry no schema for the contract ABI.
@@ -287,7 +294,7 @@ fn session_view(session: &Session) -> SessionView {
 impl House {
     fn dealer_view(&self, dealer: &Dealer, now: u64) -> DealerView {
         let pool = &dealer.pool;
-        let rake_bp = dealer.offer.effective_rake_bp(dealer.game, now);
+        let rake_bp = self.effective_rake_bp(dealer, now);
         let base = base_edge_bp(dealer.game);
         let stats = self.full_stats(dealer, now);
         let extra = dealer.hour_extra(now);
@@ -374,6 +381,8 @@ impl House {
             jackpot: U128(self.floor.jackpot),
             jackpot_odds_unit: U128(JACKPOT_ODDS_UNIT),
             min_jackpot: U128(MIN_JACKPOT),
+            tilt_hour_until: self.tilt_hour_until,
+            day: crate::days::today(),
         }
     }
 
@@ -472,6 +481,7 @@ impl House {
             session_timeout_secs: SESSION_TIMEOUT_SECS,
             reveal_timeout_secs: REVEAL_TIMEOUT_SECS,
             dealer_ids: self.dealer_ids.clone(),
+            meme: self.meme.clone(),
         }
     }
 }
