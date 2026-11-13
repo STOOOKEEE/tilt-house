@@ -8,6 +8,7 @@
     "poker": "node --import tsx src/main.ts poker",
     "verify-session": "node --import tsx src/main.ts verify-session",
     "floor": "node --import tsx src/main.ts floor",
+    "judge": "node --import tsx src/judge.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

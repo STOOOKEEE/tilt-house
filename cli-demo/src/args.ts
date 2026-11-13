@@ -24,7 +24,7 @@ export type Command =
   | { name: "floor"; targets: Targets }
   | { name: "help" };
 
-const SITE = "https://tilt-house-beta.vercel.app";
+export const SITE = "https://tilt-house-beta.vercel.app";
 const DEFAULTS = {
   floor: "floor.tilthouse.testnet",
   token: "tusdc.tilthouse.testnet",

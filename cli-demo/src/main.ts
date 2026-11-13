@@ -26,7 +26,7 @@ async function run(command: Command): Promise<boolean> {
   await readToken(command.targets);
   switch (command.name) {
     case "demo":
-      return runDemo(command);
+      return (await runDemo(command)).ok;
     case "poker":
       return runPoker(command);
     case "floor":

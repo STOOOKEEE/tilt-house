@@ -345,7 +345,16 @@ function percentile(values: readonly number[], p: number): number {
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] ?? 0;
 }
 
-export async function runDemo(cmd: DemoCommand): Promise<boolean> {
+export interface DemoResult {
+  ok: boolean;
+  /** The sessions played, in order, each with its verdict from on-chain data. */
+  sessions: { game: Game; sessionId: string; verified: boolean }[];
+  /** Games skipped: no seated, open table took the bet. */
+  skipped: Game[];
+  medianMs: number;
+}
+
+export async function runDemo(cmd: DemoCommand): Promise<DemoResult> {
   const t = cmd.targets;
   console.log(color.title(`Tilt House demo · NEAR testnet · ${t.floor}`));
   const provider = new FallbackProvider(rpcFor(t.rpcUrl));
@@ -369,9 +378,11 @@ export async function runDemo(cmd: DemoCommand): Promise<boolean> {
     { game: "blackjack", stake: BJ_STAKE, moves: [{ bet: "blackjack", stake: BJ_STAKE }] },
   ];
   const played: Played[] = [];
+  const skipped: Game[] = [];
   for (const plan of plans) {
     const dealer = pickTable(live.dealers, plan.game, plan.stake);
     if (!dealer) {
+      skipped.push(plan.game);
       heading(`No ${plan.game} session`);
       line(color.warn(`skipped: no seated, open ${plan.game} table takes a ${money(plan.stake)} bet right now (tables lose their seat when outbid or short of rent)`));
       continue;
@@ -394,5 +405,10 @@ export async function runDemo(cmd: DemoCommand): Promise<boolean> {
     line(`${verified[i] ? OK : BAD} ${p.game.padEnd(9)} ${p.sessionId}  re-check: pnpm --filter cli-demo verify-session ${p.sessionId}${targetFlags(t)}`);
   }
   console.log(allOk ? `\n  ${OK} ${color.ok("Demo complete: every round verified against the chain.")}` : `\n  ${BAD} ${color.bad("Demo incomplete")}`);
-  return allOk;
+  return {
+    ok: allOk,
+    sessions: played.map((p, i) => ({ game: p.game, sessionId: p.sessionId, verified: verified[i] === true })),
+    skipped,
+    medianMs: Math.round(percentile(latencies, 0.5)),
+  };
 }

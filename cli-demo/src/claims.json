@@ -1,0 +1,39 @@
+{
+  "tilt_params": {
+    "floor": "floor.tilthouse.testnet",
+    "welcome_operator": "relayer.tilthouse.testnet",
+    "house_receiver": "tilthouse.testnet",
+    "launch_day": 20770,
+    "treasury_initial": "1000000000000",
+    "house_allocation": "300000000000",
+    "welcome_pool": "500000000000",
+    "welcome_amount": "100000000",
+    "welcome_daily_claims": 200,
+    "mint_rate_bp": 100000,
+    "streak_bonus_bp": 1000,
+    "streak_bonus_max_days": 7,
+    "player_day_cap": "500000000",
+    "day_cap": "5000000000",
+    "burn_bp": 100,
+    "tilt_hour_amount": "500000000",
+    "tilt_hour_min_burners": 5,
+    "tilt_hour_min_burn": "20000000",
+    "tilt_hour_window_secs": 3600,
+    "max_players": 50,
+    "log_capacity": 256
+  },
+  "week_42_events": {
+    "reprice": 2430,
+    "boost": 765,
+    "opened": 3,
+    "seated": 74,
+    "rent": 673,
+    "jackpot": 37,
+    "price_war": 165,
+    "bust": 4,
+    "evicted": 73,
+    "reopen": 3,
+    "seat_listed": 1,
+    "seat_sold": 1
+  }
+}
