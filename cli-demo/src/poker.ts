@@ -7,7 +7,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { JsonRpcProvider } from "near-api-js";
 import {
   actionProblem,
   pokerClient,
@@ -31,8 +30,9 @@ import { targetFlags, type Command, type Targets } from "./args.ts";
 import { getArchivedHand, getChainSession, view } from "./chain.ts";
 import { ensureBalance, floorBalance, serverKeyHex, setUpPlayer, type Player } from "./demo.ts";
 import { readFloor } from "./floor.ts";
+import { FallbackProvider, rpcFor } from "./rpc.ts";
 import { formatUsdc } from "../../web/src/format";
-import { accountLink, BAD, color, heading, line, money, OK, txLink } from "./ui.ts";
+import { accountLink, BAD, color, count, heading, line, money, OK, txLink } from "./ui.ts";
 import { verifySessionById } from "./verify-session.ts";
 
 type PokerCommand = Extract<Command, { name: "poker" }>;
@@ -251,7 +251,7 @@ async function waitClosedOnChain(t: Targets, seated: readonly Seated[]): Promise
 export async function runPoker(cmd: PokerCommand): Promise<boolean> {
   const t = cmd.targets;
   console.log(color.title(`Tilt House poker · NEAR testnet · ${t.floor}`));
-  const provider = new JsonRpcProvider({ url: t.rpcUrl });
+  const provider = new FallbackProvider(rpcFor(t.rpcUrl));
   const players: Player[] = [];
   for (const label of LABELS) {
     const player = await setUpPlayer(cmd, provider, join(homedir(), ".tilt-house", `cli-poker-${label.toLowerCase()}.json`), `Player ${label}`);
@@ -320,7 +320,7 @@ export async function runPoker(cmd: PokerCommand): Promise<boolean> {
 
   heading("Summary");
   const allOk = verifiedHands && archiveOk && verified.every(Boolean) && played >= cmd.hands;
-  line(`${played} hands played at ${dealer.name}, ${[...hands.values()].filter(ours).length} revealed and replayed`);
+  line(`${count(played, "hand")} played at ${dealer.name}, ${[...hands.values()].filter(ours).length} revealed and replayed`);
   for (const [i, s] of seated.entries()) {
     line(`${verified[i] ? OK : BAD} ${s.label} ${s.sessionId} · open ${txLink(s.openTx)}`);
     line(color.dim(`   ${accountLink(s.player.accountId)} · re-check: pnpm --filter cli-demo verify-session ${s.sessionId}${targetFlags(t)}`));

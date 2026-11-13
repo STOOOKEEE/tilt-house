@@ -70,6 +70,12 @@ describe("POST /activate", () => {
     expect((await activate(implicit(2), { as: user(2) })).status).toBe(200);
   });
 
+  it("is sized for judges sharing an address, under the daily budget", () => {
+    expect(LIMITS.activatePerIp).toBe(15);
+    expect(LIMITS.anonymousActivateGlobalPerHour).toBe(60);
+    expect(LIMITS.anonymousActivateGlobalPerHour).toBeLessThanOrEqual(LIMITS.activateGlobalPerHour);
+  });
+
   it(`allows ${LIMITS.activatePerIp} requests per IP per minute`, async () => {
     for (let i = 0; i < LIMITS.activatePerIp; i++) expect((await activate(implicit(10 + i))).status).toBe(200);
     expect(await activate(implicit(99))).toEqual({ status: 429, body: { error: "rate_limited" } });

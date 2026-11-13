@@ -97,7 +97,11 @@ same vectors through the chain-anchored check, tampered rounds included.
 
 Only `.testnet` (or implicit) accounts are accepted. Amounts print with the token's own symbol (`ft_metadata`: tUSDC, TILT).
 
+RPC: when the configured endpoint (default or `--rpc`) keeps answering 429, 5xx or timeouts after its retries
+(~25 s; a shared cloud IP gets rate-limited), the run moves to `https://near-testnet.drpc.org` and says so once.
+If that fails too: `public RPC rate-limited: retry later or pass --rpc <url>`.
+
 ```sh
-pnpm --filter cli-demo test        # argument parsing, chain-anchored verification, poker rounds (Rust vectors)
+pnpm --filter cli-demo test        # argument parsing, chain-anchored verification, poker rounds (Rust vectors), RPC fallback
 pnpm --filter cli-demo typecheck
 ```

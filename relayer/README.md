@@ -66,7 +66,7 @@ mints 100 tUSDC. The token is an ES256 JWT checked against the app's JWKS
 issuer `privy.io`, audience = the app id, expiry, subject `did:privy:…` (`src/privy.ts`).
 
 On testnet (`ANONYMOUS_ACTIVATION`, default on; refused on mainnet) a request without an
-`Authorization` header is activated anonymously, once per account and at most 20 per hour
+`Authorization` header is activated anonymously, once per account and at most 60 per hour
 overall, for the CLI demo (`cli-demo/`). A token that is sent must verify.
 
 With `FAUCET_MODE=welcome` (the TILT floor's relayer, `TOKEN_CONTRACT` = `TILT_CONTRACT` = the
@@ -76,7 +76,7 @@ and mints nothing: `minted: "0"`.
 
 - `200 { funded, registered, minted: "100000000" }` (`funded`/`registered`: done by this call)
 - `401 missing_token | invalid_token`, `403 not_implicit_account`, `409 already_activated`,
-  `429 rate_limited` (5/min per IP, 100/hour overall), `502 rpc_error` (retry is safe),
+  `429 rate_limited` (15/min per IP, 100/hour overall), `502 rpc_error` (retry is safe),
   `503 paused | daily_budget_exhausted | auth_unavailable` (Privy keys unreachable)
 
 ### `POST /faucet` `{ accountId }`

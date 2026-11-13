@@ -2,7 +2,6 @@
  * Reads the live system: floor contract views over NEAR RPC, the session server's public session
  * view, and the txs of a session (listed by NearBlocks, their args read back from RPC).
  */
-import { setTimeout as sleep } from "node:timers/promises";
 import { parseLastHand, type LastHand } from "../../web/src/near/poker-client";
 import { parseCompactRound, parseTicket, type CompactRound, type SessionTicket } from "../../web/src/near/session-client";
 import {
@@ -18,31 +17,16 @@ import {
   type Game,
 } from "../../web/src/near/views";
 import type { Targets } from "./args.ts";
+import { rpcFor, withRetry } from "./rpc.ts";
 import { errorMessage } from "./ui.ts";
 
-const RETRIES = 6;
-const RETRY_BASE_MS = 400;
-/** RPC and NearBlocks rate-limit; a network blip is not a verdict either. */
-const TRANSIENT = /HTTP (429|5\d\d)|fetch failed|ECONNRESET|ETIMEDOUT|socket hang up/i;
-
-async function withRetry<T>(task: () => Promise<T>): Promise<T> {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return await task();
-    } catch (error) {
-      if (attempt >= RETRIES || !TRANSIENT.test(errorMessage(error))) throw error;
-      await sleep(RETRY_BASE_MS * 2 ** attempt);
-    }
-  }
-}
-
 export function view(t: Targets, contract: string, method: string, args: object = {}): Promise<unknown> {
-  return withRetry(() => viewCall(t.rpcUrl, contract, method, args));
+  return rpcFor(t.rpcUrl).call((url) => viewCall(url, contract, method, args));
 }
 
-async function getJson(url: string, init?: RequestInit): Promise<{ status: number; body: unknown }> {
+async function getJson(url: string): Promise<{ status: number; body: unknown }> {
   return withRetry(async () => {
-    const response = await fetch(url, init);
+    const response = await fetch(url);
     if (response.status === 429 || response.status >= 500) throw new Error(`${url}: HTTP ${response.status}`);
     return { status: response.status, body: await response.json().catch(() => null) };
   });
@@ -219,18 +203,23 @@ async function listTxs(t: Targets, account: string, since: number): Promise<List
 
 /** The function calls of a tx, read from RPC (a relayed tx carries them inside its Delegate action). */
 async function txCalls(t: Targets, hash: string, signer: string): Promise<FunctionCall[]> {
-  const { body } = await getJson(t.rpcUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: "tilt-house",
-      method: "tx",
-      params: { tx_hash: hash, sender_account_id: signer, wait_until: "NONE" },
-    }),
+  const reply = await rpcFor(t.rpcUrl).call(async (url) => {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "tilt-house",
+        method: "tx",
+        params: { tx_hash: hash, sender_account_id: signer, wait_until: "NONE" },
+      }),
+    });
+    if (!response.ok) throw new Error(`RPC tx ${hash}: HTTP ${response.status}`);
+    const body = record(await response.json(), "rpc");
+    // Inside the retried call: a gateway's rate limit comes back as a JSON-RPC error too.
+    if (body.error !== undefined) throw new Error(`RPC tx ${hash}: ${JSON.stringify(body.error)}`);
+    return body;
   });
-  const reply = record(body, "rpc");
-  if (reply.error !== undefined) throw new Error(`RPC tx ${hash}: ${JSON.stringify(reply.error)}`);
   const actions = list(record(record(reply.result, "rpc.result").transaction, "transaction").actions, "actions");
   return actions.flatMap(functionCalls);
 }

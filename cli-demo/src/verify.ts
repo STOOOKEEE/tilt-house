@@ -7,6 +7,7 @@
 import { expectedRound, verifyHand, type LastHand } from "../../web/src/near/poker-client";
 import { roundBorsh, verifySession, type CompactRound, type SessionSummary, type SessionTicket } from "../../web/src/near/session-client";
 import type { ChainSession } from "./chain.ts";
+import { count } from "./ui.ts";
 
 export type ChainVerdict = { ok: true; summary: SessionSummary } | { ok: false; error: string; nonce: number | null };
 
@@ -45,7 +46,7 @@ export function verifyAgainstChain(
   if (chain.server_seed === null) return fail("closed without a revealed seed");
   if (serverSeed !== null && serverSeed !== chain.server_seed) return fail("the session server shows another seed than the chain");
   if (rounds.length !== chain.settled_nonce) {
-    return fail(`${rounds.length} rounds given, the chain settled ${chain.settled_nonce}`);
+    return fail(`${count(rounds.length, "round")} given, the chain settled ${chain.settled_nonce}`);
   }
   // Closed from open: the escrow paid out is the signed balance at the last settled round.
   const final = { session_id: chain.id, nonce: chain.settled_nonce, balance: chain.paid_out, chain: chain.chain };

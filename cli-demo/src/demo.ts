@@ -7,10 +7,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { Account, JsonRpcProvider, KeyPair, KeyPairSigner, nearToYocto, PublicKey, type KeyPairString } from "near-api-js";
+import { Account, KeyPair, KeyPairSigner, nearToYocto, PublicKey, type KeyPairString } from "near-api-js";
 import { handTotal } from "../../web/src/house";
 import { callAction, MOVE_GAS } from "../../web/src/near/delegate";
-import { activate, claimFaucet, relay } from "../../web/src/near/relay";
+import { activate, claimFaucet, relay, RelayError } from "../../web/src/near/relay";
 import {
   checkNextState,
   NOT_OPEN_YET,
@@ -29,8 +29,9 @@ import { amount, parsePlayer, record, str, type Bet, type DealerView, type Game 
 import { targetFlags, type Command, type Funder, type Targets } from "./args.ts";
 import { getChainSession, view } from "./chain.ts";
 import { printFloor, readFloor } from "./floor.ts";
+import { FallbackProvider, rpcFor } from "./rpc.ts";
 import { describeRound, handText } from "./rounds.ts";
-import { accountLink, BAD, color, errorMessage, heading, line, OK, txLink, money } from "./ui.ts";
+import { accountLink, BAD, color, count, errorMessage, heading, line, OK, txLink, money } from "./ui.ts";
 import { verifySessionById } from "./verify-session.ts";
 
 type DemoCommand = Extract<Command, { name: "demo" }>;
@@ -152,7 +153,7 @@ function directSend(account: Account): Send {
   };
 }
 
-async function fundWithFunder(t: Targets, provider: JsonRpcProvider, funder: Funder, player: Player): Promise<void> {
+async function fundWithFunder(t: Targets, provider: FallbackProvider, funder: Funder, player: Player): Promise<void> {
   const funderAccount = new Account(funder.accountId, provider, new KeyPairSigner(KeyPair.fromString(funder.key as KeyPairString)));
   const gift = await funderAccount.transfer({ receiverId: player.accountId, amount: FUNDER_NEAR });
   line(`${OK} ${funder.accountId} sent 1 NEAR for gas ${color.dim(txLink(gift.transaction.hash))}`);
@@ -169,7 +170,7 @@ async function fundWithFunder(t: Targets, provider: JsonRpcProvider, funder: Fun
   line(`${OK} ${funder.accountId} sent ${money(DEPOSIT)} ${color.dim(txLink(sent.transaction.hash))}`);
 }
 
-async function accountExists(provider: JsonRpcProvider, accountId: string): Promise<boolean> {
+async function accountExists(provider: FallbackProvider, accountId: string): Promise<boolean> {
   try {
     await provider.viewAccount({ accountId });
     return true;
@@ -178,10 +179,22 @@ async function accountExists(provider: JsonRpcProvider, accountId: string): Prom
   }
 }
 
+export const RELAYER_BUSY = "the relayer is busy (rate limit): retry in a few minutes";
+
+/** No Privy login in a terminal: the testnet relayer activates demo accounts anonymously. */
+export async function activateAnonymously(relayerUrl: string, accountId: string): Promise<void> {
+  try {
+    await activate(relayerUrl, accountId, null);
+  } catch (error) {
+    if (error instanceof RelayError && error.code === "rate_limited") throw new Error(RELAYER_BUSY, { cause: error });
+    throw error;
+  }
+}
+
 /** What setting up an account needs from a command. */
 export type AccountOptions = Pick<DemoCommand, "targets" | "funder" | "fresh">;
 
-export async function setUpPlayer(cmd: AccountOptions, provider: JsonRpcProvider, accountFile = ACCOUNT_FILE, label = "Account"): Promise<Player> {
+export async function setUpPlayer(cmd: AccountOptions, provider: FallbackProvider, accountFile = ACCOUNT_FILE, label = "Account"): Promise<Player> {
   const t = cmd.targets;
   heading(label);
   const stored = cmd.fresh ? null : await loadKey(accountFile);
@@ -197,8 +210,7 @@ export async function setUpPlayer(cmd: AccountOptions, provider: JsonRpcProvider
   if (cmd.funder) {
     await fundWithFunder(t, provider, cmd.funder, player);
   } else {
-    // No Privy login in a terminal: the testnet relayer activates demo accounts anonymously.
-    await activate(t.relayer, accountId, null);
+    await activateAnonymously(t.relayer, accountId);
     line(`${OK} the relayer activated it: gas money, token registration, welcome chips ${color.dim(`(POST ${t.relayer}/activate)`)}`);
   }
   return player;
@@ -319,7 +331,7 @@ async function playSession(
   if (closed.state.nonce !== state.nonce || closed.state.chain !== state.chain) throw new Error("the server closed on a state other than our last one");
   const local = verifySession(closed.server_seed, started.ticket, rounds, state);
   if (!local.ok) throw new Error(`revealed seed does not replay: ${local.error}`);
-  line(`${OK} closed: seed revealed, ${rounds.length} rounds replay locally · balance ${money(LOCK)} → ${money(state.balance)}`);
+  line(`${OK} closed: seed revealed, ${count(rounds.length, "round")} replayed locally · balance ${money(LOCK)} → ${money(state.balance)}`);
   for (let waited = 0; (await getChainSession(t, started.session_id))?.status !== "closed"; waited += POLL_MS) {
     if (waited > CHAIN_CLOSE_TIMEOUT_MS) throw new Error("the server did not settle and close on chain within 2 minutes");
     await sleep(POLL_MS);
@@ -336,7 +348,7 @@ function percentile(values: readonly number[], p: number): number {
 export async function runDemo(cmd: DemoCommand): Promise<boolean> {
   const t = cmd.targets;
   console.log(color.title(`Tilt House demo · NEAR testnet · ${t.floor}`));
-  const provider = new JsonRpcProvider({ url: t.rpcUrl });
+  const provider = new FallbackProvider(rpcFor(t.rpcUrl));
   const player = await setUpPlayer(cmd, provider);
   const open = parsePlayer(await view(t, t.floor, "get_player", { account_id: player.accountId })).open_session;
   if (open !== null) throw new Error(`session ${open} is still open for this account (a crashed run?): the server closes idle sessions; retry later or use --new`);
@@ -376,7 +388,7 @@ export async function runDemo(cmd: DemoCommand): Promise<boolean> {
   // A game without a seated table is skipped (the economy decides who holds a seat), not failed.
   const allOk = played.length > 0 && verified.every(Boolean);
   heading("Summary");
-  line(`${latencies.length} instant requests over ${played.length} sessions: median ${Math.round(percentile(latencies, 0.5))} ms, p90 ${Math.round(percentile(latencies, 0.9))} ms, max ${Math.round(Math.max(...latencies))} ms`);
+  line(`${count(latencies.length, "instant request")} over ${count(played.length, "session")}: median ${Math.round(percentile(latencies, 0.5))} ms, p90 ${Math.round(percentile(latencies, 0.9))} ms, max ${Math.round(Math.max(...latencies))} ms`);
   line(`floor balance now ${money(await floorBalance(t, player.accountId))} · ${accountLink(player.accountId)}`);
   for (const [i, p] of played.entries()) {
     line(`${verified[i] ? OK : BAD} ${p.game.padEnd(9)} ${p.sessionId}  re-check: pnpm --filter cli-demo verify-session ${p.sessionId}${targetFlags(t)}`);

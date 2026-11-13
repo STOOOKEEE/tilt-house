@@ -33,12 +33,13 @@ export const MINT_AMOUNT = 100_000_000n;
 export const LIMITS = {
   relayPerSender: 30,
   relayGlobal: 600,
-  activatePerIp: 5,
+  /** Behind Vercel and the Funnel, many judges (shared cloud IPs) can share one address. */
+  activatePerIp: 15,
   activateGlobalPerHour: 100,
   faucetPerIp: 5,
   faucetGlobalPerHour: 100,
   /** Testnet activations without a Privy login (CLI demo), on top of the limits above. */
-  anonymousActivateGlobalPerHour: 20,
+  anonymousActivateGlobalPerHour: 60,
 } as const;
 
 export interface AppDeps {

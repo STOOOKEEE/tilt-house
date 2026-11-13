@@ -33,6 +33,9 @@ export function useToken(tokenSymbol: string): void {
 
 export const money = (amount: string | bigint): string => `${formatUsdc(amount)} ${symbol}`;
 
+/** `1 round`, `2 rounds`. */
+export const count = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? "" : "s"}`;
+
 export function heading(text: string): void {
   console.log(`\n${color.title(`▸ ${text}`)}`);
 }

@@ -4,7 +4,7 @@ import type { Targets } from "./args.ts";
 import type { LastHand } from "../../web/src/near/poker-client";
 import { archiveStart, findSessionTxs, getArchivedHand, getChainSession, getServerSession, view, type ChainSession, type SessionTxs } from "./chain.ts";
 import { describeRound } from "./rounds.ts";
-import { accountLink, BAD, color, heading, line, OK, txLink, money } from "./ui.ts";
+import { accountLink, BAD, color, count, heading, line, OK, txLink, money } from "./ui.ts";
 import { pokerReplayer, settledRoundsProblem, unarchivedRounds, verifyAgainstChain } from "./verify.ts";
 
 /** Beyond this, the round list is shortened to its head and tail. */
@@ -81,7 +81,7 @@ export async function verifySessionById(
   heading(`Verifying session ${chain.id}`);
   line(`${color.bold(chain.player)} at ${color.bold(chain.dealer_id)} (${chain.game}), status ${chain.status}, lock ${money(chain.lock)}`);
   line(color.dim(`on chain: seed hash ${chain.server_seed_hash} · client seed ${chain.client_seed} · rake ${chain.rake_bp} bp`));
-  line(color.dim(`          revealed seed ${chain.server_seed ?? "—"} · ${chain.settled_nonce} rounds settled · chain ${chain.chain}`));
+  line(color.dim(`          revealed seed ${chain.server_seed ?? "—"} · ${count(chain.settled_nonce, "round")} settled · chain ${chain.chain}`));
 
   const [server, txs] = await Promise.all([getServerSession(t, sessionId), findSessionTxs(t, chain)]);
   const settleRounds = roundsFromSettles(txs, chain.settled_nonce);
@@ -100,7 +100,7 @@ export async function verifySessionById(
     const hands = await archivedHands(t, chain, rounds);
     archiveStartMs = (await archiveStart(t, chain.dealer_id)) ?? Infinity;
     unarchived = unarchivedRounds(rounds, hands, chain.closed_at * 1000, archiveStartMs);
-    line(color.dim(`${hands.size} hands from the server's archive (untrusted: each must replay from its revealed seed into its round)`));
+    line(color.dim(`${count(hands.size, "hand")} from the server's archive (untrusted: each must replay from its revealed seed into its round)`));
     const fromArchive = pokerReplayer(hands, chain.dealer_id, chain.player);
     // Without its history a round is taken as is: still hash-chained, balanced and paid as the chain says.
     replay = (round) => (unarchived.has(round.nonce) ? round : fromArchive(round));
@@ -113,7 +113,7 @@ export async function verifySessionById(
   const settled = txs.settles.flatMap((s) => s.rounds);
   const settleProblem = settledRoundsProblem(rounds, settled);
   if (settled.length > 0) {
-    line(settleProblem === null ? `${OK} ${settled.length} rounds read back from settle tx args match` : `${BAD} ${settleProblem}`);
+    line(settleProblem === null ? `${OK} ${count(settled.length, "round")} read back from settle tx args match` : `${BAD} ${settleProblem}`);
   }
   printTxs(chain, txs);
 
@@ -123,7 +123,7 @@ export async function verifySessionById(
   }
   const { summary } = verdict;
   const replayed = summary.rounds - unarchived.size;
-  const replayText = unarchived.size === 0 ? `${replayed} rounds replay bit for bit` : `${replayed} of ${summary.rounds} rounds replayed`;
+  const replayText = unarchived.size === 0 ? `${count(replayed, "round")} replayed bit for bit` : `${replayed} of ${count(summary.rounds, "round")} replayed`;
   line(`${OK} sha256(revealed seed) = on-chain commitment · ${replayText} · hash chain ends on chain's`);
   line(`${OK} wagered ${money(summary.wagered)}, paid ${money(summary.paid)}, ${money(chain.lock)} → ${money(summary.balance)} paid out = chain` +
     (chain.jackpot_won !== "0" ? color.money(` · jackpot ${money(chain.jackpot_won)}`) : ""));
@@ -134,7 +134,7 @@ export async function verifySessionById(
   if (unarchived.size > 0) {
     const before = new Date(Math.min(archiveStartMs, chain.closed_at * 1000)).toISOString().replace(".000Z", "Z");
     line(`– hand history not archived (played before ${before}): rounds checked against the chain only`);
-    console.log(`\n  ${OK} ${color.ok("CHECKED AGAINST THE CHAIN")}: rounds, hash chain, totals and payout match; ${unarchived.size} round(s) without a hand history are not replayed.`);
+    console.log(`\n  ${OK} ${color.ok("CHECKED AGAINST THE CHAIN")}: rounds, hash chain, totals and payout match; not replayed: ${count(unarchived.size, "round")} without a hand history.`);
     return true;
   }
   const why =
