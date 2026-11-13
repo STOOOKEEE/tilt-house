@@ -50,11 +50,32 @@ export function chairAt(angle: number): FlatPoint & { yaw: number } {
 }
 
 /** Community cards: one row across the middle, `gap` apart, centered. */
+export const BOARD_GAP = 0.4
 export function boardSlot(index: number, gap: number): FlatPoint {
   return { x: (index - 2) * gap, z: -0.2 }
 }
 
-/** The pots: main pot in the middle, side pots to its right. */
+/**
+ * The pots: in front of the board, toward the player's own seat but left of its raised cards,
+ * side pots to the right. Their piles stay low and their labels just above them, so on screen
+ * neither covers the board.
+ */
 export function potSlot(index: number): FlatPoint {
-  return { x: index * 0.42 - 0.2, z: 0.38 }
+  return { x: index * 0.42 - 0.62, z: 0.58 }
+}
+/** A pot pile is drawn at most this many chips high; its label gives the amount. */
+export const POT_MAX_CHIPS = 6
+export const POT_LABEL = { height: 0.1, lift: 0.28 } as const
+
+/** The camera: above and behind the near rim, looking at the middle of the felt. */
+export const CAMERA = { fov: 46, lookAt: { x: 0, y: 0.55, z: -0.35 } } as const
+const CAMERA_EYE = { x: 0, y: 4.1, z: OVAL_B + 3.3 }
+/** The whole table and the side players must stay in view. */
+const FRAME_HALF_W = OVAL_A + 1.1
+
+/** Where the camera stands for a screen of this aspect: a narrow screen backs it off (and up) until the table fits. */
+export function cameraEye(aspect: number): { x: number; y: number; z: number } {
+  const tanHalfW = Math.tan(((CAMERA.fov / 2) * Math.PI) / 180) * aspect
+  const back = Math.max(0, FRAME_HALF_W / tanHalfW - (CAMERA_EYE.z - CAMERA.lookAt.z))
+  return { x: CAMERA_EYE.x, y: CAMERA_EYE.y + back * 0.45, z: CAMERA_EYE.z + back }
 }

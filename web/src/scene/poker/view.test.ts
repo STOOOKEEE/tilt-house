@@ -1,7 +1,23 @@
+import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
 import { verifyHand } from '../../near/poker-client'
 import { botAction, DEMO_PLAYER, PokerDemo } from '../../near/poker-demo'
-import { chairAt, seatSlot, slotAngle, towardSeat } from './layout'
+import { CARD_D } from '../table/cards'
+import { CHIP_H } from '../table/props'
+import {
+  BOARD_GAP,
+  boardSlot,
+  CAMERA,
+  cameraEye,
+  chairAt,
+  POKER_FELT_Y,
+  POT_LABEL,
+  POT_MAX_CHIPS,
+  potSlot,
+  seatSlot,
+  slotAngle,
+  towardSeat,
+} from './layout'
 import { pokerScene, shortName } from './view'
 
 describe('poker layout', () => {
@@ -15,6 +31,24 @@ describe('poker layout', () => {
     // Characters face the middle of the table.
     const chair = chairAt(slotAngle(2, 6))
     expect(Math.sin(chair.yaw) * -chair.x + Math.cos(chair.yaw) * -chair.z).toBeGreaterThan(0)
+  })
+
+  it('keeps the pots and their labels below the board on screen', () => {
+    for (const aspect of [4 / 3, 16 / 10, 16 / 9, 21 / 9]) {
+      const camera = new THREE.PerspectiveCamera(CAMERA.fov, aspect, 0.1, 100)
+      const eye = cameraEye(aspect)
+      camera.position.set(eye.x, eye.y, eye.z)
+      camera.lookAt(CAMERA.lookAt.x, CAMERA.lookAt.y, CAMERA.lookAt.z)
+      camera.updateMatrixWorld()
+      const screenY = (x: number, lift: number, z: number) => new THREE.Vector3(x, POKER_FELT_Y + lift, z).project(camera).y
+      // The near edge of the board: the lowest point of the community cards on screen.
+      const board = Math.min(...[0, 1, 2, 3, 4].map((i) => screenY(boardSlot(i, BOARD_GAP).x, 0, boardSlot(i, BOARD_GAP).z + CARD_D / 2)))
+      for (const i of [0, 1, 2]) {
+        const pot = potSlot(i)
+        expect(screenY(pot.x, POT_LABEL.lift + POT_LABEL.height / 2, pot.z)).toBeLessThan(board)
+        expect(screenY(pot.x, POT_MAX_CHIPS * CHIP_H, pot.z)).toBeLessThan(board)
+      }
+    }
   })
 })
 

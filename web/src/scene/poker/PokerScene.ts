@@ -12,7 +12,22 @@ import { disposeObject, mountRenderer, type MountedRenderer } from '../renderer'
 import { cardMesh, faceTexture, setFace } from '../table/cards'
 import { Animator, arcTo, buildLights, buildRoom, chipCount, chipStack, PALETTE, textSprite, type TextSprite } from '../table/props'
 import type { CharacterRig, Mood } from '../types'
-import { boardSlot, chairAt, OVAL_A, OVAL_B, POKER_FELT_Y, potSlot, RADIUS, seatSlot, slotAngle, towardSeat, type FlatPoint } from './layout'
+import {
+  BOARD_GAP,
+  boardSlot,
+  CAMERA,
+  cameraEye,
+  chairAt,
+  POKER_FELT_Y,
+  POT_LABEL,
+  POT_MAX_CHIPS,
+  potSlot,
+  RADIUS,
+  seatSlot,
+  slotAngle,
+  towardSeat,
+  type FlatPoint,
+} from './layout'
 import { buildOvalTable, dealerButton, deckPile, timerRing } from './table'
 
 export interface PokerSeatScene {
@@ -58,14 +73,8 @@ export interface PokerSceneApi {
   dispose(): void
 }
 
-const EYE = new THREE.Vector3(0, 4.1, OVAL_B + 3.3)
-const LOOK_AT = new THREE.Vector3(0, 0.55, -0.35)
-const FOV = 46
-/** The whole table and the side players must stay in view. */
-const FRAME_HALF_W = OVAL_A + 1.1
 const DECK_AT: FlatPoint = { x: 1.0, z: -0.62 }
 const CARD_SPREAD = 0.2
-const BOARD_GAP = 0.4
 const OWN_CARD_SCALE = 1.15
 const OWN_CARD_TILT = 0.6
 const BUBBLE_SCALE = 0.5
@@ -124,7 +133,7 @@ class PokerScene implements PokerSceneApi {
   constructor(host: HTMLElement, options: { title: string; accent: string }) {
     this.mounted = mountRenderer(host)
     const { scene, camera } = this.mounted
-    camera.fov = FOV
+    camera.fov = CAMERA.fov
     buildLights(scene)
     scene.add(buildRoom(options.title, options.accent))
     scene.add(buildOvalTable(options.accent, options.title))
@@ -134,8 +143,8 @@ class PokerScene implements PokerSceneApi {
     this.result.sprite.position.set(0, POKER_FELT_Y + 0.75, 0.1)
     scene.add(deck, this.button, this.timer.object, this.result.sprite)
     for (let i = 0; i < 6; i++) {
-      const label = textSprite(0.12, 9)
-      label.sprite.position.copy(this.felt(potSlot(i), 0.5))
+      const label = textSprite(POT_LABEL.height, 9)
+      label.sprite.position.copy(this.felt(potSlot(i), POT_LABEL.lift))
       this.potLabels.push(label)
       scene.add(label.sprite)
     }
@@ -435,7 +444,7 @@ class PokerScene implements PokerSceneApi {
       disposeObject(pot)
     }
     amounts.forEach((amount, i) => {
-      const stack = chipStack(chipCount(amount), i + 2)
+      const stack = chipStack(Math.min(chipCount(amount), POT_MAX_CHIPS), i + 2)
       stack.position.copy(this.felt(potSlot(i)))
       this.pots.push(stack)
       this.mounted.scene.add(stack)
@@ -493,10 +502,9 @@ class PokerScene implements PokerSceneApi {
 
   private frameCamera(): void {
     const camera = this.mounted.camera
-    const tanHalfH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect
-    const back = Math.max(0, FRAME_HALF_W / tanHalfH - (EYE.z - LOOK_AT.z))
-    camera.position.set(EYE.x, EYE.y + back * 0.45, EYE.z + back)
-    camera.lookAt(LOOK_AT)
+    const eye = cameraEye(camera.aspect)
+    camera.position.set(eye.x, eye.y, eye.z)
+    camera.lookAt(CAMERA.lookAt.x, CAMERA.lookAt.y, CAMERA.lookAt.z)
   }
 }
 

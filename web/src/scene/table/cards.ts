@@ -8,7 +8,7 @@ import { BLACKJACK_BET_SPOT } from './felt'
 import { type Animator, arcTo, feltPoint, PALETTE, textSprite, type TextSprite } from './props'
 
 const CARD_W = 0.34
-const CARD_D = 0.48
+export const CARD_D = 0.48
 const CARD_T = 0.012
 const CARD_GAP = 0.27
 /** Felt coordinates (u, v) of each row's first card. */

@@ -274,7 +274,7 @@ function rimAndBase(accent: string): THREE.Mesh {
 
 // ---- chips ----------------------------------------------------------------------------------
 
-const CHIP_H = 0.035
+export const CHIP_H = 0.035
 const CHIP_R = 0.11
 const CHIP_COLORS = [PALETTE.pink, PALETTE.gold, '#f4f1ea', PALETTE.green, '#4a7bd6']
 const USDC = 1_000_000
