@@ -1,8 +1,8 @@
 /**
- * Dev only (`?demo=1` on a table page): a session played entirely in the browser with a local
- * seed and the same rules as the session server (session-client replay), so the table can be
- * tried and its animations checked without a login, a server or the chain. Never signs or
- * moves money; states carry no server signature.
+ * Practice (`?demo=1` on a table page): a session played entirely in the browser with a local
+ * seed and the same rules as the session server (session-client replay), so anyone can try a
+ * table without a login, a server or the chain. Never signs or moves money; states carry no
+ * server signature.
  */
 import { sha256 } from '@noble/hashes/sha256'
 import { bytesToHex } from '@noble/hashes/utils'

@@ -237,10 +237,16 @@ export function SitCard({ dealer, session, balance, loggedIn, demo }: SitCardPro
         Take a seat at {dealer.name}'s {dealer.game} table
       </h2>
       <p className="muted">
-        The amount you sit down with is locked on chain for the session. Every round is then instant and signed by the
-        server; when you leave, it reveals its seed and you can replay every round.
+        {demo
+          ? 'Practice: a session played in your browser with a local seed and the same rules. Nothing is signed or sent to the chain; leave the table to replay every round.'
+          : 'The amount you sit down with is locked on chain for the session. Every round is then instant and signed by the server; when you leave, it reveals its seed and you can replay every round.'}
       </p>
       {signedIn ? null : <LoginPrompt action="play" />}
+      {signedIn ? null : (
+        <p className="muted">
+          No login? <Link to="?demo=1">Practice at this table</Link>: same rules, local seed, nothing on chain.
+        </p>
+      )}
       <label className="stake">
         sit down with ({tokenSymbol()})
         <input value={lockText} inputMode="decimal" onChange={(event) => setLockText(event.target.value)} />

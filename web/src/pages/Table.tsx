@@ -39,8 +39,8 @@ const DEFAULT_DICE: DiceTarget = { chance_bp: 5_000, over: false }
 export function Table() {
   const { dealer: dealerId = '' } = useParams()
   const [searchParams] = useSearchParams()
-  // Dev `?demo=1`: a local session, no login, server or chain (useDemoSession).
-  const demo = import.meta.env.DEV && searchParams.get('demo') === '1'
+  // `?demo=1`: practice, a session played in the browser with a local seed; no login, server or chain (useDemoSession).
+  const demo = searchParams.get('demo') === '1'
   const { config, provider, walletId, gameKey } = useNear()
   const lobby = useLobby(TABLE_POLL_MS)
   const player = usePlayer(TABLE_POLL_MS)
