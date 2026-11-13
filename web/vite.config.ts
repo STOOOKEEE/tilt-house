@@ -5,8 +5,9 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
 // Public deployment: the site is static (Vercel); this preview server is the API gateway, the
 // only thing published (Tailscale Funnel). It proxies the testnet relayer under /relayer and
-// session server under /session, and their mainnet twins under /mainnet/relayer and
-// /mainnet/session, all on loopback (ports: docs/mainnet.md). Build the site with
+// session server under /session, the TILT floor's under /tilt/relayer and /tilt/session
+// (docs/ops-tilt.md), and the mainnet twins under /mainnet/relayer and /mainnet/session, all on
+// loopback (ports: docs/mainnet.md). Build the site with
 // VITE_RELAYER_URL and VITE_SESSION_URL set to <gateway>/relayer and <gateway>/session.
 const api = (prefix: string, port: number) => ({
   target: `http://127.0.0.1:${port}`,
@@ -42,6 +43,8 @@ export default defineConfig({
     proxy: {
       '/mainnet/relayer': api('/mainnet/relayer', 8798),
       '/mainnet/session': api('/mainnet/session', 8792),
+      '/tilt/relayer': api('/tilt/relayer', 8789),
+      '/tilt/session': api('/tilt/session', 8793),
       '/relayer': api('/relayer', 8788),
       '/session': api('/session', 8791),
     },

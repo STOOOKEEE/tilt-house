@@ -1,0 +1,17 @@
+# TILT floor's gas relayer, loopback 8789 (gateway prefix /tilt/relayer). Runbook: docs/ops-tilt.md.
+# Install: cp ops/th-relayer-tilt.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+# Env: ~/.tilt-house/relayer-tilt.env (template: ops/relayer-tilt.env.example, mode 600).
+[Unit]
+Description=Tilt House relayer, TILT floor (loopback 8789)
+After=network-online.target
+
+[Service]
+Restart=always
+RestartSec=5
+Environment=PATH=%h/.local/bin:/usr/bin:/bin
+WorkingDirectory=%h/dev/STOOOKEEE/tilt-house/relayer
+EnvironmentFile=%h/.tilt-house/relayer-tilt.env
+ExecStart=/usr/bin/node src/main.ts
+
+[Install]
+WantedBy=default.target

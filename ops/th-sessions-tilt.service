@@ -1,0 +1,17 @@
+# TILT floor's session server, loopback 8793 (gateway prefix /tilt/session), no NPC gamblers.
+# Same binary as th-sessions. Runbook: docs/ops-tilt.md.
+# Install: cp ops/th-sessions-tilt.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+# Env: ~/.tilt-house/session-server-tilt.env (template: ops/session-server-tilt.env.example, mode 600).
+[Unit]
+Description=Tilt House session server, TILT floor (loopback 8793)
+After=network-online.target
+
+[Service]
+Restart=always
+RestartSec=5
+Environment=PATH=%h/.local/bin:/usr/bin:/bin
+EnvironmentFile=%h/.tilt-house/session-server-tilt.env
+ExecStart=%h/.tilt-house/bin/tilt-house-session-server
+
+[Install]
+WantedBy=default.target

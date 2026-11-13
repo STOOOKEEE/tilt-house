@@ -1,0 +1,17 @@
+# TILT floor's keeper: rent, repricing, NPC dealer rent bids; no salaries. Runbook: docs/ops-tilt.md.
+# Install: cp ops/th-keeper-tilt.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+# Env: ~/.tilt-house/keeper-tilt.env (template: ops/keeper-tilt.env.example).
+[Unit]
+Description=Tilt House keeper, TILT floor
+After=network-online.target
+
+[Service]
+Restart=always
+RestartSec=5
+Environment=PATH=%h/.local/bin:/usr/bin:/bin
+WorkingDirectory=%h/dev/STOOOKEEE/tilt-house/agents
+EnvironmentFile=%h/.tilt-house/keeper-tilt.env
+ExecStart=/usr/bin/node src/keeper.ts
+
+[Install]
+WantedBy=default.target
