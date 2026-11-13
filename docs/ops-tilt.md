@@ -94,6 +94,11 @@ echo 'CLOSE_DAY=1' >> agents/.env                             # th-keeper closes
 (cd agents && node --env-file=.env src/keeper.ts --dry-run)   # shows the close_day call it would send
 ```
 
+RPC (all six services): `NEAR_RPC_URLS=https://test.rpc.fastnear.com,https://near-testnet.drpc.org`
+(the default when unset). Reads fail over to drpc on 429/5xx with backoff; transactions go to
+the first URL only (drpc times out on `send_tx`). Remove any lone `NEAR_RPC_URL` pointing at
+drpc. The session servers log `rpc last minute: N requests, …` once a minute.
+
 ## 6. Start
 
 ```sh
