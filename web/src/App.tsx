@@ -13,6 +13,7 @@ import { Poker } from './pages/Poker'
 import { Pools } from './pages/Pools'
 import { SeatMarket } from './pages/SeatMarket'
 import { Table } from './pages/Table'
+import { Tilt } from './pages/Tilt'
 
 const NO_PRIVY_APP = 'no Privy app configured'
 const PRIVY_FAILED = 'Privy failed to start'
@@ -31,6 +32,7 @@ export default function App({ config }: { config: Config }) {
           <Route path="/pools" element={<Pools />} />
           <Route path="/dealers" element={<Dealers />} />
           <Route path="/sim" element={<FastForward />} />
+          <Route path="/tilt" element={<Tilt />} />
           {/* Not in the nav until the go decision: reachable by URL only. */}
           <Route path="/poker" element={<Poker />} />
           <Route path="/poker/:table" element={<Poker />} />

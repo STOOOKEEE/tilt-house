@@ -157,7 +157,7 @@ systemctl --user restart th-gateway   # picks up the /mainnet/relayer and /mainn
 
 ## 7. Site
 
-Add to `web/.env.public` (the network switch stays "coming soon" until
+Add to `web/.env.public` (the network switch stays hidden until
 `VITE_MAINNET_HOUSE_CONTRACT` is set):
 
 ```sh
@@ -203,7 +203,7 @@ network-config mainnet sign-with-legacy-keychain send`, signed with
 | Relayer spending | lower `DAILY_BUDGET_NEAR`, restart | `503 daily_budget_exhausted` once reached (resets 00:00 UTC; counter survives restarts in `~/.tilt-house/relayer-mainnet/state.json`) |
 | NPC play | `systemctl --user stop th-sessions-mainnet` | no new sessions; a player's open session can be `force_close`d after 600 s (`docs/sessions.md`) |
 | Salaries, rent | `systemctl --user stop th-keeper-mainnet` | no salary, no rent collection |
-| Site | remove `VITE_MAINNET_HOUSE_CONTRACT` from `web/.env.public`, rebuild, redeploy | Mainnet shows "coming soon"; stored mainnet choices fall back to testnet |
+| Site | remove `VITE_MAINNET_HOUSE_CONTRACT` from `web/.env.public`, rebuild, redeploy | The network switch disappears; stored mainnet choices fall back to testnet |
 
 The floor contract has no pause method: stopping the relayer and the session server stops all
 sponsored traffic; a player with their own NEAR can still call the floor directly, which only

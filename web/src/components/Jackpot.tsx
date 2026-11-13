@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { formatUsdc } from '../format'
+import { formatUsdc, tokenSymbol } from '../format'
 
 /** Milliseconds the counter takes to reach a new amount. */
 const COUNT_MS = 1_500
@@ -10,13 +10,13 @@ const STEPS = 1_000
 export function Jackpot({ amount, oddsUnit, mock, pulse = false }: { amount: string; oddsUnit: string; mock: boolean; pulse?: boolean }) {
   const shown = useCountUp(BigInt(amount))
   return (
-    <div className={pulse ? 'jackpot pulse' : 'jackpot'} aria-label={`jackpot ${formatUsdc(amount)} tUSDC`}>
+    <div className={pulse ? 'jackpot pulse' : 'jackpot'} aria-label={`jackpot ${formatUsdc(amount)} ${tokenSymbol()}`}>
       <span className="jackpot-label">JACKPOT</span>
       <span className="jackpot-amount" aria-hidden="true">
-        {formatUsdc(shown)} <small>tUSDC</small>
+        {formatUsdc(shown)} <small>{tokenSymbol()}</small>
       </span>
       <span className="muted">
-        filled by table rent · every settled bet can win it all · a 1 tUSDC bet: 1 in {formatUsdc(oddsUnit, 0)}
+        filled by table rent · every settled bet can win it all · a 1 {tokenSymbol()} bet: 1 in {formatUsdc(oddsUnit, 0)}
       </span>
       {mock ? <span className="muted">preview: this contract has no seats or jackpot yet</span> : null}
     </div>

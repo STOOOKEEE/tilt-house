@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { LoginPrompt } from '../components/LoginPrompt'
-import { formatBp, formatUsdc, parseUsdc } from '../format'
+import { formatBp, formatUsdc, parseUsdc, tokenSymbol } from '../format'
 import { NO_BUY_IN, actionProblem, buyInRange, raiseAction, raisePresets, type TableState } from '../near/poker-client'
 import type { Legal, PokerAction } from '../near/poker-rules'
 import type { PokerTableApi } from '../near/usePokerTable'
@@ -155,7 +155,7 @@ function SeatCard({ table, api, demo, loggedIn, wallet }: SeatCardProps) {
       <p className="muted">Your buy-in is locked on chain as a session; each hand is one signed round of it.</p>
       {loggedIn || demo ? null : <LoginPrompt action="play poker" />}
       <label className="stake">
-        buy-in ({demo ? 'practice chips' : 'tUSDC'})
+        buy-in ({demo ? 'practice chips' : tokenSymbol()})
         <input value={text} inputMode="decimal" onChange={(event) => setText(event.target.value)} />
         {wallet !== null ? <span className="muted">balance {formatUsdc(wallet)}</span> : null}
       </label>

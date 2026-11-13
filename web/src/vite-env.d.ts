@@ -14,6 +14,11 @@ interface ImportMetaEnv {
   readonly VITE_MAINNET_RELAYER_URL?: string
   readonly VITE_MAINNET_NEAR_RPC_URL?: string
   readonly VITE_MAINNET_SESSION_URL?: string
+  readonly VITE_TILT_FLOOR?: string
+  readonly VITE_TILT_TOKEN?: string
+  readonly VITE_TILT_RELAYER_URL?: string
+  readonly VITE_TILT_RELAYER_ACCOUNT?: string
+  readonly VITE_TILT_SESSION_URL?: string
 }
 
 interface ImportMeta {

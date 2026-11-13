@@ -1,6 +1,6 @@
 import { Link, NavLink } from 'react-router'
-import { saveNetworkChoice, type NetworkId } from '../config'
-import { formatUsdc } from '../format'
+import { TOKEN_SYMBOLS, saveCurrencyChoice, saveNetworkChoice, type Currency, type NetworkId } from '../config'
+import { formatAmount, shortAccount, tokenSymbol } from '../format'
 import { useNear, type GameKeyStatus } from '../near/useNear'
 import { usePlayer } from '../near/usePoll'
 
@@ -8,11 +8,8 @@ const NAV = [
   { to: '/', label: 'Lobby' },
   { to: '/my-table', label: 'My table' },
   { to: '/pools', label: 'Pools' },
+  { to: '/tilt', label: '$TILT' },
 ] as const
-
-function shortAccount(accountId: string): string {
-  return accountId.length > 20 ? `${accountId.slice(0, 6)}…${accountId.slice(-6)}` : accountId
-}
 
 function keyLabel(status: GameKeyStatus): string {
   switch (status.state) {
@@ -27,46 +24,56 @@ function keyLabel(status: GameKeyStatus): string {
   }
 }
 
-const NETWORKS: readonly { id: NetworkId; label: string }[] = [
-  { id: 'testnet', label: 'Testnet' },
-  { id: 'mainnet', label: 'Mainnet' },
+const NETWORKS: readonly { id: NetworkId; label: string; title: string }[] = [
+  { id: 'testnet', label: 'Testnet', title: 'NEAR testnet' },
+  { id: 'mainnet', label: 'Mainnet', title: 'NEAR mainnet, play money (no value)' },
+]
+
+const CURRENCIES: readonly { id: Currency; label: string; title: string }[] = [
+  { id: 'usd', label: 'USD', title: `tables play in ${TOKEN_SYMBOLS.usd} (test USDC)` },
+  { id: 'tilt', label: 'TILT', title: `tables play in ${TOKEN_SYMBOLS.tilt}, the house memecoin` },
 ]
 
 /**
- * Testnet / mainnet toggle. Every provider, poll and game key derives from the config, so a
- * switch stores the choice and reloads the page. Mainnet stays disabled until it is configured.
+ * A two-way toggle. Every provider, poll and game key derives from the config, so a switch
+ * stores the choice and reloads the page.
  */
-function NetworkSwitch() {
-  const { config } = useNear()
-  const pick = (network: NetworkId) => {
-    if (network === config.network) return
-    saveNetworkChoice(localStorage, network)
+function Switch<T extends string>({
+  label,
+  options,
+  active,
+  save,
+}: {
+  label: string
+  options: readonly { id: T; label: string; title: string }[]
+  active: T
+  save: (choice: T) => void
+}) {
+  const pick = (choice: T) => {
+    if (choice === active) return
+    save(choice)
     window.location.reload()
   }
   return (
-    <div className="network-switch" role="group" aria-label="Network">
-      {NETWORKS.map(({ id, label }) => {
-        const soon = id === 'mainnet' && !config.mainnetReady
-        return (
-          <button
-            key={id}
-            type="button"
-            className={config.network === id ? 'active' : 'ghost'}
-            aria-pressed={config.network === id}
-            disabled={soon}
-            title={soon ? 'Mainnet: coming soon' : id === 'mainnet' ? 'NEAR mainnet, play money (no value)' : 'NEAR testnet'}
-            onClick={() => pick(id)}
-          >
-            {soon ? `${label} · soon` : label}
-          </button>
-        )
-      })}
+    <div className="network-switch" role="group" aria-label={label}>
+      {options.map(({ id, label, title }) => (
+        <button
+          key={id}
+          type="button"
+          className={active === id ? 'active' : 'ghost'}
+          aria-pressed={active === id}
+          title={title}
+          onClick={() => pick(id)}
+        >
+          {label}
+        </button>
+      ))}
     </div>
   )
 }
 
 export function TopBar() {
-  const { auth, walletId, gameKey } = useNear()
+  const { auth, config, walletId, gameKey } = useNear()
   const authenticated = auth.available && auth.authenticated
   const player = usePlayer()
 
@@ -83,13 +90,19 @@ export function TopBar() {
       <Link className="button ghost tour-link" to="/?tour=1">
         How the house works
       </Link>
-      <NetworkSwitch />
+      {/* Hidden, not "soon", until the other side is configured. */}
+      {config.tiltReady ? (
+        <Switch label="Currency" options={CURRENCIES} active={config.currency} save={(c) => saveCurrencyChoice(localStorage, c)} />
+      ) : null}
+      {config.mainnetReady ? (
+        <Switch label="Network" options={NETWORKS} active={config.network} save={(n) => saveNetworkChoice(localStorage, n)} />
+      ) : null}
       <div className="account">
         {authenticated && walletId ? (
           <>
             <span title={walletId}>{shortAccount(walletId)}</span>
             <span className="money" title="your balance in the house (deposit and withdraw in Pools)">
-              {player.data ? `${formatUsdc(player.data.balance)} tUSDC` : '— tUSDC'}
+              {player.data ? formatAmount(player.data.balance) : `— ${tokenSymbol()}`}
             </span>
             <span className={gameKey.state === 'error' ? 'loss' : 'key'}>{keyLabel(gameKey)}</span>
           </>

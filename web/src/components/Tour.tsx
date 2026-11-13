@@ -2,7 +2,7 @@
 // floor and the gamblers (the sim.json demo floor when the gambler runner is offline).
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode } from 'react'
 import { Link } from 'react-router'
-import { formatBp, formatUsdc, shortHex } from '../format'
+import { formatBp, formatUsdc, shortHex, tokenSymbol } from '../format'
 import { freeBankroll } from '../house'
 import { SEAT_TRAFFIC_BP, type FloorState, type SeatedTable } from '../near/floor'
 import { verifySession } from '../near/session-client'
@@ -128,7 +128,7 @@ const STEP_VIEWS: Record<(typeof TOUR_STEPS)[number], { title: string; caption: 
     caption: (
       <>
         The customers are NPC gamblers, each with its own NEAR wallet. The house pays them a salary of{' '}
-        {formatUsdc(GAMBLER_SALARY_PER_HOUR, 0)} tUSDC an hour (up to {formatUsdc(GAMBLER_MAX_BALANCE, 0)}): the only
+        {formatUsdc(GAMBLER_SALARY_PER_HOUR, 0)} {tokenSymbol()} an hour (up to {formatUsdc(GAMBLER_MAX_BALANCE, 0)}): the only
         money that enters the economy.
       </>
     ),
@@ -151,7 +151,7 @@ const STEP_VIEWS: Record<(typeof TOUR_STEPS)[number], { title: string; caption: 
   },
   jackpot: {
     title: 'Rent fills the jackpot',
-    caption: 'Every tUSDC of rent goes into one pot, and every settled bet has a shot at all of it. Money comes back to the players.',
+    caption: `Every ${tokenSymbol()} of rent goes into one pot, and every settled bet has a shot at all of it. Money comes back to the players.`,
     Body: JackpotBody,
   },
   fair: {
@@ -161,7 +161,7 @@ const STEP_VIEWS: Record<(typeof TOUR_STEPS)[number], { title: string; caption: 
   },
   your_move: {
     title: 'Your move',
-    caption: 'Run a table, back a dealer, or try your luck. Testnet tUSDC, real rules.',
+    caption: `Run a table, back a dealer, or try your luck. Testnet ${tokenSymbol()}, real rules.`,
     Body: YourMoveBody,
   },
 }
@@ -191,7 +191,7 @@ function WalkInBody({ floor }: BodyProps) {
             )}
           </span>
           <span>
-            balance <span className="money">{formatUsdc(g.balance)} tUSDC</span>
+            balance <span className="money">{formatUsdc(g.balance)} {tokenSymbol()}</span>
           </span>
         </div>
       ) : (
@@ -276,7 +276,7 @@ function PoolBody({ floor }: BodyProps) {
         {table.playerOwned ? <span className="badge">player-owned</span> : null}
       </span>
       <span>
-        pool <span className="money">{formatUsdc(freeBankroll(d))} tUSDC</span>
+        pool <span className="money">{formatUsdc(freeBankroll(d))} {tokenSymbol()}</span>
       </span>
       <span>edge {formatBp(d.total_edge_bp)}</span>
       <span>
@@ -322,12 +322,12 @@ function JackpotBody({ floor }: BodyProps) {
   return (
     <div className="tour-data tour-facts">
       <span>
-        in the pot <span className="money">{formatUsdc(jackpot.jackpot)} tUSDC</span>
+        in the pot <span className="money">{formatUsdc(jackpot.jackpot)} {tokenSymbol()}</span>
       </span>
       <span>
-        rent flowing in <span className="money">+{formatUsdc(rentPerHour(floor.seats))} tUSDC/h</span>
+        rent flowing in <span className="money">+{formatUsdc(rentPerHour(floor.seats))} {tokenSymbol()}/h</span>
       </span>
-      <span className="muted">a 1 tUSDC bet: 1 chance in {formatUsdc(jackpot.jackpot_odds_unit, 0)} to win it all</span>
+      <span className="muted">a 1 {tokenSymbol()} bet: 1 chance in {formatUsdc(jackpot.jackpot_odds_unit, 0)} to win it all</span>
     </div>
   )
 }

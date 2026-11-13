@@ -57,6 +57,16 @@ export async function claimFaucet(relayerUrl: string, accountId: string, accessT
   return body.minted
 }
 
+/**
+ * Claims the one-time $TILT welcome from the TILT floor's relayer (welcome mode; Privy token
+ * required, once per user forever: 409 `already_claimed`); returns the TILT base units received.
+ */
+export async function claimWelcome(relayerUrl: string, accountId: string, accessToken: string | null): Promise<string> {
+  const body = await postJson(`${relayerUrl}/faucet`, { accountId }, accessToken)
+  if (!isRecord(body) || typeof body.welcomed !== 'string') throw new RelayError('relayer sent an unexpected reply', 'bad_reply')
+  return body.welcomed
+}
+
 async function postJson(url: string, payload: object, accessToken: string | null = null): Promise<unknown> {
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   if (accessToken) headers.authorization = `Bearer ${accessToken}`

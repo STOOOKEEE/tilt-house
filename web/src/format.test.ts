@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  formatAmount,
   formatBp,
   formatCountdown,
   formatPrice,
@@ -7,7 +8,10 @@ import {
   formatSimTime,
   formatUsdc,
   parseUsdc,
+  setTokenSymbol,
+  shortAccount,
   shortHex,
+  tokenSymbol,
   toBaseUnits,
 } from './format'
 
@@ -90,5 +94,25 @@ describe('shortHex', () => {
   it('keeps both ends of long hex', () => {
     expect(shortHex('a'.repeat(8) + 'b'.repeat(48) + 'c'.repeat(8))).toBe('aaaaaaaa…cccccccc')
     expect(shortHex('abcd')).toBe('abcd')
+  })
+})
+
+describe('amounts per currency', () => {
+  it('follows the active currency and takes an explicit symbol', () => {
+    expect(tokenSymbol()).toBe('tUSDC')
+    expect(formatAmount('12340000')).toBe('12.34 tUSDC')
+    setTokenSymbol('TILT')
+    try {
+      expect(formatAmount('1000000000000')).toBe('1,000,000.00 TILT')
+      expect(formatAmount(-2_500_000n)).toBe('-2.50 TILT')
+      expect(formatAmount('1', 'tUSDC')).toBe('0.000001 tUSDC')
+    } finally {
+      setTokenSymbol('tUSDC')
+    }
+  })
+
+  it('shortens implicit account ids only', () => {
+    expect(shortAccount('alice.testnet')).toBe('alice.testnet')
+    expect(shortAccount('a'.repeat(64))).toBe('aaaaaa…aaaaaa')
   })
 })

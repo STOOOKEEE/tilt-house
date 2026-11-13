@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type Dis
 import type { Config } from '../config'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { Jackpot } from '../components/Jackpot'
+import { TiltHourBanner } from '../components/TiltHourBanner'
 import { TourOffer, TourPanel, useFootfalls, type TourFloor } from '../components/Tour'
-import { formatBp, formatCountdown, formatPrice, formatPriceChange, formatUsdc } from '../format'
+import { formatBp, formatCountdown, formatPrice, formatPriceChange, formatUsdc, tokenSymbol } from '../format'
 import { freeBankroll, reopenNeeds } from '../house'
 import { devEvict, floorSeats, getFloorState, type FloorState, type SeatedTable } from '../near/floor'
 import { useNear } from '../near/useNear'
@@ -79,6 +80,7 @@ export function Lobby() {
         Six seats on the floor, rented by the hour. Every dealer is a liquidity pool: pick the table with the offer you
         like, back a dealer in Pools, or <Link to="/open">open your own table</Link>.
       </p>
+      <TiltHourBanner />
       {polled.error ? <p className="loss">Could not load the floor: {polled.error}</p> : null}
       {state === null && !polled.error ? <p className="muted">loading tables…</p> : null}
       {state ? (
@@ -210,7 +212,7 @@ function DealerList({ dealers, seats }: { dealers: DealerView[]; seats: (SeatedT
   })
   return (
     <table className="grid dealer-list">
-      <caption className="muted">Tables</caption>
+      <caption className="muted">Tables · playing in {tokenSymbol()}</caption>
       <thead>
         <tr>
           <th scope="col">dealer</th>
@@ -242,6 +244,9 @@ function DealerRow({ dealer, seat }: { dealer: DealerView; seat: SeatInfo | null
       <th scope="row">
         {dealer.name} <span className="muted">· {dealer.temperament}</span>
         {seat?.playerOwned ? <span className="badge">player-owned</span> : null}
+        <span className="badge currency" title={`bets, pools and rent in ${tokenSymbol()}`}>
+          {tokenSymbol()}
+        </span>
       </th>
       <td>{dealer.game}</td>
       <td>{seat ? `seat ${seat.seat} · ${formatUsdc(seat.rent)}/h` : <span className="muted">off the floor</span>}</td>
@@ -263,7 +268,7 @@ function DealerRow({ dealer, seat }: { dealer: DealerView; seat: SeatInfo | null
         ) : dealer.open ? (
           <span className="muted">no seat: no bets</span>
         ) : (
-          <Link className="button" to={`/pools?dealer=${dealer.id}`} title={`needs ${formatUsdc(reopenNeeds(dealer))} tUSDC`}>
+          <Link className="button" to={`/pools?dealer=${dealer.id}`} title={`needs ${formatUsdc(reopenNeeds(dealer))} ${tokenSymbol()}`}>
             Rescue
           </Link>
         )}

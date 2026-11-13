@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import { useSearchParams } from 'react-router'
-import { formatBp, formatUsdc } from '../format'
+import { formatBp, formatUsdc, tokenSymbol } from '../format'
 import { useNear } from '../near/useNear'
 import { useLobby, usePoll, PAGE_POLL_MS } from '../near/usePoll'
 import { getHistory, type HistoryEntry } from '../near/views'
@@ -79,11 +79,11 @@ function describe(entry: HistoryEntry): string {
       return `${entry.kind === 'boost' ? 'boost on ·' : 'reprice ·'}${rake}${maxBet}`
     }
     case 'bust':
-      return `bust: table closed${entry.amount === null ? '' : ` · needs ${formatUsdc(entry.amount)} tUSDC`}`
+      return `bust: table closed${entry.amount === null ? '' : ` · needs ${formatUsdc(entry.amount)} ${tokenSymbol()}`}`
     case 'reopen':
       return 'reopened'
     case 'invest':
     case 'divest':
-      return `${entry.account_id ?? 'someone'} ${entry.kind === 'invest' ? 'added' : 'took out'} ${formatUsdc(entry.amount ?? '0')} tUSDC`
+      return `${entry.account_id ?? 'someone'} ${entry.kind === 'invest' ? 'added' : 'took out'} ${formatUsdc(entry.amount ?? '0')} ${tokenSymbol()}`
   }
 }

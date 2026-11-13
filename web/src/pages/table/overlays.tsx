@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { LoginPrompt } from '../../components/LoginPrompt'
-import { formatBp, formatUsdc, parseUsdc } from '../../format'
+import { formatBp, formatUsdc, parseUsdc, tokenSymbol } from '../../format'
 import { roundWager, type BjAction, type BjSession, type CompactRound } from '../../near/session-client'
 import type { SessionApi, StoredSession } from '../../near/useSession'
 import type { DealerView, Game } from '../../near/views'
@@ -26,7 +26,7 @@ export function SessionHud({ dealer, session, demo }: { dealer: DealerView; sess
   return (
     <div className="hud hud-tl">
       <strong>
-        {dealer.name} <span className="muted">· {dealer.game}</span>
+        {dealer.name} <span className="muted">· {dealer.game}</span> <span className="badge currency">{tokenSymbol()}</span>
       </strong>
       {s ? (
         <>
@@ -69,7 +69,7 @@ export function WalletHud({ wallet, demo, drawerOpen, onRounds }: WalletHudProps
   return (
     <div className="hud hud-tr">
       <span className="muted">wallet</span>
-      <span className="money">{demo ? 'demo' : wallet === null ? '—' : `${formatUsdc(wallet)} tUSDC`}</span>
+      <span className="money">{demo ? 'demo' : wallet === null ? '—' : `${formatUsdc(wallet)} ${tokenSymbol()}`}</span>
       <button type="button" className="ghost" onClick={onRounds} aria-expanded={drawerOpen}>
         {drawerOpen ? 'close ✕' : 'rounds ☰'}
       </button>
@@ -180,7 +180,7 @@ export function ClosedCard({ session, s, onDismiss }: { session: SessionApi; s: 
           {formatUsdc(net)}
         </dd>
         <dt>back to your balance</dt>
-        <dd className="money">{formatUsdc(s.state.balance)} tUSDC</dd>
+        <dd className="money">{formatUsdc(s.state.balance)} {tokenSymbol()}</dd>
       </dl>
       <VerifyResult session={session} />
       {s.server_seed ? (
@@ -225,7 +225,7 @@ export function SitCard({ dealer, session, balance, loggedIn, demo }: SitCardPro
   const lock = parseUsdc(lockText)
   const problem =
     lock === null || lock < BigInt(dealer.min_bet)
-      ? `lock at least ${formatUsdc(dealer.min_bet)} tUSDC`
+      ? `lock at least ${formatUsdc(dealer.min_bet)} ${tokenSymbol()}`
       : balance !== null && lock > balance
         ? 'not enough balance: deposit in Pools'
         : ''
@@ -242,7 +242,7 @@ export function SitCard({ dealer, session, balance, loggedIn, demo }: SitCardPro
       </p>
       {signedIn ? null : <LoginPrompt action="play" />}
       <label className="stake">
-        sit down with (tUSDC)
+        sit down with ({tokenSymbol()})
         <input value={lockText} inputMode="decimal" onChange={(event) => setLockText(event.target.value)} />
         {balance !== null ? <span className="muted">balance {formatUsdc(balance)}</span> : null}
       </label>

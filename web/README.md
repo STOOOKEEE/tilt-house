@@ -21,19 +21,26 @@ pnpm --filter @tilt-house/web build
 | `VITE_RELAYER_ACCOUNT` | Account the relayer signs with (`relayer.tilthouse.testnet`). |
 | `VITE_NEAR_RPC_URL` | NEAR testnet RPC. |
 | `VITE_SESSION_URL` | Session server (provably fair sessions, live NPC gamblers, poker); `/session` on the public site. Optional: empty runs the floor from the `sim.json` demo, no session play. |
-| `VITE_MAINNET_HOUSE_CONTRACT` | Mainnet floor (play money). Optional: empty keeps Mainnet "coming soon" in the network switch. Once set, `VITE_MAINNET_TOKEN_CONTRACT` and `VITE_MAINNET_RELAYER_ACCOUNT` are required (`.near` accounts). |
+| `VITE_MAINNET_HOUSE_CONTRACT` | Mainnet floor (play money). Optional: empty hides the network switch. Once set, `VITE_MAINNET_TOKEN_CONTRACT` and `VITE_MAINNET_RELAYER_ACCOUNT` are required (`.near` accounts). |
 | `VITE_MAINNET_RELAYER_URL`, `VITE_MAINNET_SESSION_URL`, `VITE_MAINNET_NEAR_RPC_URL` | Optional, default `/mainnet/relayer`, `/mainnet/session`, `https://rpc.mainnet.fastnear.com`. |
+| `VITE_TILT_FLOOR` | The floor instance that plays in $TILT (`floor-tilt.tilthouse.testnet`). Optional: empty hides the USD / TILT switch (the `/tilt` page still works). Must differ from `VITE_HOUSE_CONTRACT`. |
+| `VITE_TILT_TOKEN`, `VITE_TILT_RELAYER_URL`, `VITE_TILT_SESSION_URL`, `VITE_TILT_RELAYER_ACCOUNT` | Optional, default `tilt.tilthouse.testnet`, `/tilt/relayer`, `/tilt/session`, `VITE_RELAYER_ACCOUNT`. |
 
 The app refuses to start if a required variable is missing (`src/config.ts`). `.env.public` holds
 the public site's values (`vite build --mode public`); `vercel.json` proxies `/relayer`, `/session`
-and their `/mainnet/…` twins to the API gateway (the `vite preview` proxy in `vite.config.ts`).
+and their `/mainnet/…` and `/tilt/…` twins to the API gateway (the `vite preview` proxy in `vite.config.ts`).
 
-## Network switch
+## Currency and network switches
 
-The top bar toggles Testnet / Mainnet. The choice is stored in `localStorage`
-(`tilt-house:network`) and the page reloads, so every provider, poll and game key uses that
-network's contracts, relayer and session server. Mainnet stays disabled ("soon") until it is
-configured; a stored mainnet choice then falls back to testnet. Runbook: `docs/mainnet.md`.
+The top bar toggles USD / TILT: the tables play in tUSDC on `VITE_HOUSE_CONTRACT` or in $TILT on
+`VITE_TILT_FLOOR` (same contract code, its own relayer and session server). Every amount shows the
+active currency's symbol. The choice is stored in `localStorage` (`tilt-house:currency`) and the
+page reloads, so every provider, poll and game key uses that floor's contracts, relayer and
+session server. The switch is hidden until `VITE_TILT_FLOOR` is set; a stored TILT choice then
+falls back to USD.
+
+The Testnet / Mainnet toggle works the same way (`tilt-house:network`) and stays hidden until
+mainnet is configured (no TILT on mainnet). Runbook: `docs/mainnet.md`.
 
 ## Login and keys
 
@@ -62,10 +69,16 @@ runtime against `docs/contract-api.md`; tables poll every 2 s, other pages every
   closing settles on chain. "Verify every round" replays the session from the revealed seed in the
   browser and checks the final balance and hash chain.
 - `/open`: open your own table (game, seed for its pool, rent offered for a seat). `/my-table`: run
-  it (offer, autopilot and temperament, footfall). `/seats`: seats listed for sale on the floor;
+  it (offer, autopilot and temperament, footfall, rename, retire once off the floor with no play and
+  every LP share held). `/seats`: seats listed for sale on the floor;
   buy one for a table that is off the floor.
-- `/pools`: house balance, deposit (`ft_transfer_call`) and withdraw, test tUSDC faucet, LP positions,
-  invest/divest (rescue a closed dealer).
+- `/pools`: house balance, deposit (`ft_transfer_call`) and withdraw, test tUSDC faucet (in TILT: the
+  one-time welcome, `POST /faucet` on the TILT relayer), LP positions, invest/divest (rescue a closed dealer).
+- `/tilt`: the $TILT memecoin (`docs/tilt.md`): supply, treasury, streak and longest streak, today's
+  count on the USD floor (`get_day`), Tilt Hour progress with a burn form (`burn_for_tilt_hour`, 1 yocto,
+  Privy-signed and relayed), every mint and burn (`get_log`), the launch parameters (`get_params`) and the
+  60-day simulation (`public/tilt-sim.json`, from `sim meme`). Shows labelled mock data until the token is
+  deployed. The lobby shows a banner while a Tilt Hour runs (`get_floor.tilt_hour_until`).
 - `/dealers`: each dealer's log (`get_history`): reprices with reasons, boosts, busts, reopenings, LP flows.
 - `/sim`: plays `public/sim.json` (from `cargo run -p tilt-house-sim`) with SVG charts and an events timeline.
 - `/poker`, `/poker/:table`: No-Limit Hold'em tables on the session server (`docs/poker-api.md`);

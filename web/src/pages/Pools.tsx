@@ -2,9 +2,9 @@ import { useCallback, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { ActionStatus, type ActionState } from '../components/ActionStatus'
 import { LoginPrompt } from '../components/LoginPrompt'
-import { PRICE_SCALE, formatPrice, formatPriceChange, formatUsdc, parseUsdc } from '../format'
+import { PRICE_SCALE, formatAmount, formatPrice, formatPriceChange, formatUsdc, parseUsdc, tokenSymbol } from '../format'
 import { freeBankroll, reopenNeeds } from '../house'
-import { claimFaucet } from '../near/relay'
+import { claimFaucet, claimWelcome } from '../near/relay'
 import { fullAccessCall } from '../near/session'
 import { useNear } from '../near/useNear'
 import { useLobby, usePlayer, usePoll } from '../near/usePoll'
@@ -43,7 +43,7 @@ export function Pools() {
     <>
       <h1>Pools</h1>
       <p className="muted">
-        Each dealer is a liquidity pool. Your tUSDC becomes the bankroll: the pool earns the edge on losing bets and pays
+        Each dealer is a liquidity pool. Your {tokenSymbol()} becomes the bankroll: the pool earns the edge on losing bets and pays
         the winning ones, so your LP tokens rise or fall in value.
       </p>
       {lobby.error ? <p className="loss">Could not load the pools: {lobby.error}</p> : null}
@@ -121,7 +121,7 @@ function PoolTable({ dealers, player, onSelect }: { dealers: DealerView[]; playe
               <td className={dealer.open ? 'win' : 'loss'}>
                 {dealer.open ? 'open' : `closed · needs ${formatUsdc(reopenNeeds(dealer))}`}
               </td>
-              {player ? <td>{mine ? `${lpTokens(mine.shares)} · ${formatUsdc(mine.value)} tUSDC` : '—'}</td> : null}
+              {player ? <td>{mine ? `${lpTokens(mine.shares)} · ${formatUsdc(mine.value)} ${tokenSymbol()}` : '—'}</td> : null}
               <td>
                 <button type="button" className="ghost" onClick={() => onSelect(dealer.id)}>
                   {dealer.open ? 'Invest' : 'Rescue'}
@@ -152,7 +152,8 @@ function Wallet({ player, busy, onDeposit, onWithdraw }: WalletProps) {
   const claim = async () => {
     setFaucet('claiming…')
     try {
-      setFaucet(`+${formatUsdc(await claimFaucet(config.relayerUrl, walletId, await getAccessToken()))} tUSDC in your wallet`)
+      const claimFor = config.currency === 'tilt' ? claimWelcome : claimFaucet
+      setFaucet(`+${formatAmount(await claimFor(config.relayerUrl, walletId, await getAccessToken()))} in your wallet`)
       wallet.refresh()
     } catch (error) {
       setFaucet(error instanceof Error ? error.message : String(error))
@@ -162,10 +163,10 @@ function Wallet({ player, busy, onDeposit, onWithdraw }: WalletProps) {
     <section className="panel">
       <h2>Your money</h2>
       <p>
-        in the house: <span className="money">{player ? formatUsdc(player.balance) : '—'} tUSDC</span> · in your wallet:{' '}
-        <span className="money">{wallet.data ? formatUsdc(wallet.data) : '—'} tUSDC</span>{' '}
+        in the house: <span className="money">{player ? formatUsdc(player.balance) : '—'} {tokenSymbol()}</span> · in your wallet:{' '}
+        <span className="money">{wallet.data ? formatUsdc(wallet.data) : '—'} {tokenSymbol()}</span>{' '}
         <button type="button" className="ghost" onClick={() => void claim()}>
-          Get test tUSDC
+          {config.currency === 'tilt' ? 'Claim welcome TILT (once)' : `Get test ${tokenSymbol()}`}
         </button>{' '}
         <span className="muted">{faucet}</span>
       </p>
@@ -187,7 +188,7 @@ function AmountForm({ label, max, busy, onSubmit }: { label: string; max: bigint
         if (valid) onSubmit(amount)
       }}
     >
-      <input placeholder="tUSDC" inputMode="decimal" value={text} onChange={(event) => setText(event.target.value)} />
+      <input placeholder={tokenSymbol()} inputMode="decimal" value={text} onChange={(event) => setText(event.target.value)} />
       <button type="button" className="ghost" disabled={max === null} onClick={() => max !== null && setText(formatUsdc(max, 0))}>
         max
       </button>
@@ -241,7 +242,7 @@ function Liquidity({ dealer, dealers, player, busy, onSelect, onInvest, onDivest
       </p>
       {!dealer.open ? (
         <p className="loss">
-          Closed: {formatUsdc(reopenNeeds(dealer))} tUSDC reopens it. Rescuers buy at the bottom price and own most of the
+          Closed: {formatUsdc(reopenNeeds(dealer))} {tokenSymbol()} reopens it. Rescuers buy at the bottom price and own most of the
           pool.
         </p>
       ) : null}
@@ -255,7 +256,7 @@ function Liquidity({ dealer, dealers, player, busy, onSelect, onInvest, onDivest
           if (investValid) onInvest(invest)
         }}
       >
-        <input placeholder="tUSDC" inputMode="decimal" value={investText} onChange={(event) => setInvestText(event.target.value)} />
+        <input placeholder={tokenSymbol()} inputMode="decimal" value={investText} onChange={(event) => setInvestText(event.target.value)} />
         <button type="submit" disabled={!investValid || busy}>
           {dealer.open ? 'Invest' : 'Rescue'}
         </button>
@@ -278,7 +279,7 @@ function Liquidity({ dealer, dealers, player, busy, onSelect, onInvest, onDivest
           Divest
         </button>
         <span className="muted">
-          {divestShares && divestValid ? `≈ ${formatUsdc((divestShares * sellPrice) / SHARES_PER_UNIT / PRICE_SCALE)} tUSDC` : ''}
+          {divestShares && divestValid ? `≈ ${formatUsdc((divestShares * sellPrice) / SHARES_PER_UNIT / PRICE_SCALE)} ${tokenSymbol()}` : ''}
         </span>
       </form>
     </section>

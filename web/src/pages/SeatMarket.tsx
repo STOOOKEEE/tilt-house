@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react'
 import { Link } from 'react-router'
 import { ActionStatus, type ActionState } from '../components/ActionStatus'
 import { LoginPrompt } from '../components/LoginPrompt'
-import { formatUsdc } from '../format'
+import { formatUsdc, tokenSymbol } from '../format'
 import { getFloorState } from '../near/floor'
 import { fullAccessCall } from '../near/session'
 import { useNear } from '../near/useNear'
@@ -81,7 +81,7 @@ export function SeatMarket() {
                 <td>{trafficMultiple(row.traffic_bp)}</td>
                 <td>{row.dealer ? <Link to={`/table/${row.dealer.id}`}>{row.dealer.name}</Link> : <span className="muted">empty</span>}</td>
                 <td className="money">{row.rent === null ? `from ${formatUsdc(row.min_rent)}` : formatUsdc(row.rent)}</td>
-                <td>{row.ask === null ? <span className="muted">—</span> : <span className="money">{formatUsdc(row.ask)} tUSDC</span>}</td>
+                <td>{row.ask === null ? <span className="muted">—</span> : <span className="money">{formatUsdc(row.ask)} {tokenSymbol()}</span>}</td>
                 <td>
                   {showBuy ? (
                     <button

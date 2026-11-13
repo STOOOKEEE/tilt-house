@@ -7,7 +7,7 @@
  * five dealers seated at their seat's minimum rent, one seat empty, jackpot 0) so the 3D floor works today.
  * `get_floor` is probed again every minute and takes over as soon as it exists.
  */
-import { formatUsdc } from '../format'
+import { formatUsdc, tokenSymbol } from '../format'
 import {
   SEATS,
   amount,
@@ -235,11 +235,11 @@ export function openTableProblem(input: OpenTableInput): string | null {
   const { seed, rent } = input
   if (!TABLE_ID.test(input.id)) return 'table id: 2 to 16 characters, a-z, 0-9 and -'
   if (input.name.trim() === '') return 'give your table a name'
-  if (seed === null || seed < MIN_TABLE_SEED) return `seed: at least ${formatUsdc(MIN_TABLE_SEED)} tUSDC`
-  if (rent === null || rent < input.rentToSit) return `rent: at least ${formatUsdc(input.rentToSit)} tUSDC/h takes a seat now`
+  if (seed === null || seed < MIN_TABLE_SEED) return `seed: at least ${formatUsdc(MIN_TABLE_SEED)} ${tokenSymbol()}`
+  if (rent === null || rent < input.rentToSit) return `rent: at least ${formatUsdc(input.rentToSit)} ${tokenSymbol()}/h takes a seat now`
   if (rent * PREPAY_HOURS > seed) return `the seed must cover ${PREPAY_HOURS} hours of rent, prepaid when you take the seat`
   if (input.balance !== null && seed > input.balance) {
-    return `your house balance is ${formatUsdc(input.balance)} tUSDC: deposit in Pools first`
+    return `your house balance is ${formatUsdc(input.balance)} ${tokenSymbol()}: deposit in Pools first`
   }
   return null
 }

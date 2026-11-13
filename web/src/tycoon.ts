@@ -3,7 +3,7 @@
  * contract views and the session server's footfall. UI-side copies of core constants only guide
  * the forms; the contract clamps every offer (`core::clamp_owner_offer`) and re-checks every bid.
  */
-import { formatCountdown, formatUsdc } from './format'
+import { formatCountdown, formatUsdc, tokenSymbol } from './format'
 import { freeBankroll } from './house'
 import { PREPAY_HOURS, type FloorState } from './near/floor'
 import type { DealerView, Game, PlayerView } from './near/views'
@@ -99,9 +99,9 @@ export function offerProblem(dealer: DealerView, input: OfferInput, now: number)
     return `rake: ${low}–${high} bp for ${dealer.game}`
   }
   const minBet = BigInt(dealer.min_bet)
-  if (input.maxBet === null || input.maxBet < minBet) return `max bet: at least ${formatUsdc(minBet)} tUSDC`
+  if (input.maxBet === null || input.maxBet < minBet) return `max bet: at least ${formatUsdc(minBet)} ${tokenSymbol()}`
   const cap = maxBetCap(dealer)
-  if (input.maxBet > cap) return `max bet: the pool covers at most ${formatUsdc(cap)} tUSDC`
+  if (input.maxBet > cap) return `max bet: the pool covers at most ${formatUsdc(cap)} ${tokenSymbol()}`
   if (!Number.isInteger(input.boostSecs) || input.boostSecs < 0 || input.boostSecs > MAX_BOOST_SECS) {
     return `boost: 0 to ${MAX_BOOST_SECS / 60} minutes`
   }
@@ -204,7 +204,35 @@ export function bidProblem(dealer: DealerView, rent: bigint | null, outbidMin: b
   if (dealer.cooldown_until !== null && dealer.cooldown_until > now) {
     return `evicted recently: can bid again in ${formatCountdown(dealer.cooldown_until - now)}`
   }
-  if (rent === null || rent < outbidMin) return `rent: at least ${formatUsdc(outbidMin)} tUSDC/h takes a seat now`
+  if (rent === null || rent < outbidMin) return `rent: at least ${formatUsdc(outbidMin)} ${tokenSymbol()}/h takes a seat now`
   if (rent * PREPAY_HOURS > freeBankroll(dealer)) return `the pool must prepay ${PREPAY_HOURS} hours of rent: invest first`
+  return null
+}
+
+// ---- rename and retire --------------------------------------------------------------------
+
+/** `core::floor::MAX_TABLE_NAME_LEN`, in UTF-8 bytes. */
+export const MAX_TABLE_NAME_BYTES = 32
+/** Rust's `char::is_control`: the Cc category. */
+const CONTROL_CHAR = /[\u0000-\u001f\u007f-\u009f]/
+
+/** `core::floor::validate_table_name`: 1–32 bytes, no control characters, no surrounding spaces. */
+export function tableNameProblem(name: string): string | null {
+  const bytes = new TextEncoder().encode(name).length
+  if (bytes === 0 || bytes > MAX_TABLE_NAME_BYTES) return `name: 1 to ${MAX_TABLE_NAME_BYTES} bytes`
+  if (CONTROL_CHAR.test(name)) return 'name: no control characters'
+  if (name.trim() !== name) return 'name: no spaces at the start or the end'
+  return null
+}
+
+/**
+ * Why `retire_table` would be refused, or null: the table must be off the floor, with no open
+ * session and nothing reserved, and the owner must hold every LP share.
+ */
+export function retireProblem(dealer: DealerView, player: PlayerView | null, seated: boolean): string | null {
+  if (seated) return 'it holds a seat: retire it once it is off the floor'
+  if ((dealer.open_sessions ?? 0) > 0 || BigInt(dealer.reserved) > 0n) return 'gamblers are still playing: wait for their sessions to close'
+  const mine = player?.lp.find((p) => p.dealer_id === dealer.id)?.shares ?? '0'
+  if (player === null || mine !== dealer.shares) return 'other LPs hold shares: they must divest first'
   return null
 }

@@ -1,4 +1,7 @@
-/** USDC (and tUSDC) have 6 decimals; amounts travel as integer base units in decimal strings. */
+/**
+ * USDC (and tUSDC) have 6 decimals, and so does $TILT (the floor's rules are written in 6-decimal
+ * units); amounts travel as integer base units in decimal strings.
+ */
 export const USDC_DECIMALS = 6
 const USDC_UNIT = 10n ** BigInt(USDC_DECIMALS)
 
@@ -6,6 +9,22 @@ const USDC_UNIT = 10n ** BigInt(USDC_DECIMALS)
 export const PRICE_SCALE = 1_000_000n
 
 const BASE_UNITS = /^\d+$/
+
+/** The active currency's symbol. Set once at startup: switching currency reloads the page. */
+let activeSymbol = 'tUSDC'
+
+export function setTokenSymbol(symbol: string): void {
+  activeSymbol = symbol
+}
+
+export function tokenSymbol(): string {
+  return activeSymbol
+}
+
+/** Base units → "12.34 TILT" in the active currency (or the one given). */
+export function formatAmount(value: string | bigint, symbol = activeSymbol): string {
+  return `${formatUsdc(value)} ${symbol}`
+}
 
 /** Parses a base-unit decimal string; throws on anything else (negative, float, empty). */
 export function toBaseUnits(value: string | bigint): bigint {
@@ -80,6 +99,11 @@ export function formatSimTime(t: number): string {
   const hours = String(Math.floor((t % 86_400) / 3600)).padStart(2, '0')
   const minutes = String(Math.floor((t % 3600) / 60)).padStart(2, '0')
   return `day ${day} · ${hours}:${minutes}`
+}
+
+/** Shortens a long (implicit, 64-hex) account id for display: "a42bd9…93ae8b". */
+export function shortAccount(accountId: string): string {
+  return accountId.length > 20 ? `${accountId.slice(0, 6)}…${accountId.slice(-6)}` : accountId
 }
 
 /** Shortens a long hex string for display: "a42bd982…93ae8b". */

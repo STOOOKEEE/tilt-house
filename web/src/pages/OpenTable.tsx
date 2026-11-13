@@ -1,7 +1,7 @@
 import { useCallback, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import { LoginPrompt } from '../components/LoginPrompt'
-import { formatUsdc, parseUsdc } from '../format'
+import { formatUsdc, parseUsdc, tokenSymbol } from '../format'
 import { EXPLORER_TX } from '../house'
 import { getFloorState, MIN_TABLE_SEED, openTableProblem, PREPAY_HOURS } from '../near/floor'
 import { fullAccessCall } from '../near/session'
@@ -149,14 +149,14 @@ export function OpenTable() {
           ))}
         </fieldset>
         <label>
-          seed (tUSDC)
+          seed ({tokenSymbol()})
           <input className="number" inputMode="decimal" value={seed} onChange={(e) => setSeed(e.target.value)} />
           <span className="muted">
             at least {formatUsdc(MIN_TABLE_SEED)}; your balance: {player.data ? formatUsdc(player.data.balance) : '—'}
           </span>
         </label>
         <label>
-          rent bid (tUSDC per hour)
+          rent bid ({tokenSymbol()} per hour)
           <input
             className="number"
             inputMode="decimal"

@@ -13,7 +13,9 @@ import {
   myTables,
   offerProblem,
   previewOffer,
+  retireProblem,
   seatMarket,
+  tableNameProblem,
   totalEdgeBp,
   trafficMultiple,
 } from './tycoon'
@@ -181,5 +183,29 @@ describe('bidProblem', () => {
     expect(bidProblem(dealer('d'), null, 1_000_000n, NOW)).toMatch(/at least/)
     expect(bidProblem(dealer('d', { reserved: '1999000000' }), 1_000_000n, 1_000_000n, NOW)).toMatch(/prepay 2 hours/)
     expect(bidProblem(dealer('d', { cooldown_until: NOW + 90 }), 1_000_000n, 1_000_000n, NOW)).toMatch(/1:30/)
+  })
+})
+
+describe('rename and retire', () => {
+  it('follows core validate_table_name', () => {
+    expect(tableNameProblem('Lucky Lou')).toBeNull()
+    expect(tableNameProblem('')).toMatch(/1 to 32 bytes/)
+    expect(tableNameProblem('x'.repeat(33))).toMatch(/1 to 32 bytes/)
+    // 11 × 3 bytes: 11 characters but over 32 bytes.
+    expect(tableNameProblem('€'.repeat(11))).toMatch(/bytes/)
+    expect(tableNameProblem('Lou\n')).toMatch(/control/)
+    expect(tableNameProblem(' Lou')).toMatch(/spaces/)
+  })
+
+  it('offers retiring only off the floor, with no play and every share held', () => {
+    const table = dealer('mine', { controller: 'alice.testnet', npc: false, shares: '5000000', open_sessions: 0, reserved: '0' })
+    const owner = parsePlayer({ balance: '0', lp: [{ dealer_id: 'mine', shares: '5000000', value: '5000000' }], tables: ['mine'] })
+    expect(retireProblem(table, owner, false)).toBeNull()
+    expect(retireProblem(table, owner, true)).toMatch(/seat/)
+    expect(retireProblem({ ...table, open_sessions: 1 }, owner, false)).toMatch(/still playing/)
+    expect(retireProblem({ ...table, reserved: '1' }, owner, false)).toMatch(/still playing/)
+    const partner = parsePlayer({ balance: '0', lp: [{ dealer_id: 'mine', shares: '4000000', value: '4000000' }], tables: ['mine'] })
+    expect(retireProblem(table, partner, false)).toMatch(/other LPs/)
+    expect(retireProblem(table, null, false)).toMatch(/other LPs/)
   })
 })

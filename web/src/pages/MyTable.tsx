@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react'
 import { Link } from 'react-router'
 import { ActionStatus, type ActionState } from '../components/ActionStatus'
 import { LoginPrompt } from '../components/LoginPrompt'
-import { formatBp, formatCountdown, formatUsdc, parseUsdc } from '../format'
+import { formatAmount, formatBp, formatCountdown, formatUsdc, parseUsdc, tokenSymbol } from '../format'
 import { freeBankroll } from '../house'
 import { PREPAY_HOURS, getFloorState, type FloorState, type SeatView } from '../near/floor'
 import { fullAccessCall } from '../near/session'
@@ -24,6 +24,8 @@ import {
   myTables,
   offerProblem,
   previewOffer,
+  retireProblem,
+  tableNameProblem,
   totalEdgeBp,
   trafficMultiple,
   type Temperament,
@@ -139,12 +141,14 @@ function TableDashboard({ dealer, state, player, now, busy, send }: TableProps &
         last hour: revenue <span className="money">{usdcOrDash(money.revenue)}</span> · rent{' '}
         <span className="money">{usdcOrDash(money.rentPerHour)}</span>/h (paid {usdcOrDash(money.rentPaid)}) · P&amp;L{' '}
         <span className={money.pnl === null ? 'money' : money.pnl >= 0n ? 'win' : 'loss'}>{usdcOrDash(money.pnl)}</span>{' '}
-        tUSDC/h
+        {tokenSymbol()}/h
       </p>
       <OfferForm {...props} arrivals={footfall.data?.arrivals_1h ?? null} />
       <AutopilotForm {...props} />
       <PoolForms {...props} player={player} />
       {seat ? <SeatSale {...props} seat={seat} /> : <SeatBid {...props} outbidMin={BigInt(state.floor.outbid_min)} />}
+      <RenameForm {...props} />
+      <RetireTable {...props} player={player} seated={seat !== null} />
     </section>
   )
 }
@@ -204,7 +208,7 @@ function OfferForm({ dealer, now, busy, send, arrivals }: TableProps & { arrival
       </label>
       <label>
         max bet
-        <input inputMode="decimal" value={maxBetText} onChange={(e) => setMaxBetText(e.target.value)} /> tUSDC
+        <input inputMode="decimal" value={maxBetText} onChange={(e) => setMaxBetText(e.target.value)} /> {tokenSymbol()}
         <span className="muted">the pool covers up to {formatUsdc(maxBetCap(dealer))}</span>
       </label>
       <label>
@@ -290,9 +294,9 @@ function PoolForms({ dealer, busy, send, player }: TableProps & { player: Player
     <>
       <h3>Pool</h3>
       <p>
-        free bankroll <span className="money">{formatUsdc(freeBankroll(dealer))}</span> tUSDC · you hold{' '}
+        free bankroll <span className="money">{formatUsdc(freeBankroll(dealer))}</span> {tokenSymbol()} · you hold{' '}
         <span className="money">{formatUsdc(owned / SHARES_PER_UNIT)}</span> LP tokens · house balance{' '}
-        {formatUsdc(balance)} tUSDC
+        {formatUsdc(balance)} {tokenSymbol()}
       </p>
       <form
         className="amount-form"
@@ -301,7 +305,7 @@ function PoolForms({ dealer, busy, send, player }: TableProps & { player: Player
           if (investValid) send(`invest in ${dealer.name}`, 'invest', { dealer_id: dealer.id, amount: String(invest) })
         }}
       >
-        <input placeholder="tUSDC" inputMode="decimal" value={investText} onChange={(e) => setInvestText(e.target.value)} />
+        <input placeholder={tokenSymbol()} inputMode="decimal" value={investText} onChange={(e) => setInvestText(e.target.value)} />
         <button type="submit" disabled={!investValid || busy}>
           Invest
         </button>
@@ -337,8 +341,8 @@ function SeatSale({ dealer, now, busy, send, seat }: TableProps & { seat: SeatVi
     <>
       <h3>Seat {seat.seat + 1}</h3>
       <p>
-        rent {formatUsdc(seat.rent_per_hour)} tUSDC/h · {prepaid > 0 ? `prepaid for ${formatCountdown(prepaid)}` : 'paid as it accrues'}
-        {' · '}owed {formatUsdc(seat.rent_owed)} · {ask === null ? 'not for sale' : `listed for ${formatUsdc(ask)} tUSDC`}
+        rent {formatUsdc(seat.rent_per_hour)} {tokenSymbol()}/h · {prepaid > 0 ? `prepaid for ${formatCountdown(prepaid)}` : 'paid as it accrues'}
+        {' · '}owed {formatUsdc(seat.rent_owed)} · {ask === null ? 'not for sale' : `listed for ${formatUsdc(ask)} ${tokenSymbol()}`}
       </p>
       <form
         className="amount-form"
@@ -347,7 +351,7 @@ function SeatSale({ dealer, now, busy, send, seat }: TableProps & { seat: SeatVi
           if (valid) send('list the seat', 'list_seat', { dealer_id: dealer.id, price: String(price) })
         }}
       >
-        <input placeholder="price, tUSDC" inputMode="decimal" value={priceText} onChange={(e) => setPriceText(e.target.value)} />
+        <input placeholder={`price, ${tokenSymbol()}`} inputMode="decimal" value={priceText} onChange={(e) => setPriceText(e.target.value)} />
         <button type="submit" disabled={!valid || busy}>
           {ask === null ? 'List for sale' : 'Change price'}
         </button>
@@ -377,7 +381,7 @@ function SeatBid({ dealer, now, busy, send, outbidMin }: TableProps & { outbidMi
     <>
       <h3>Take a seat</h3>
       <p className="muted">
-        A seat costs {formatUsdc(outbidMin)} tUSDC/h now; {String(PREPAY_HOURS)} hours are prepaid from the pool into the
+        A seat costs {formatUsdc(outbidMin)} {tokenSymbol()}/h now; {String(PREPAY_HOURS)} hours are prepaid from the pool into the
         jackpot. Or buy a listed seat in <Link to="/seats">Seats</Link>.
       </p>
       <form
@@ -395,12 +399,60 @@ function SeatBid({ dealer, now, busy, send, outbidMin }: TableProps & { outbidMi
           value={rentText}
           onChange={(e) => setRentText(e.target.value)}
         />
-        tUSDC/h
+        {tokenSymbol()}/h
         <button type="submit" disabled={busy || problem !== null}>
           Bid for a seat
         </button>
         {problem ? <span className="muted">{problem}</span> : null}
       </form>
     </>
+  )
+}
+
+function RenameForm({ dealer, busy, send }: TableProps) {
+  const [name, setName] = useState(dealer.name)
+  const problem = tableNameProblem(name)
+  return (
+    <form
+      className="game-form"
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (problem === null && name !== dealer.name) send('rename the table', 'set_table_name', { dealer_id: dealer.id, name })
+      }}
+    >
+      <h3>Name</h3>
+      <label>
+        name <input value={name} onChange={(e) => setName(e.target.value)} />
+      </label>
+      {problem ? <p className="loss">{problem}</p> : null}
+      <button type="submit" disabled={busy || problem !== null || name === dealer.name}>
+        Rename table
+      </button>
+    </form>
+  )
+}
+
+/** Shown as a button only when `retire_table` would pass; otherwise says what blocks it. */
+function RetireTable({ dealer, busy, send, player, seated }: TableProps & { player: PlayerView | null; seated: boolean }) {
+  const problem = retireProblem(dealer, player, seated)
+  const retire = () => {
+    const ok = window.confirm(
+      `Retire ${dealer.name} for good?\n\n` +
+        `Its whole bankroll (${formatAmount(dealer.bankroll)}) goes back to your house balance, since you hold every LP share. ` +
+        'The table leaves the lobby and refuses every later call; this cannot be undone.',
+    )
+    if (ok) send('retire the table', 'retire_table', { dealer_id: dealer.id })
+  }
+  return (
+    <div className="game-form">
+      <h3>Retire</h3>
+      {problem ? (
+        <p className="muted">Retiring pays you the bankroll and closes the table for good: not now, {problem}.</p>
+      ) : (
+        <button type="button" className="ghost" disabled={busy} onClick={retire}>
+          Retire table
+        </button>
+      )}
+    </div>
   )
 }

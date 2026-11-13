@@ -3,7 +3,7 @@
 // the input: clicks on it are reported in felt coordinates, the page decides what they mean. Steps run strictly in order (a draw is never skipped); when rounds
 // queue up the clock runs faster instead.
 import * as THREE from 'three'
-import { formatUsdc } from '../../format'
+import { formatUsdc, tokenSymbol } from '../../format'
 import { rouletteSpots, rouletteWins, spotPayout } from '../../near/session-client'
 import type { Game, RoundView, RouletteBet } from '../../near/views'
 import { createCharacter } from '../characters'
@@ -567,7 +567,7 @@ class TableScene implements TableSceneApi {
       await this.rig.gesture({ kind: 'celebrate' })
     } else {
       const gain = BigInt(payout) - BigInt(wager)
-      this.rig.say(outcome === 'push' ? 'push: stake back' : `you win +${formatUsdc(gain)} tUSDC`)
+      this.rig.say(outcome === 'push' ? 'push: stake back' : `you win +${formatUsdc(gain)} ${tokenSymbol()}`)
       await this.rig.gesture({ kind: 'pay' })
       if (outcome === 'win') await this.addChips(chipCount(gain.toString()), -0.26)
       await this.sweepStake(feltPoint(0.5, 1.15, 0.02))
@@ -601,7 +601,7 @@ class TableScene implements TableSceneApi {
     this.rig.say(
       won.length === 0
         ? 'the house wins this one'
-        : `${won.length} of ${this.spots.length} spots win · ${net > 0n ? '+' : ''}${formatUsdc(net)} tUSDC`,
+        : `${won.length} of ${this.spots.length} spots win · ${net > 0n ? '+' : ''}${formatUsdc(net)} ${tokenSymbol()}`,
     )
     if (lost.length > 0) {
       const toDealer = feltPoint(0.5, 0.05, 0.02)
