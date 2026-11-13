@@ -154,7 +154,7 @@ export class FakeChain implements Chain {
 
   async claimWelcome(accountId: string): Promise<bigint> {
     if (this.welcomeError) throw this.welcomeError;
-    if (this.welcomed.includes(accountId)) throw new Error("already claimed");
+    if (this.welcomed.includes(accountId)) throw new Error("Smart contract panicked: Welcome already claimed");
     this.welcomed.push(accountId);
     return WELCOME_AMOUNT;
   }

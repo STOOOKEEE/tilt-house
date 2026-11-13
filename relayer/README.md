@@ -95,8 +95,8 @@ bearer token, only for the account this relayer activated for that user, once pe
 
 - `200 { welcomed: "<TILT base units>" }`
 - `401 missing_token | invalid_token`, `403 invalid_account | not_your_account`,
-  `409 already_claimed`, `429 rate_limited`, `502 welcome_failed` (the token refused or the RPC
-  failed; the claim is not spent, retry later), `503 paused | daily_budget_exhausted | auth_unavailable`
+  `409 already_claimed` (also when the token says so), `429 rate_limited`, `502 welcome_failed`
+  (daily welcome cap, empty pool or RPC failure; the claim is not spent, retry later), `503 paused | daily_budget_exhausted | auth_unavailable`
 
 ### `GET /health`
 

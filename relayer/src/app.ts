@@ -25,6 +25,8 @@ const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const MAX_BODY_BYTES = 16 * 1024;
 const IMPLICIT_ACCOUNT = /^[0-9a-f]{64}$/;
+/** The TILT token's refusal of a second welcome for an account (meme/). */
+const WELCOME_ALREADY_CLAIMED = "Welcome already claimed";
 /** 100 tUSDC (6 decimals), minted on activation and per faucet claim. */
 export const MINT_AMOUNT = 100_000_000n;
 
@@ -236,8 +238,9 @@ export function createApp({ config, chain, verifyToken, store, now = Date.now }:
 
   /**
    * Once per Privy user (and so per account: activation binds one to the other), remembered
-   * across restarts. A failed claim is forgotten so the player can retry: the token itself
-   * refuses a second claim for an account, so a retry can never pay twice.
+   * across restarts. A failed claim is forgotten so the player can retry (daily cap, RPC): the
+   * token itself refuses a second claim for an account, so a retry can never pay twice. That
+   * refusal is kept as a claim, so a lost state file does not reopen retries.
    */
   async function claimWelcome(c: Context, userId: string, accountId: string): Promise<Response> {
     // No await between this check and `markWelcome`: two concurrent requests cannot both claim.
@@ -246,6 +249,7 @@ export function createApp({ config, chain, verifyToken, store, now = Date.now }:
     try {
       return c.json({ welcomed: (await chain.claimWelcome(accountId)).toString() });
     } catch (error) {
+      if (error instanceof Error && error.message.includes(WELCOME_ALREADY_CLAIMED)) return fail(c, 409, "already_claimed");
       store.unmarkWelcome(userId);
       console.error("welcome claim failed", error);
       return fail(c, 502, "welcome_failed");

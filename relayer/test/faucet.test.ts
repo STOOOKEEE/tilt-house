@@ -202,6 +202,12 @@ describe("POST /faucet in welcome mode (TILT floor)", () => {
     expect((await claimAs(wallet, ALICE)).status).toBe(200);
   });
 
+  it("keeps an account the token says already claimed as claimed (state lost, claimed elsewhere)", async () => {
+    chain.welcomed.push(wallet);
+    expect(await claimAs(wallet, ALICE)).toEqual({ status: 409, body: { error: "already_claimed" } });
+    expect(store.hasWelcome(ALICE)).toBe(true);
+  });
+
   it("remembers claims across a restart", async () => {
     const file = join(mkdtempSync(join(tmpdir(), "relayer-")), "state.json");
     store = new StateStore(file);
