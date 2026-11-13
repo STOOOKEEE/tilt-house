@@ -34,15 +34,25 @@ function useCountUp(target: bigint): bigint {
     const start = performance.now()
     let frame = 0
     const tick = (now: number): void => {
-      const k = Math.min(1, (now - start) / COUNT_MS)
-      const eased = BigInt(Math.round((1 - (1 - k) ** 3) * STEPS))
-      current.current = from + ((target - from) * eased) / BigInt(STEPS)
+      current.current = countUpValue(from, target, now - start)
       setShown(current.current)
-      if (k < 1) frame = requestAnimationFrame(tick)
+      if (current.current !== target) frame = requestAnimationFrame(tick)
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
   }, [target])
 
   return shown
+}
+
+/**
+ * The amount shown `elapsedMs` into a count from `from` to `target`, always between the two. A
+ * frame's timestamp can precede the moment the count started (the browser stamps the frame when
+ * it begins): a negative elapsed time must not extrapolate past `from`, which showed a negative
+ * jackpot on first paint.
+ */
+export function countUpValue(from: bigint, target: bigint, elapsedMs: number): bigint {
+  const k = Math.min(1, Math.max(0, elapsedMs / COUNT_MS))
+  const eased = BigInt(Math.round((1 - (1 - k) ** 3) * STEPS))
+  return from + ((target - from) * eased) / BigInt(STEPS)
 }
