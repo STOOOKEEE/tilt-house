@@ -2,7 +2,8 @@
 
 Pays gas for Tilt House players (NEP-366 meta-transactions), activates new Privy
 accounts and runs the tUSDC faucet. One process per network (`NETWORK=testnet|mainnet`);
-the mainnet runbook is `docs/mainnet.md`.
+the mainnet runbook is `docs/mainnet.md`. The TILT floor has its own instance
+(`FAUCET_MODE=welcome`, runbook `docs/ops-tilt.md`).
 
 ```sh
 cp .env.example .env   # fill RELAYER_PRIVATE_KEY
@@ -38,8 +39,9 @@ near-api-js). Only these shapes are relayed (`src/policy.ts`):
 | receiver | actions | signing key |
 | --- | --- | --- |
 | `HOUSE_CONTRACT` | FunctionCall `open_session`, `close_session`, `force_close`, `claim_unrevealed` (`GAME_METHODS`), deposit 0 | any |
-| `HOUSE_CONTRACT` | FunctionCall `MONEY_METHODS` (`withdraw`, `invest`, `divest`, table and seat owner actions, `set_table_name`, `retire_table`), deposit 0 or 1 yocto | full access |
+| `HOUSE_CONTRACT` | FunctionCall `MONEY_METHODS` (`withdraw`, `invest`, `divest`, table and seat owner actions, `set_table_name`, `retire_table`), exactly the contract's deposit: 1 yocto for `withdraw`, 0 for the others | full access |
 | `TOKEN_CONTRACT` | one `ft_transfer_call`, 1 yocto, `receiver_id` = house | full access |
+| `TILT_CONTRACT` (optional, may equal `TOKEN_CONTRACT`) | one `burn_for_tilt_hour`, 1 yocto, `amount` a positive decimal string | full access |
 | the sender | one AddKey: function-call key for the house, exactly the 4 game methods, allowance null or ≤ 0.25 NEAR | full access |
 
 Also: at most 4 actions and 300 Tgas in total, valid ed25519 signature, the key exists
@@ -63,6 +65,11 @@ On testnet (`ANONYMOUS_ACTIVATION`, default on; refused on mainnet) a request wi
 `Authorization` header is activated anonymously, once per account and at most 20 per hour
 overall, for the CLI demo (`cli-demo/`). A token that is sent must verify.
 
+With `FAUCET_MODE=welcome` (the TILT floor's relayer, `TOKEN_CONTRACT` = `TILT_CONTRACT` = the
+TILT token) activation sends NEAR only to an account that does not exist yet (the tUSDC relayer
+may have funded it already; each instance keeps its own `RELAYER_DATA_DIR`), registers it on TILT
+and mints nothing: `minted: "0"`.
+
 - `200 { funded, registered, minted: "100000000" }` (`funded`/`registered`: done by this call)
 - `401 missing_token | invalid_token`, `403 not_implicit_account`, `409 already_activated`,
   `429 rate_limited` (5/min per IP, 100/hour overall), `502 rpc_error` (retry is safe),
@@ -79,6 +86,17 @@ account activated for that user, one claim per user per hour.
 - `401 missing_token | invalid_token` (mainnet), `403 invalid_account | not_your_account`,
   `429 already_claimed | rate_limited` (5/min per IP, 100/hour overall),
   `502 mint_failed` (the claim stays spent for the hour), `503 paused | daily_budget_exhausted`
+
+With `FAUCET_MODE=welcome` it claims the TILT welcome allowance instead
+(`claim_welcome_for(account)` on the TILT token, signed by the relayer, the token's welcome
+operator, with the storage deposit if the account is not registered). It always needs the Privy
+bearer token, only for the account this relayer activated for that user, once per user (kept in
+`state.json`); the token also refuses a second claim per account and caps claims per day.
+
+- `200 { welcomed: "<TILT base units>" }`
+- `401 missing_token | invalid_token`, `403 invalid_account | not_your_account`,
+  `409 already_claimed`, `429 rate_limited`, `502 welcome_failed` (the token refused or the RPC
+  failed; the claim is not spent, retry later), `503 paused | daily_budget_exhausted | auth_unavailable`
 
 ### `GET /health`
 

@@ -36,21 +36,40 @@ export interface Activation {
   minted: string;
 }
 
+export interface ActivationPlan {
+  /** NEAR (yocto) the account gets. */
+  near: bigint;
+  /** true: sent if the account holds less; false: only if the account does not exist yet. */
+  topUp: boolean;
+  /** Token base units minted after registration (0: none). */
+  tokens: bigint;
+}
+
 /** Everything the HTTP layer needs from NEAR; faked in tests. */
 export interface Chain {
   blockHeight(): Promise<bigint>;
   accessKey(accountId: string, publicKey: string): Promise<AccessKeyInfo | null>;
   relay(signed: DecodedSignedDelegate, wait: RelayWait): Promise<RelayOutcome>;
-  /** Sends `near` yocto if the account holds less, registers it on the token, mints `tokens`. */
-  activate(accountId: string, near: bigint, tokens: bigint): Promise<Activation>;
+  /** Sends NEAR as `plan` says, registers the account on the token, mints `plan.tokens`. */
+  activate(accountId: string, plan: ActivationPlan): Promise<Activation>;
   /** Mints `tokens` tUSDC to the account (relayer is the token's minter). */
   mint(accountId: string, tokens: bigint): Promise<void>;
+  /** The TILT welcome allowance (`claim_welcome_for`, relayer = welcome operator); the amount received. */
+  claimWelcome(accountId: string): Promise<bigint>;
   /** The relayer account's own NEAR balance, yocto (the daily budget watches it). */
   relayerBalance(): Promise<bigint>;
 }
 
 const STORAGE_DEPOSIT_GAS = teraToGas(30);
 const MINT_GAS = teraToGas(30);
+const WELCOME_GAS = teraToGas(30);
+const DECIMAL = /^\d+$/;
+
+/** Whether activation sends NEAR to an account holding `balance` (0: the account does not exist). */
+export function fundingNeeded(balance: bigint, { near, topUp }: ActivationPlan): boolean {
+  // An existing account always holds some NEAR (its storage stake).
+  return topUp ? balance < near : balance === 0n;
+}
 
 function isKeyPairString(value: string): value is KeyPairString {
   return value.startsWith("ed25519:") || value.startsWith("secp256k1:");
@@ -167,15 +186,29 @@ export function nearChain(config: Config): Chain {
       return failure === undefined ? { txHash, status: "success" } : { txHash, status: "failure", failure };
     },
 
-    async activate(accountId, near, tokens) {
-      const funded = (await balanceOf(accountId)) < near;
+    async activate(accountId, { near, topUp, tokens }) {
+      const funded = fundingNeeded(await balanceOf(accountId), { near, topUp, tokens });
       if (funded) await relayer.transfer({ receiverId: accountId, amount: near });
       const registered = await registerOnToken(accountId);
-      await mint(accountId, tokens);
+      if (tokens > 0n) await mint(accountId, tokens);
       return { funded, registered, minted: tokens.toString() };
     },
 
     mint,
+
+    async claimWelcome(accountId) {
+      // Payable like mint_to: registers an unknown receiver with the attached storage deposit.
+      const deposit = (await isRegistered(accountId)) ? 0n : await storageMin();
+      const amount = await relayer.callFunction({
+        contractId: config.token,
+        methodName: "claim_welcome_for",
+        args: { account_id: accountId },
+        deposit,
+        gas: WELCOME_GAS,
+      });
+      if (typeof amount !== "string" || !DECIMAL.test(amount)) throw new Error("claim_welcome_for returned an invalid amount");
+      return BigInt(amount);
+    },
 
     relayerBalance: () => balanceOf(config.relayerAccount),
   };

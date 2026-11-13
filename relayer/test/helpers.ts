@@ -10,7 +10,7 @@ import {
 } from "near-api-js";
 import { webcrypto } from "node:crypto";
 import { createApp, type AppDeps } from "../src/app.ts";
-import type { AccessKeyInfo, Activation, Chain, RelayOutcome, RelayWait } from "../src/chain.ts";
+import type { AccessKeyInfo, Activation, ActivationPlan, Chain, RelayOutcome, RelayWait } from "../src/chain.ts";
 import type { DecodedSignedDelegate } from "../src/policy.ts";
 import { GAME_METHODS } from "../src/policy.ts";
 import { privyVerifier } from "../src/privy.ts";
@@ -18,13 +18,17 @@ import { StateStore } from "../src/state.ts";
 
 export const HOUSE = "house.tilthouse.testnet";
 export const TOKEN = "usdc.fakes.testnet";
+export const TILT = "tilt.fakes.testnet";
 export const PLAYER = "alice.testnet";
 export const HEIGHT = 1_000n;
+export const WELCOME_AMOUNT = 1_000_000_000_000_000_000n;
 export const NEAR = 1_000_000_000_000_000_000_000_000n;
 export const CONFIG: AppDeps["config"] = {
   network: "testnet",
   house: HOUSE,
   token: TOKEN,
+  tilt: TILT,
+  faucetMode: "mint",
   activationYocto: NEAR / 50n,
   dailyBudgetYocto: 5n * NEAR,
   paused: false,
@@ -107,6 +111,7 @@ export class FakeChain implements Chain {
   relayed: DecodedSignedDelegate[] = [];
   waits: RelayWait[] = [];
   activations: string[] = [];
+  plans: ActivationPlan[] = [];
   relayError: Error | null = null;
   activateError: Error | null = null;
   mints: { accountId: string; tokens: bigint }[] = [];
@@ -131,15 +136,27 @@ export class FakeChain implements Chain {
     return { txHash: `tx${this.relayed.length}`, status: wait === "included" ? "pending" : "success" };
   }
 
-  async activate(accountId: string, _near: bigint, tokens: bigint): Promise<Activation> {
+  async activate(accountId: string, plan: ActivationPlan): Promise<Activation> {
     if (this.activateError) throw this.activateError;
     this.activations.push(accountId);
-    return { funded: true, registered: true, minted: tokens.toString() };
+    this.plans.push(plan);
+    return { funded: true, registered: true, minted: plan.tokens.toString() };
   }
 
   async mint(accountId: string, tokens: bigint): Promise<void> {
     if (this.mintError) throw this.mintError;
     this.mints.push({ accountId, tokens });
+  }
+
+  /** Like the token: one welcome per account. */
+  welcomed: string[] = [];
+  welcomeError: Error | null = null;
+
+  async claimWelcome(accountId: string): Promise<bigint> {
+    if (this.welcomeError) throw this.welcomeError;
+    if (this.welcomed.includes(accountId)) throw new Error("already claimed");
+    this.welcomed.push(accountId);
+    return WELCOME_AMOUNT;
   }
 
   async relayerBalance(): Promise<bigint> {

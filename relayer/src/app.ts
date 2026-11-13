@@ -6,7 +6,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { TransactionTimeoutError } from "near-api-js/rpc-errors";
 import { DailyBudget } from "./budget.ts";
 import type { Chain } from "./chain.ts";
-import { ACCOUNT_ID, type Network } from "./config.ts";
+import { ACCOUNT_ID, type FaucetMode, type Network } from "./config.ts";
 import { isRecord } from "./guards.ts";
 import {
   checkDelegate,
@@ -46,6 +46,7 @@ export interface AppDeps {
     dailyBudgetYocto: bigint;
     paused: boolean;
     anonymousActivation: boolean;
+    faucetMode: FaucetMode;
   };
   chain: Chain;
   verifyToken: VerifyToken;
@@ -97,9 +98,10 @@ export function createApp({ config, chain, verifyToken, store, now = Date.now }:
   // One claim per account per hour; the token contract also caps mints per 24 h.
   const faucetAccount = new RateLimiter(1, HOUR_MS);
   const budget = new DailyBudget(config.dailyBudgetYocto, store, () => chain.relayerBalance());
-  // Testnet keeps an open faucet (judges with their own CLI accounts use it); on mainnet only a
-  // Privy user may claim, for the account the relayer activated for them.
-  const faucetNeedsLogin = config.network === "mainnet";
+  // Testnet keeps an open faucet (judges with their own CLI accounts use it); on mainnet, and for
+  // TILT welcome claims, only a Privy user may claim, for the account the relayer activated for them.
+  const welcome = config.faucetMode === "welcome";
+  const faucetNeedsLogin = config.network === "mainnet" || welcome;
 
   /** A Privy-authenticated caller, or the refusal to send. Key fetch errors fail closed. */
   async function authenticate(c: Context): Promise<Auth> {
@@ -191,7 +193,8 @@ export function createApp({ config, chain, verifyToken, store, now = Date.now }:
     if (store.hasUser(userId) || store.hasAccount(accountId)) return fail(c, 409, "already_activated");
     store.bind(userId, accountId, now());
     try {
-      return c.json(await chain.activate(accountId, config.activationYocto, MINT_AMOUNT));
+      const plan = { near: config.activationYocto, topUp: !welcome, tokens: welcome ? 0n : MINT_AMOUNT };
+      return c.json(await chain.activate(accountId, plan));
     } catch (error) {
       // Let the player retry; a retry skips the transfer and registration already done.
       store.unbind(userId);
@@ -219,6 +222,7 @@ export function createApp({ config, chain, verifyToken, store, now = Date.now }:
       console.error("budget check failed", error);
       return fail(c, 502, "rpc_error");
     }
+    if (welcome) return claimWelcome(c, claimant, accountId);
     // The claim is spent even if the mint fails: fail closed, the player retries in an hour.
     if (!faucetAccount.take(claimant, now())) return fail(c, 429, "already_claimed");
     try {
@@ -229,6 +233,24 @@ export function createApp({ config, chain, verifyToken, store, now = Date.now }:
       return fail(c, 502, "mint_failed");
     }
   });
+
+  /**
+   * Once per Privy user (and so per account: activation binds one to the other), remembered
+   * across restarts. A failed claim is forgotten so the player can retry: the token itself
+   * refuses a second claim for an account, so a retry can never pay twice.
+   */
+  async function claimWelcome(c: Context, userId: string, accountId: string): Promise<Response> {
+    // No await between this check and `markWelcome`: two concurrent requests cannot both claim.
+    if (store.hasWelcome(userId)) return fail(c, 409, "already_claimed");
+    store.markWelcome(userId, accountId, now());
+    try {
+      return c.json({ welcomed: (await chain.claimWelcome(accountId)).toString() });
+    } catch (error) {
+      store.unmarkWelcome(userId);
+      console.error("welcome claim failed", error);
+      return fail(c, 502, "welcome_failed");
+    }
+  }
 
   return app;
 }

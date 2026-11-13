@@ -29,6 +29,29 @@ describe("StateStore", () => {
     expect(reloaded.hasAccount("acc")).toBe(false);
   });
 
+  it("persists welcome claims and forgets a failed one", () => {
+    const path = file();
+    const store = new StateStore(path);
+    store.markWelcome("did:privy:a", "acc", 5);
+    store.markWelcome("did:privy:b", "acc2", 6);
+    store.unmarkWelcome("did:privy:b");
+    const reloaded = new StateStore(path);
+    expect(reloaded.hasWelcome("did:privy:a")).toBe(true);
+    expect(reloaded.hasWelcome("did:privy:b")).toBe(false);
+    expect(reloaded.hasWelcome("constructor")).toBe(false);
+  });
+
+  it("reads a file written before welcome claims existed", () => {
+    const path = file();
+    new StateStore(path).bind("did:privy:a", "acc", 5);
+    const old = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    delete old.welcomes;
+    writeFileSync(path, JSON.stringify(old));
+    const reloaded = new StateStore(path);
+    expect(reloaded.hasUser("did:privy:a")).toBe(true);
+    expect(reloaded.hasWelcome("did:privy:a")).toBe(false);
+  });
+
   it("does not treat inherited object keys as users", () => {
     expect(new StateStore(null).hasUser("constructor")).toBe(false);
   });

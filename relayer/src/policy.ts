@@ -15,9 +15,10 @@ export const GAME_METHODS = ["open_session", "close_session", "force_close", "cl
 // other session moves are answered as soon as they are included.
 const WAIT_FOR_EXECUTION = "open_session";
 
-// Money moves and owner actions on the house contract. Some require 1 yocto, which only a
-// full-access key can attach; the relayer also checks the signing key is full access before
-// paying for any of them.
+// Money moves and owner actions on the house contract. The relayer checks the signing key is
+// full access before paying for any of them; each takes exactly the deposit the contract asks for
+// (`ONE_YOCTO_METHODS`: 1 yocto, which only a full-access key can attach; the others: none), so
+// a call the contract would refuse never costs gas.
 export const MONEY_METHODS = [
   "withdraw",
   "invest",
@@ -33,7 +34,12 @@ export const MONEY_METHODS = [
   "retire_table",
 ] as const;
 
+/** `#[payable]` + `assert_one_yocto` in contract/src; every other money method is not payable. */
+const ONE_YOCTO_METHODS: readonly string[] = ["withdraw"];
+
 export const DEPOSIT_METHOD = "ft_transfer_call";
+/** The TILT token's Tilt Hour ritual (meme/): the holder burns its own TILT, 1 yocto attached. */
+export const BURN_METHOD = "burn_for_tilt_hour";
 
 export const ONE_YOCTO = 1n;
 export const MAX_GAS = 300_000_000_000_000n; // 300 Tgas, the protocol cap per transaction
@@ -115,7 +121,10 @@ export interface DecodedSignedDelegate {
 
 export interface PolicyConfig {
   house: string;
+  /** The house's token: deposits into the house (`ft_transfer_call`). */
   token: string;
+  /** The TILT token, whose `burn_for_tilt_hour` is relayed; null: none. May equal `token`. */
+  tilt: string | null;
 }
 
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
@@ -143,7 +152,9 @@ export function checkDelegate(delegate: DecodedDelegate, cfg: PolicyConfig): Ver
   if (actions.length === 0) return refuse("no_actions");
   if (actions.length > MAX_ACTIONS) return refuse("too_many_actions");
   if (delegate.receiverId === cfg.house) return checkHouseCalls(actions);
-  if (delegate.receiverId === cfg.token) return checkTokenDeposit(actions, cfg.house);
+  if (delegate.receiverId === cfg.token || delegate.receiverId === cfg.tilt) {
+    return checkTokenCall(actions, delegate.receiverId, cfg);
+  }
   // AddKey applies to the receiver, so the key setup targets the sender's own account.
   if (delegate.receiverId === delegate.senderId) return checkKeySetup(actions, cfg.house);
   return refuse("wrong_receiver");
@@ -162,7 +173,8 @@ function checkHouseCalls(actions: DecodedAction[]): Verdict {
     if (isIn(GAME_METHODS, call.methodName)) {
       if (call.deposit !== 0n) return refuse("deposit_not_allowed");
     } else if (isIn(MONEY_METHODS, call.methodName)) {
-      if (call.deposit !== 0n && call.deposit !== ONE_YOCTO) return refuse("deposit_not_allowed");
+      const deposit = ONE_YOCTO_METHODS.includes(call.methodName) ? ONE_YOCTO : 0n;
+      if (call.deposit !== deposit) return refuse("deposit_not_allowed");
       needsFullAccess = true;
     } else {
       return refuse("method_not_allowed");
@@ -173,16 +185,32 @@ function checkHouseCalls(actions: DecodedAction[]): Verdict {
   return { ok: true, needsFullAccess };
 }
 
-function checkTokenDeposit(actions: DecodedAction[], house: string): Verdict {
+/** One call on a token: a deposit into the house (house token) or a Tilt Hour burn (TILT). */
+function checkTokenCall(actions: DecodedAction[], receiver: string, cfg: PolicyConfig): Verdict {
   if (actions.length !== 1) return refuse("too_many_actions");
   const call = actions[0]?.functionCall;
   if (!call) return refuse("action_not_allowed");
-  if (call.methodName !== DEPOSIT_METHOD) return refuse("method_not_allowed");
+  if (call.methodName === DEPOSIT_METHOD && receiver === cfg.token) return checkTokenDeposit(call, cfg.house);
+  if (call.methodName === BURN_METHOD && receiver === cfg.tilt) return checkBurn(call);
+  return refuse("method_not_allowed");
+}
+
+function checkTokenDeposit(call: FunctionCallAction, house: string): Verdict {
   if (call.deposit !== ONE_YOCTO) return refuse("deposit_not_allowed");
   if (call.gas > MAX_GAS) return refuse("gas_too_high");
   const receiver = jsonField(call.args, "receiver_id");
   if (receiver === undefined) return refuse("invalid_args");
   if (receiver !== house) return refuse("wrong_ft_receiver");
+  return { ok: true, needsFullAccess: true };
+}
+
+const POSITIVE_AMOUNT = /^[1-9]\d{0,38}$/;
+
+function checkBurn(call: FunctionCallAction): Verdict {
+  if (call.deposit !== ONE_YOCTO) return refuse("deposit_not_allowed");
+  if (call.gas > MAX_GAS) return refuse("gas_too_high");
+  const amount = jsonField(call.args, "amount");
+  if (typeof amount !== "string" || !POSITIVE_AMOUNT.test(amount)) return refuse("invalid_args");
   return { ok: true, needsFullAccess: true };
 }
 

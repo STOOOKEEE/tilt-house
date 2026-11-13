@@ -58,6 +58,20 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...TESTNET, RELAYER_PAUSED: value }).paused).toBe(paused);
   });
 
+  it("mint faucet and no TILT token by default", () => {
+    expect(loadConfig(TESTNET)).toMatchObject({ faucetMode: "mint", tilt: null });
+    expect(loadConfig({ ...TESTNET, TILT_CONTRACT: "tilt.tilthouse.testnet" }).tilt).toBe("tilt.tilthouse.testnet");
+  });
+
+  it("the TILT floor's relayer: welcome faucet on the TILT token", () => {
+    const tilt = { ...TESTNET, HOUSE_CONTRACT: "floor-tilt.tilthouse.testnet", TOKEN_CONTRACT: "tilt.tilthouse.testnet", TILT_CONTRACT: "tilt.tilthouse.testnet", FAUCET_MODE: "welcome" };
+    expect(loadConfig(tilt)).toMatchObject({ faucetMode: "welcome", token: "tilt.tilthouse.testnet", tilt: "tilt.tilthouse.testnet" });
+    expect(() => loadConfig({ ...tilt, TILT_CONTRACT: undefined })).toThrow(/TILT_CONTRACT = TOKEN_CONTRACT/);
+    expect(() => loadConfig({ ...tilt, TOKEN_CONTRACT: "tusdc.tilthouse.testnet" })).toThrow(/TILT_CONTRACT = TOKEN_CONTRACT/);
+    expect(() => loadConfig({ ...tilt, FAUCET_MODE: "airdrop" })).toThrow(/FAUCET_MODE/);
+    expect(() => loadConfig({ ...tilt, TILT_CONTRACT: "tilt.tilthouse.near" })).toThrow(/TILT_CONTRACT must be a .testnet/);
+  });
+
   it("refuses to guess an unknown RELAYER_PAUSED spelling", () => {
     expect(() => loadConfig({ ...TESTNET, RELAYER_PAUSED: "maybe" })).toThrow(/RELAYER_PAUSED/);
   });

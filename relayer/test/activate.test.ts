@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
-import { LIMITS } from "../src/app.ts";
+import { LIMITS, MINT_AMOUNT } from "../src/app.ts";
+import { fundingNeeded } from "../src/chain.ts";
 import { StateStore } from "../src/state.ts";
 import { CONFIG, FakeChain, NEAR, privyToken, testApp } from "./helpers.ts";
 
@@ -154,6 +155,27 @@ describe("POST /activate: Privy login", () => {
     expect(await activate(implicit(2), { as: user(1) })).toEqual({ status: 409, body: { error: "already_activated" } });
     expect(await activate(implicit(1), { as: user(2) })).toEqual({ status: 409, body: { error: "already_activated" } });
     expect(chain.activations).toHaveLength(1);
+  });
+});
+
+describe("POST /activate: plans", () => {
+  it("tops up and mints 100 tUSDC in mint mode", async () => {
+    expect((await activate(implicit(1))).status).toBe(200);
+    expect(chain.plans).toEqual([{ near: CONFIG.activationYocto, topUp: true, tokens: MINT_AMOUNT }]);
+  });
+
+  it("welcome mode (TILT floor): funds only a new account and mints nothing", async () => {
+    app = testApp({ chain, now: () => clock, config: { ...CONFIG, faucetMode: "welcome" } });
+    expect(await activate(implicit(1))).toEqual({ status: 200, body: { funded: true, registered: true, minted: "0" } });
+    expect(chain.plans).toEqual([{ near: CONFIG.activationYocto, topUp: false, tokens: 0n }]);
+  });
+
+  it("an account the other relayer already funded gets no NEAR in welcome mode", () => {
+    const near = CONFIG.activationYocto;
+    expect(fundingNeeded(0n, { near, topUp: false, tokens: 0n })).toBe(true);
+    expect(fundingNeeded(1n, { near, topUp: false, tokens: 0n })).toBe(false);
+    expect(fundingNeeded(near - 1n, { near, topUp: true, tokens: 0n })).toBe(true);
+    expect(fundingNeeded(near, { near, topUp: true, tokens: 0n })).toBe(false);
   });
 });
 

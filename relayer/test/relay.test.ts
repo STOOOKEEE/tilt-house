@@ -11,6 +11,7 @@ import {
   HEIGHT,
   HOUSE,
   PLAYER,
+  TILT,
   TOKEN,
   gameCall,
   keySetup,
@@ -43,6 +44,9 @@ async function relay(acts: Action[], opts?: DelegateOptions) {
   const { signed } = await signDelegate(acts, opts);
   return post({ signedDelegate: toBase64(signed) });
 }
+
+const burn = (amount: unknown = "1000000000000000000", deposit = 1n, gas = teraToGas(100)): Action =>
+  actions.functionCall("burn_for_tilt_hour", { amount }, gas, deposit);
 
 const ftDeposit = (receiverId: string, deposit = 1n, method = "ft_transfer_call"): Action =>
   actions.functionCall(method, { receiver_id: receiverId, amount: "1000000", msg: "" }, teraToGas(100), deposit);
@@ -95,9 +99,23 @@ describe("allowed shapes", () => {
     expect(res.status).toBe(200);
   });
 
-  it.each(MONEY_METHODS)("relays %s with 1 yocto or none from a full-access key", async (method) => {
-    expect((await relay([gameCall(method, teraToGas(100), 1n)])).status).toBe(200);
-    expect((await relay([gameCall(method, teraToGas(100), 0n)])).status).toBe(200);
+  // contract/src: only withdraw is payable (assert_one_yocto); the others refuse any deposit.
+  it.each(MONEY_METHODS)("relays %s from a full-access key with exactly the deposit the contract takes", async (method) => {
+    const deposit = method === "withdraw" ? 1n : 0n;
+    expect((await relay([gameCall(method, teraToGas(100), deposit)])).status).toBe(200);
+    expect(await relay([gameCall(method, teraToGas(100), 1n - deposit)])).toEqual({ status: 403, body: { error: "deposit_not_allowed" } });
+  });
+
+  it("relays a Tilt Hour burn on the TILT token", async () => {
+    const res = await relay([burn()], { receiverId: TILT });
+    expect(res).toEqual({ status: 200, body: { txHash: "tx1", status: "success" } });
+    expect(chain.waits).toEqual(["executed"]);
+  });
+
+  it("on the TILT floor's relayer (token = TILT) relays both deposits into the house and burns", async () => {
+    app = testApp({ chain, now: () => clock, config: { ...CONFIG, token: TILT, tilt: TILT } });
+    expect((await relay([ftDeposit(HOUSE)], { receiverId: TILT })).status).toBe(200);
+    expect((await relay([burn()], { receiverId: TILT })).status).toBe(200);
   });
 
   it("relays a USDC deposit to the house", async () => {
@@ -180,6 +198,28 @@ describe("refusals (review focus #5)", () => {
     refused([actions.functionCall("ft_transfer_call", new Uint8Array([1, 2]), teraToGas(50), 1n)], "invalid_args", {
       receiverId: TOKEN,
     }));
+
+  it("a burn without exactly 1 yocto", async () => {
+    await refused([burn(undefined, 0n)], "deposit_not_allowed", { receiverId: TILT });
+    await refused([burn(undefined, 2n)], "deposit_not_allowed", { receiverId: TILT });
+  });
+  it.each([["0"], ["-5"], ["1.5"], [5], [null], ["1".repeat(40)]])("a burn of %j", (amount) =>
+    refused([burn(amount)], "invalid_args", { receiverId: TILT }));
+  it("a burn above 300 Tgas", () => refused([burn(undefined, 1n, teraToGas(301))], "gas_too_high", { receiverId: TILT }));
+  it("a burn bundled with another call", () => refused([burn(), burn()], "too_many_actions", { receiverId: TILT }));
+  it("a burn on the house token", () => refused([burn()], "method_not_allowed", { receiverId: TOKEN }));
+  it("a deposit through the TILT token when the house plays another token", () =>
+    refused([ftDeposit(HOUSE)], "method_not_allowed", { receiverId: TILT }));
+  it("another TILT method", () =>
+    refused([actions.functionCall("ft_transfer", { receiver_id: "evil.testnet", amount: "1" }, teraToGas(30), 1n)], "method_not_allowed", { receiverId: TILT }));
+  it("a burn when no TILT token is configured", async () => {
+    app = testApp({ chain, now: () => clock, config: { ...CONFIG, tilt: null } });
+    await refused([burn()], "wrong_receiver", { receiverId: TILT });
+  });
+  it("a burn signed by a function-call key", async () => {
+    chain.key = { nonce: 1n, fullAccess: false };
+    await refused([burn()], "key_not_full_access", { receiverId: TILT });
+  });
 
   it("a money move signed by a function-call key", async () => {
     chain.key = { nonce: 1n, fullAccess: false };

@@ -4,10 +4,22 @@ import { nearToYocto } from "near-api-js";
 
 export type Network = "testnet" | "mainnet";
 
+/**
+ * What `/faucet` hands out. `mint`: 100 tUSDC per claim (the relayer is the token's minter), and
+ * activation mints 100 too. `welcome` (the TILT floor's relayer): once per Privy user, the TILT
+ * token's welcome allowance (`claim_welcome_for`, the relayer being its welcome operator);
+ * activation mints nothing and sends NEAR only to an account that does not exist yet (the other
+ * relayer may have funded it).
+ */
+export type FaucetMode = "mint" | "welcome";
+
 export interface Config {
   network: Network;
   house: string;
   token: string;
+  /** The TILT token (`burn_for_tilt_hour` is relayed); null: none. */
+  tilt: string | null;
+  faucetMode: FaucetMode;
   relayerAccount: string;
   relayerPrivateKey: string;
   rpcUrl: string;
@@ -93,6 +105,12 @@ function anonymousActivation(value: string | undefined, net: Network): boolean {
   return false;
 }
 
+function faucetMode(value: string | undefined): FaucetMode {
+  if (value === undefined || value === "mint") return "mint";
+  if (value === "welcome") return "welcome";
+  throw new Error("env FAUCET_MODE must be mint or welcome");
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const net = network(env.NETWORK);
   const defaults = NETWORKS[net];
@@ -102,10 +120,17 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   if (!PRIVY_APP_ID.test(privyAppId)) throw new Error("env PRIVY_APP_ID is invalid");
   // Mainnet has no default budget: whoever funds the relayer decides what it may spend.
   const dailyBudgetYocto = nearAmount(env.DAILY_BUDGET_NEAR ?? defaults.budget, "DAILY_BUDGET_NEAR");
+  const token = accountId(env, "TOKEN_CONTRACT", defaults.suffix);
+  const tilt = env.TILT_CONTRACT ? accountId(env, "TILT_CONTRACT", defaults.suffix) : null;
+  const mode = faucetMode(env.FAUCET_MODE);
+  // Welcome claims are made on the house token: it must be the TILT token.
+  if (mode === "welcome" && tilt !== token) throw new Error("FAUCET_MODE=welcome needs TILT_CONTRACT = TOKEN_CONTRACT");
   return {
     network: net,
     house: accountId(env, "HOUSE_CONTRACT", defaults.suffix),
-    token: accountId(env, "TOKEN_CONTRACT", defaults.suffix),
+    token,
+    tilt,
+    faucetMode: mode,
     relayerAccount: accountId(env, "RELAYER_ACCOUNT", defaults.suffix),
     relayerPrivateKey: required(env, "RELAYER_PRIVATE_KEY"),
     rpcUrl: env.NEAR_RPC_URL ?? defaults.rpc,

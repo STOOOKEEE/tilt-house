@@ -19,6 +19,8 @@ export interface BudgetDay {
 
 export interface RelayerState {
   activations: Record<string, ActivationRecord>;
+  /** Welcome claims (`FAUCET_MODE=welcome`), keyed by Privy user id like activations. */
+  welcomes: Record<string, ActivationRecord>;
   budget: BudgetDay | null;
 }
 
@@ -62,7 +64,7 @@ export class StateStore {
   /** `file` null: memory only (tests). */
   constructor(file: string | null) {
     this.file = file;
-    this.state = file ? StateStore.read(file) : { activations: {}, budget: null };
+    this.state = file ? StateStore.read(file) : { activations: {}, welcomes: {}, budget: null };
     for (const record of Object.values(this.state.activations)) this.accounts.add(record.accountId);
   }
 
@@ -71,14 +73,20 @@ export class StateStore {
     try {
       raw = readFileSync(file, "utf8");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { activations: {}, budget: null };
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { activations: {}, welcomes: {}, budget: null };
       throw error;
     }
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed) || !isRecord(parsed.activations)) throw new Error(`relayer state ${file}: invalid file`);
-    const activations: Record<string, ActivationRecord> = {};
-    for (const [user, record] of Object.entries(parsed.activations)) activations[user] = parseActivation(record);
-    return { activations, budget: parseBudget(parsed.budget ?? null) };
+    const records = (value: Record<string, unknown>) => {
+      const out: Record<string, ActivationRecord> = {};
+      for (const [user, record] of Object.entries(value)) out[user] = parseActivation(record);
+      return out;
+    };
+    // Files written before welcome claims existed have no `welcomes`.
+    const welcomes = parsed.welcomes ?? {};
+    if (!isRecord(welcomes)) throw new Error(`relayer state ${file}: invalid file`);
+    return { activations: records(parsed.activations), welcomes: records(welcomes), budget: parseBudget(parsed.budget ?? null) };
   }
 
   hasUser(userId: string): boolean {
@@ -102,6 +110,23 @@ export class StateStore {
     if (!record) return;
     delete this.state.activations[userId];
     this.accounts.delete(record.accountId);
+    this.save();
+  }
+
+  hasWelcome(userId: string): boolean {
+    return Object.hasOwn(this.state.welcomes, userId);
+  }
+
+  /** Persisted before the claim is sent, like `bind`. */
+  markWelcome(userId: string, accountId: string, at: number): void {
+    this.state.welcomes[userId] = { accountId, at };
+    this.save();
+  }
+
+  /** Undoes `markWelcome` after a failed claim (the token itself refuses a second one). */
+  unmarkWelcome(userId: string): void {
+    if (!this.hasWelcome(userId)) return;
+    delete this.state.welcomes[userId];
     this.save();
   }
 

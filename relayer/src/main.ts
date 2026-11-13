@@ -17,5 +17,7 @@ const app = createApp({
 
 serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
   const status = config.paused ? "PAUSED" : "live";
-  console.log(`relayer ${config.relayerAccount} for ${config.house} on ${config.network}, ${config.host}:${info.port} (${status})`);
+  console.log(
+    `relayer ${config.relayerAccount} for ${config.house} on ${config.network}, ${config.host}:${info.port}, faucet ${config.faucetMode} (${status})`,
+  );
 });

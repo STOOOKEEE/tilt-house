@@ -1,8 +1,11 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { LIMITS, MINT_AMOUNT } from "../src/app.ts";
 import { StateStore } from "../src/state.ts";
-import { CONFIG, FakeChain, NEAR, privyToken, testApp } from "./helpers.ts";
+import { CONFIG, FakeChain, NEAR, WELCOME_AMOUNT, privyToken, testApp } from "./helpers.ts";
 
 let chain: FakeChain;
 let clock: number;
@@ -142,5 +145,70 @@ describe("POST /faucet: kill switch and daily budget", () => {
     expect(await claim("bob.testnet")).toEqual({ status: 503, body: { error: "daily_budget_exhausted" } });
     clock += 24 * 60 * 60_000;
     expect((await claim("bob.testnet")).status).toBe(200);
+  });
+});
+
+describe("POST /faucet in welcome mode (TILT floor)", () => {
+  const ALICE = "did:privy:alice00000000000000000000";
+  const BOB = "did:privy:bob0000000000000000000000";
+  const wallet = "ab".repeat(32);
+  let store: StateStore;
+
+  beforeEach(() => {
+    store = new StateStore(null);
+    store.bind(ALICE, wallet, 0);
+    app = testApp({ chain, now: () => clock, store, config: { ...CONFIG, faucetMode: "welcome" } });
+  });
+
+  async function claimAs(accountId: string, user?: string) {
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (user) headers.authorization = `Bearer ${await privyToken(user, clock)}`;
+    const res = await app.request(
+      "/faucet",
+      { method: "POST", headers, body: JSON.stringify({ accountId }) },
+      { incoming: { socket: { remoteAddress: "10.0.0.1" } } },
+    );
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  }
+
+  it("needs a Privy login, even on testnet", async () => {
+    expect(await claimAs(wallet)).toEqual({ status: 401, body: { error: "missing_token" } });
+    expect(chain.welcomed).toEqual([]);
+  });
+
+  it("claims the welcome once for the user's own account, and never mints", async () => {
+    expect(await claimAs("cd".repeat(32), ALICE)).toEqual({ status: 403, body: { error: "not_your_account" } });
+    expect(await claimAs(wallet, ALICE)).toEqual({ status: 200, body: { welcomed: WELCOME_AMOUNT.toString() } });
+    clock += 24 * 60 * 60_000;
+    expect(await claimAs(wallet, ALICE)).toEqual({ status: 409, body: { error: "already_claimed" } });
+    expect(chain.welcomed).toEqual([wallet]);
+    expect(chain.mints).toEqual([]);
+  });
+
+  it("refuses a user this relayer never activated", async () => {
+    expect(await claimAs(wallet, BOB)).toEqual({ status: 403, body: { error: "not_your_account" } });
+  });
+
+  it("claims once when the same user sends two requests at the same time", async () => {
+    const results = await Promise.all([claimAs(wallet, ALICE), claimAs(wallet, ALICE)]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect(chain.welcomed).toEqual([wallet]);
+  });
+
+  it("lets the player retry after the token refused (e.g. today's claim cap)", async () => {
+    chain.welcomeError = new Error("daily welcome cap reached");
+    expect(await claimAs(wallet, ALICE)).toEqual({ status: 502, body: { error: "welcome_failed" } });
+    chain.welcomeError = null;
+    expect((await claimAs(wallet, ALICE)).status).toBe(200);
+  });
+
+  it("remembers claims across a restart", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), "relayer-")), "state.json");
+    store = new StateStore(file);
+    store.bind(ALICE, wallet, 0);
+    app = testApp({ chain, now: () => clock, store, config: { ...CONFIG, faucetMode: "welcome" } });
+    expect((await claimAs(wallet, ALICE)).status).toBe(200);
+    app = testApp({ chain, now: () => clock, store: new StateStore(file), config: { ...CONFIG, faucetMode: "welcome" } });
+    expect(await claimAs(wallet, ALICE)).toEqual({ status: 409, body: { error: "already_claimed" } });
   });
 });
