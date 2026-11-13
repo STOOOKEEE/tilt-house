@@ -83,10 +83,13 @@ describe('practice table', () => {
   })
 
   it('shows the result: winners paid, the board, nobody to act', () => {
-    const scene = pokerScene(playDemoHand().state())
+    const state = playDemoHand().state()
+    const scene = pokerScene(state)
     expect(scene.winners.length).toBeGreaterThan(0)
     expect(scene.toAct).toBeNull()
-    expect(scene.seats.filter((s) => s !== null)).toHaveLength(3)
+    // The deal is random: a player who lost the stack is stood up after the hand, so the scene
+    // shows whoever is still seated, not a fixed three.
+    expect(scene.seats.filter((s) => s !== null)).toHaveLength(state.seats.filter((s) => s !== null).length)
   })
 
   it('never shows another player hole cards during a hand', () => {
