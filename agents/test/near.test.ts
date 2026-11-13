@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gasFor, parseBalance, parseLobby, parseNpcs } from "../src/near.ts";
+import { gasFor, parseBalance, parseDay, parseLobby, parseNpcs } from "../src/near.ts";
 import { LOBBY } from "./fixtures.ts";
 
 describe("views", () => {
@@ -22,6 +22,27 @@ describe("views", () => {
     expect(gasFor("collect_rent")).toBeGreaterThan(gasFor("reprice"));
     // A gambler with 0.15 NEAR must still be able to deposit its salary.
     expect(gasFor("ft_transfer_call")).toBeLessThanOrEqual(100_000_000_000_000n);
+  });
+});
+
+describe("get_day", () => {
+  const record = { day: 20_404, closed: true, report: "ok", players_net: "-1500000", wagered: "9000000", players: [{ account_id: "a.testnet", wagered: "9000000", net: "-1500000" }] };
+
+  it("reads a day record, or null when the floor keeps none", () => {
+    expect(parseDay(record)).toEqual({ ...record, players: 1 });
+    expect(parseDay({ ...record, closed: false, report: null, players: [] })).toMatchObject({ closed: false, report: null, players: 0 });
+    expect(parseDay(null)).toBeNull();
+  });
+
+  it("rejects anything else", () => {
+    expect(() => parseDay({ ...record, players_net: "1.5" })).toThrow(/players_net/);
+    expect(() => parseDay({ ...record, report: "maybe" })).toThrow(/report/);
+    expect(() => parseDay({ ...record, closed: "yes" })).toThrow(/closed/);
+    expect(() => parseDay("x")).toThrow();
+  });
+
+  it("gives close_day room for the report to the TILT token", () => {
+    expect(gasFor("close_day")).toBeGreaterThanOrEqual(200_000_000_000_000n);
   });
 });
 

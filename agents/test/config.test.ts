@@ -54,6 +54,14 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...TESTNET, ALERT_KEEPER_NEAR: "lots" }, [])).toThrow(/ALERT_KEEPER_NEAR/);
   });
 
+  it("TILT floor: salaries off; USD floor: close_day on", () => {
+    expect(loadConfig({ ...TESTNET, SALARY_MODE: "off" }, []).salaryMode).toBe("off");
+    expect(loadConfig({ ...MAINNET, SALARY_MODE: "off" }, []).salaryMode).toBe("off");
+    expect(loadConfig(TESTNET, []).closeDay).toBe(false);
+    expect(loadConfig({ ...TESTNET, CLOSE_DAY: "1" }, []).closeDay).toBe(true);
+    expect(() => loadConfig({ ...TESTNET, CLOSE_DAY: "daily" }, [])).toThrow(/CLOSE_DAY/);
+  });
+
   it("refuses an unknown network or salary mode", () => {
     expect(() => loadConfig({ ...TESTNET, NETWORK: "betanet" }, [])).toThrow(/NETWORK/);
     expect(() => loadConfig({ ...TESTNET, SALARY_MODE: "airdrop" }, [])).toThrow(/SALARY_MODE/);

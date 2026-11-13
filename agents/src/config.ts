@@ -9,8 +9,9 @@ export type Network = "testnet" | "mainnet";
  * the NPC's wallet and the NPC deposits it with its own key. `credit_npc` (contract v3): the keeper
  * deposits it straight into the NPC's in-contract balance (`ft_transfer_call` msg `credit_npc`),
  * so NPC keys never touch the token. Mainnet NPCs only hold floor session keys: credit_npc only.
+ * `off`: no NPC gamblers, no salaries (the TILT floor).
  */
-export type SalaryMode = "deposit" | "credit_npc";
+export type SalaryMode = "deposit" | "credit_npc" | "off";
 
 /** Below these NEAR balances the keeper raises an alert. */
 export interface AlertThresholds {
@@ -39,6 +40,8 @@ export interface Config {
   alertThresholds: AlertThresholds;
   /** Optional: low-balance alerts are also POSTed here (Slack/Discord-style `{text, content}`). */
   alertWebhookUrl: string | null;
+  /** Calls `close_day(yesterday)` on the house after each UTC midnight (the USD floor, $TILT). */
+  closeDay: boolean;
   dryRun: boolean;
 }
 
@@ -82,9 +85,20 @@ function network(value: string | undefined): Network {
 
 function salaryMode(value: string | undefined, net: Network): SalaryMode {
   const mode = value ?? (net === "mainnet" ? "credit_npc" : "deposit");
-  if (mode !== "deposit" && mode !== "credit_npc") throw new Error("env SALARY_MODE must be deposit or credit_npc");
-  if (net === "mainnet" && mode !== "credit_npc") throw new Error("mainnet NPCs hold no token key: SALARY_MODE must be credit_npc");
+  if (mode !== "deposit" && mode !== "credit_npc" && mode !== "off") throw new Error("env SALARY_MODE must be deposit, credit_npc or off");
+  if (net === "mainnet" && mode === "deposit") throw new Error("mainnet NPCs hold no token key: SALARY_MODE must be credit_npc or off");
   return mode;
+}
+
+const TRUE_FLAGS: Record<string, true> = { "1": true, true: true, yes: true };
+const FALSE_FLAGS: Record<string, true> = { "": true, "0": true, false: true, no: true };
+
+/** Unknown spellings refuse to start rather than guess. */
+function flag(value: string | undefined, name: string): boolean {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (TRUE_FLAGS[normalized]) return true;
+  if (FALSE_FLAGS[normalized]) return false;
+  throw new Error(`env ${name} must be 1/0, true/false or yes/no`);
 }
 
 function webhook(value: string | undefined): string | null {
@@ -117,6 +131,7 @@ export function loadConfig(env: NodeJS.ProcessEnv, argv: readonly string[]): Con
       npc: nearAmount(env.ALERT_NPC_NEAR ?? DEFAULT_THRESHOLDS.npc, "ALERT_NPC_NEAR"),
     },
     alertWebhookUrl: webhook(env.ALERT_WEBHOOK_URL),
+    closeDay: flag(env.CLOSE_DAY, "CLOSE_DAY"),
     dryRun: argv.includes("--dry-run"),
   };
 }

@@ -39,6 +39,18 @@ export interface Call {
 /** Sends a call and returns the contract's JSON return value. */
 export type Send = (call: Call) => Promise<unknown>;
 
+/** One UTC day of the floor's `get_day` view (only today and yesterday are kept). */
+export interface DayView {
+  day: number;
+  closed: boolean;
+  /** How `tilt.report_day` went once closed: null until then. */
+  report: "ok" | "failed" | null;
+  /** The human players' net result against the house, signed decimal string. */
+  players_net: string;
+  wagered: string;
+  players: number;
+}
+
 /** Read-only views of the house contract; faked in tests. */
 export interface House {
   lobby(): Promise<DealerView[]>;
@@ -50,6 +62,8 @@ export interface House {
   npcs(): Promise<string[]>;
   /** NEAR the account can spend (balance minus what its storage locks), yocto; null if it does not exist. */
   nearBalance(accountId: string): Promise<bigint | null>;
+  /** `get_day(day)`; null when the floor keeps no record of it. */
+  day(day: number): Promise<DayView | null>;
 }
 
 /** NEAR locked per byte of account storage (protocol storage staking cost). */
@@ -57,6 +71,8 @@ const YOCTO_PER_BYTE = 10_000_000_000_000_000_000n;
 
 /** `collect_rent` settles every seat in one call: it needs room. */
 const BIG_GAS = teraToGas(200);
+/** `close_day` calls `tilt.report_day` and its callback (~100 Tgas forwarded; 200 is the documented minimum). */
+const CLOSE_DAY_GAS = teraToGas(300);
 /**
  * Enough for `reprice`, `rent_bid` and token transfers, `ft_transfer_call` into the house included.
  * Kept low on purpose: a signer must hold prepaid gas × the maximum gas price (0.1 NEAR at 100 TGas),
@@ -66,6 +82,7 @@ export const CALL_GAS = teraToGas(100);
 const BIG_METHODS: readonly string[] = ["collect_rent"];
 
 export function gasFor(method: string): bigint {
+  if (method === "close_day") return CLOSE_DAY_GAS;
   return BIG_METHODS.includes(method) ? BIG_GAS : CALL_GAS;
 }
 
@@ -82,6 +99,7 @@ function field<T>(entry: Record<string, unknown>, key: string, check: (v: unknow
   return value;
 }
 
+const SIGNED_DECIMAL = /^-?\d+$/;
 const isString = (v: unknown): v is string => typeof v === "string";
 const isDecimal = (v: unknown): v is string => typeof v === "string" && DECIMAL.test(v);
 const isInt = (v: unknown): v is number => Number.isSafeInteger(v);
@@ -122,6 +140,17 @@ export function parseBalance(value: unknown): bigint {
   return BigInt(value.balance);
 }
 
+export function parseDay(value: unknown): DayView | null {
+  if (value === null) return null;
+  if (!isRecord(value)) throw new Error("get_day: not an object");
+  const { day, closed, report, players_net, wagered, players } = value;
+  if (!isInt(day) || !isBool(closed)) throw new Error("get_day: invalid day or closed");
+  if (report !== null && report !== "ok" && report !== "failed") throw new Error("get_day: invalid report");
+  if (typeof players_net !== "string" || !SIGNED_DECIMAL.test(players_net)) throw new Error("get_day: invalid players_net");
+  if (!isDecimal(wagered) || !Array.isArray(players)) throw new Error("get_day: invalid wagered or players");
+  return { day, closed, report, players_net, wagered, players: players.length };
+}
+
 export function parseNpcs(value: unknown): string[] {
   if (!Array.isArray(value) || !value.every(isString)) throw new Error("get_npcs: not a list of accounts");
   return value;
@@ -144,6 +173,9 @@ export function houseViews(provider: JsonRpcProvider, house: string, token: stri
     },
     async npcs() {
       return parseNpcs(await view("get_npcs", {}));
+    },
+    async day(day) {
+      return parseDay(await view("get_day", { day }));
     },
     async nearBalance(accountId) {
       try {

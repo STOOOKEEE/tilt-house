@@ -3,8 +3,11 @@ import {
   GAMBLERS,
   MAX_BALANCE,
   SALARY_PER_HOUR,
+  CLOSE_DAY_DELAY_SECS,
   alertFor,
   balancePass,
+  closeDayPass,
+  dayToClose,
   keeperPass,
   salaryFor,
   salaryPass,
@@ -146,6 +149,85 @@ describe("salary in credit_npc mode (contract v3)", () => {
       ["g-noah.tilthouse.testnet", "2"],
       ["g-zoe.tilthouse.testnet", "5000000"],
     ]);
+  });
+});
+
+describe("salary off (TILT floor: no NPC gamblers)", () => {
+  it("pays nobody and watches no NPC, while dealers still reprice and bid", async () => {
+    const calls: Call[] = [];
+    const d = deps(async (call) => void calls.push(call), () => {}, {}, {}, { salaryMode: "off", chain: { npcs: ["g-mia.tilthouse.testnet"] } });
+    await salaryPass(d);
+    expect(calls).toEqual([]);
+    const watches = await watchList(d, { keeper: 2n, sessions: 1n, relayer: 1n, npc: 5n }, "sessions.tilthouse.testnet", "relayer.tilthouse.testnet");
+    expect(watches.map((w) => w.role)).toEqual(["keeper", "sessions", "relayer"]);
+    await keeperPass(d);
+    expect(calls.filter((c) => c.method === "rent_bid").length).toBeGreaterThan(0);
+  });
+});
+
+describe("close_day (USD floor, after each UTC midnight)", () => {
+  const DAY = 20_405;
+  const midnight = (day: number) => day * 86_400_000;
+  const open = { day: DAY - 1, closed: false, report: null, players_net: "-5", wagered: "100", players: 2 } as const;
+
+  it("closes yesterday once the delay after midnight has passed", () => {
+    expect(dayToClose(midnight(DAY))).toBeNull();
+    expect(dayToClose(midnight(DAY) + CLOSE_DAY_DELAY_SECS * 1000 - 1)).toBeNull();
+    expect(dayToClose(midnight(DAY) + CLOSE_DAY_DELAY_SECS * 1000)).toBe(DAY - 1);
+    expect(dayToClose(midnight(DAY + 1) - 1)).toBe(DAY - 1);
+  });
+
+  it("sends close_day(yesterday) as the keeper once, logs the record, then waits for the next day", async () => {
+    const calls: Call[] = [];
+    const lines: string[] = [];
+    const d = deps(async (call) => void calls.push(call), (l) => lines.push(l), {}, {}, { chain: { days: { [DAY - 1]: open } } });
+    const state = { closed: null };
+    const at = midnight(DAY) + 5 * 60_000;
+    await closeDayPass(d, state, at);
+    await closeDayPass(d, state, at + 60_000);
+    expect(calls).toEqual([{ signer: KEEPER, method: "close_day", args: { day: DAY - 1 } }]);
+    expect(JSON.parse(lines[0] ?? "")).toMatchObject({ action: "close_day", day: DAY - 1, result: null, record: { players_net: "-5" } });
+    await closeDayPass(d, state, midnight(DAY + 1) + 5 * 60_000);
+    expect(calls.map((c) => c.args.day)).toEqual([DAY - 1, DAY]);
+  });
+
+  it("only logs a day the floor already shows closed (a restart, another keeper)", async () => {
+    const calls: Call[] = [];
+    const lines: string[] = [];
+    const days = { [DAY - 1]: { ...open, closed: true, report: "ok" as const } };
+    await closeDayPass(deps(async (call) => void calls.push(call), (l) => lines.push(l), {}, {}, { chain: { days } }), { closed: null }, midnight(DAY) + 5 * 60_000);
+    expect(calls).toEqual([]);
+    expect(JSON.parse(lines[0] ?? "")).toMatchObject({ day: DAY - 1, skipped: "already closed", record: { report: "ok" } });
+  });
+
+  it("closes a day the floor keeps no record of (nobody played): the contract decides", async () => {
+    const calls: Call[] = [];
+    await closeDayPass(deps(async (call) => void calls.push(call)), { closed: null }, midnight(DAY) + 5 * 60_000);
+    expect(calls.map((c) => c.method)).toEqual(["close_day"]);
+  });
+
+  it("retries after a failure, but not after the contract says the day is already closed", async () => {
+    let failure = "rpc down";
+    const calls: Call[] = [];
+    const d = deps(async (call) => {
+      calls.push(call);
+      throw new Error(failure);
+    });
+    const state = { closed: null };
+    const at = midnight(DAY) + 5 * 60_000;
+    await closeDayPass(d, state, at);
+    expect(state.closed).toBeNull();
+    failure = "Smart contract panicked: the day is already closed";
+    await closeDayPass(d, state, at + 60_000);
+    await closeDayPass(d, state, at + 120_000);
+    expect(state.closed).toBe(DAY - 1);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("dry run prints the call without sending", async () => {
+    const printed: string[] = [];
+    await closeDayPass(deps(dryRunSend("floor.tilthouse.testnet", (l) => printed.push(l))), { closed: null }, midnight(DAY) + 5 * 60_000);
+    expect(JSON.parse(printed[0] ?? "")).toEqual({ dry_run: true, signer: KEEPER, receiver: "floor.tilthouse.testnet", method: "close_day", args: { day: DAY - 1 } });
   });
 });
 

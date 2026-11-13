@@ -24,6 +24,15 @@ the salary straight into each NPC's in-contract balance: tUSDC `ft_transfer_call
 msg `{"credit_npc":"<npc>"}`, for the NPCs the floor lists in `get_npcs`. NPC keys never touch the
 token, so on mainnet they only hold function-call keys for the floor's session methods.
 
+With `SALARY_MODE=off` (the TILT floor `floor-tilt.tilthouse.testnet`, which has no NPC gamblers)
+it pays no salary and watches no NPC; rent, repricing and NPC dealer rent bids run as above.
+
+With `CLOSE_DAY=1` (the USD floor only) it also closes each UTC day: once 2 minutes past midnight,
+`close_day({day: yesterday})` (unix days), which reports the day's human results to the $TILT token
+(`docs/tilt.md`). It reads `get_day` first and only logs a day already closed; a refusal as already
+closed counts as done, any other failure is retried at the next pass. One JSON line per day with
+the `get_day` record after the close.
+
 Every 15 minutes it checks the NEAR left on the keeper, the session server's signer
 (`SESSIONS_ACCOUNT`), the relayer (`RELAYER_ACCOUNT`) and every NPC; below its threshold
 (`ALERT_*_NEAR`, `.env.example`) an account raises a JSON line at level `error` (stderr), also

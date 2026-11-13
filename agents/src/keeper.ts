@@ -15,6 +15,12 @@ const HOUR_MS = 3_600_000;
 const ALERT_INTERVAL_MS = 15 * 60_000;
 const ALERT_TIMEOUT_MS = 10_000;
 const ONE_YOCTO = 1n;
+const DAY_SECS = 86_400;
+/**
+ * `close_day` waits this long after 00:00 UTC: the contract refuses a day whose end the block
+ * time has not passed yet, and block time trails the keeper's clock by a few seconds.
+ */
+export const CLOSE_DAY_DELAY_SECS = 120;
 // NEP-145 registration on tUSDC; the token refunds what it doesn't need.
 const STORAGE_DEPOSIT = 1_250_000_000_000_000_000_000n;
 
@@ -77,9 +83,10 @@ export function salaryFor(balance: bigint): bigint {
 
 /**
  * The NPC gamblers: in `credit_npc` mode the floor's registered list (the only ones it credits),
- * otherwise the lineup on this account suffix.
+ * in `off` mode none (a floor without NPC gamblers), otherwise the lineup on this account suffix.
  */
 export async function npcAccounts(deps: Pick<KeeperDeps, "house" | "salaryMode" | "accountSuffix">): Promise<string[]> {
+  if (deps.salaryMode === "off") return [];
   if (deps.salaryMode === "credit_npc") return deps.house.npcs();
   return GAMBLERS.map((name) => `g-${name}.${deps.accountSuffix}`);
 }
@@ -114,6 +121,43 @@ export async function salaryPass(deps: KeeperDeps): Promise<void> {
       await deps.send({ ...token, signer: gambler, method: "ft_transfer_call", args: { receiver_id: deps.houseId, amount: amount.toString(), msg: "" }, deposit: ONE_YOCTO });
       return { paid: amount.toString() };
     });
+  }
+}
+
+/** The UTC day (unix days) to close at `nowMs`: yesterday, once `CLOSE_DAY_DELAY_SECS` past midnight. */
+export function dayToClose(nowMs: number): number | null {
+  const secs = Math.floor(nowMs / 1000);
+  const today = Math.floor(secs / DAY_SECS);
+  return secs - today * DAY_SECS < CLOSE_DAY_DELAY_SECS ? null : today - 1;
+}
+
+/** The last day this keeper saw closed (memory only: after a restart `get_day` tells). */
+export interface CloseDayState {
+  closed: number | null;
+}
+
+/**
+ * Closes yesterday on the floor (`close_day`, which reports it to the TILT token: docs/tilt.md).
+ * Idempotent: a day the floor shows closed is only logged, and a close the contract refuses as
+ * already done counts as done. Other failures are logged and retried at the next pass.
+ */
+export async function closeDayPass(deps: KeeperDeps, state: CloseDayState, nowMs: number): Promise<void> {
+  const day = dayToClose(nowMs);
+  if (day === null || day === state.closed) return;
+  try {
+    const before = await deps.house.day(day);
+    if (before?.closed) {
+      state.closed = day;
+      logLine(deps, { action: "close_day", day, skipped: "already closed", record: before });
+      return;
+    }
+    const result = await deps.send({ signer: deps.keeper, method: "close_day", args: { day } });
+    state.closed = day;
+    logLine(deps, { action: "close_day", day, result: result ?? null, record: await deps.house.day(day) });
+  } catch (error) {
+    const message = errorMessage(error);
+    if (message.includes("already closed")) state.closed = day;
+    logLine(deps, { action: "close_day", day, error: message });
   }
 }
 
@@ -178,17 +222,23 @@ async function main(): Promise<void> {
   const alert = alertFor(config.alertWebhookUrl, console.error);
   const balances = async () =>
     balancePass(deps, await watchList(deps, config.alertThresholds, config.sessionsAccount, config.relayerAccount), alert);
-  logLine(deps, { start: config.network, house: config.house, salary: config.salaryMode, dry_run: config.dryRun });
+  const closeDay = async (state: CloseDayState) => {
+    if (config.closeDay) await closeDayPass(deps, state, Date.now());
+  };
+  logLine(deps, { start: config.network, house: config.house, salary: config.salaryMode, close_day: config.closeDay, dry_run: config.dryRun });
   if (config.dryRun) {
     await keeperPass(deps);
     await salaryPass(deps);
+    await closeDay({ closed: null });
     return balances();
   }
   let lastSalary = 0;
   let lastAlertCheck = 0;
+  const closed: CloseDayState = { closed: null };
   for (;;) {
     try {
       await keeperPass(deps);
+      await closeDay(closed);
       if (Date.now() - lastSalary >= HOUR_MS) {
         lastSalary = Date.now();
         await salaryPass(deps);
