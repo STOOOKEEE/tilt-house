@@ -1637,12 +1637,11 @@ impl<C: Chain> Poker<C> {
         };
         let rng_seed = random_bytes::<32>().unwrap_or_else(|_| sha256(session.as_bytes()));
         let mut table = cell.table.lock().await;
-        // Still wanted? Humans may have come or gone meanwhile (the joining count includes us).
-        let wanted = npc_seats_change(
-            table.humans(),
-            (table.npcs() + table.npc_joining).saturating_sub(1),
-            table.free_seats(),
-        ) > 0;
+        // Still wanted? Humans may have come or gone meanwhile. Only the NPCs already seated
+        // count: each joiner decides under the lock, so they never overfill the table, while
+        // counting the others still joining made every one of them decline when humans grew
+        // during the call-in (each saw the others as taking the seats).
+        let wanted = npc_seats_change(table.humans(), table.npcs(), table.free_seats()) > 0;
         let free = table.free_seat(None);
         let (Some(seat), true) = (free, wanted) else {
             drop(table);

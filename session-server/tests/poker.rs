@@ -719,6 +719,87 @@ async fn failing_npcs_are_not_called_in_a_loop() {
     assert!(table.seats.iter().flatten().all(|s| !s.npc));
 }
 
+/// The demo floor at chain speed for NPCs: a balance read takes `NPC_READ_DELAY`, a session
+/// `NPC_OPEN_DELAY` to open (a transaction); every NPC opening is counted.
+#[derive(Default)]
+struct SlowNpcs {
+    inner: NoChain,
+}
+
+const NPC_READ_DELAY: Duration = Duration::from_millis(50);
+const NPC_OPEN_DELAY: Duration = Duration::from_millis(200);
+/// Only `SlowNpcs` (one test) counts here.
+static NPC_OPENS: AtomicUsize = AtomicUsize::new(0);
+
+impl Chain for SlowNpcs {
+    async fn dealer(&self, dealer_id: &str) -> anyhow::Result<Option<DealerInfo>> {
+        self.inner.dealer(dealer_id).await
+    }
+    async fn floor(&self) -> anyhow::Result<FloorInfo> {
+        self.inner.floor().await
+    }
+    async fn balance(&self, account: &str) -> anyhow::Result<u128> {
+        if account.starts_with("g-") {
+            tokio::time::sleep(NPC_READ_DELAY).await;
+        }
+        self.inner.balance(account).await
+    }
+    async fn open_session(
+        &self,
+        player: &str,
+        key: Option<&str>,
+        ticket: &SessionTicket,
+        sig: &[u8; 64],
+    ) -> anyhow::Result<()> {
+        if player.starts_with("g-") {
+            NPC_OPENS.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(NPC_OPEN_DELAY).await;
+        }
+        self.inner.open_session(player, key, ticket, sig).await
+    }
+    async fn session(&self, id: &str) -> anyhow::Result<Option<ChainSession>> {
+        self.inner.session(id).await
+    }
+    async fn settle(&self, batch: &SettleBatch) -> anyhow::Result<()> {
+        self.inner.settle(batch).await
+    }
+    async fn close(&self, id: &str, seed: &Hash32) -> anyhow::Result<()> {
+        self.inner.close(id, seed).await
+    }
+}
+
+/// Regression (Faye on testnet, 2026-11-13, cli-demo `poker`): a second human sitting while
+/// the three NPCs called in for the first were still opening their sessions made each of them
+/// count the others as seated and stand up again, so the table called NPCs in wave after wave
+/// (a session opened and closed on chain each time) while the gamblers feed showed them
+/// "sitting in". Two humans want two NPCs: the first two to arrive sit, only the third leaves.
+#[tokio::test]
+async fn npcs_called_in_before_a_second_human_still_sit() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let bare = serve_on(dir.path(), SlowNpcs::default(), true);
+    let router = with_peer(&bare, 1);
+    let _alice = sit(&bare, 2, "alice.testnet").await;
+    // Bob sits while the three NPCs called in for Alice alone are opening their sessions.
+    tokio::time::sleep(NPC_OPEN_DELAY / 3).await;
+    let _bob = sit(&bare, 3, "bob.testnet").await;
+    // Long enough for one call-in wave, short of the humans' first timeouts.
+    tokio::time::sleep(NPC_OPEN_DELAY * 4).await;
+    let table = state(&router, None).await;
+    let npcs = table.seats.iter().flatten().filter(|s| s.npc).count();
+    assert_eq!(npcs, 2, "{:?}", table.seats);
+    assert_eq!(NPC_OPENS.load(Ordering::SeqCst), 3, "one wave of three");
+    // The feed shows the seated ones at the table, and only them.
+    let (status, floor) = call(&router, "GET", "/gamblers/floor", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let at_poker = floor
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|g| g["dealer_id"] == TABLE)
+        .count();
+    assert_eq!(at_poker, 2, "{floor}");
+}
+
 /// The demo floor with the poker table's max bet pinned to `max_bet` (repricing lowered it).
 struct CappedPoker {
     inner: NoChain,
