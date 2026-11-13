@@ -19,9 +19,7 @@ use core_rules::poker::{
     SeatStart, Street, TableConfig, MAX_SEATS, MIN_PLAYERS,
 };
 use core_rules::poker_npc::Style;
-use core_rules::session::{
-    client_seed_is_valid, hex32, sha256, CompactRound, Hash32, SESSION_MIN_BET,
-};
+use core_rules::session::{client_seed_is_valid, hex32, sha256, CompactRound, Hash32};
 use core_rules::{Game, Rng};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{watch, Mutex as AsyncMutex, Notify};
@@ -35,7 +33,7 @@ use crate::poker_hands::HandLog;
 
 const SEATS: usize = MAX_SEATS as usize;
 /// Blinds of every poker table: 0.1 / 0.2 chips, so buy-ins of 4 to 20 chips (core's 20-100 BB).
-pub const BIG_BLIND: u128 = 2 * SESSION_MIN_BET;
+pub const BIG_BLIND: u128 = core_rules::dealer_rules::POKER_BIG_BLIND;
 /// A player who lets the clock run out this many hands in a row is stood up.
 const MAX_TIMEOUTS: u8 = 2;
 /// The public table list reads the floor from chain; reuse one read this long.

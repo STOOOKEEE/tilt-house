@@ -2,7 +2,7 @@
 //! money is conserved, no pool pays more than its free bankroll, an outbid always evicts the
 //! lowest rent, and the dealers' rent bids are always valid.
 
-use core_rules::dealer_rules::{rent_bid, RentAction, Temperament};
+use core_rules::dealer_rules::{defend_cap, rent_bid, RentAction, Temperament};
 use core_rules::floor::{
     Floor, FloorError, COOLDOWN_SECS, MIN_RENT_PER_HOUR, OUTBID_BP, PREPAY_HOURS, SEATS,
 };
@@ -118,8 +118,9 @@ fn rent_and_bids_keep_money_and_rules() {
     assert!(outbids > 100 && unpaid > 100, "{outbids} {unpaid}");
 }
 
-/// Property: rent bids are always at least the seat's minimum, and an off-floor bid can be
-/// prepaid and accepted.
+/// Property: rent bids are always at least the seat's minimum, an off-floor bid can be
+/// prepaid and accepted, and a defensive raise never goes past `defend_cap` (one unit above the
+/// at-risk band).
 #[test]
 fn rent_bids_are_always_valid() {
     let mut rng = Rng::new(*b"rent bid property test seed 0001");
@@ -157,6 +158,12 @@ fn rent_bids_are_always_valid() {
             RentAction::Raise(rent) | RentAction::Lower(rent) => {
                 assert!(rent >= view.my_min_rent && rent >= MIN_SEAT_RENT);
                 assert!(view.my_rent.is_some());
+                if let RentAction::Raise(rent) = decision.action {
+                    assert!(
+                        rent <= defend_cap(view.lowest_rent.unwrap()),
+                        "{rent} {view:?}"
+                    );
+                }
                 let mut floor = floor.clone();
                 let mut pool = pool.clone();
                 assert!(floor.bid_for_seat(me, rent, &mut pool, START, 0).is_ok());

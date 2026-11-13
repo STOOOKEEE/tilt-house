@@ -62,7 +62,9 @@ Constants: `SEATS = 6`, `MIN_RENT_PER_HOUR = 1_000_000`, `PREPAY_HOURS = 2`, `OU
 
 - `clamp_owner_offer(game, &Pool, rake_bp, max_bet, boost_secs, last_boost_at, now) -> Offer`:
   the owner's `set_offer`, clamped like NPC offers (rake in `rake_bounds`, i.e. total edge 1–5 %;
-  `max_bet ≤ pool.free / worst_case_multiple`; boost ≤ `MAX_BOOST_SECS` = 15 min). One boost per
+  `max_bet` from `min_max_bet(game)` (`SESSION_MIN_BET`; poker: `POKER_MIN_MAX_BET` = 25 ×
+  `POKER_BIG_BLIND` = 5.00, so the 20-big-blind minimum buy-in always fits) up to
+  `pool.free / worst_case_multiple`, the cap winning when the pool is smaller; boost ≤ `MAX_BOOST_SECS` = 15 min). One boost per
   hour: a boost asked within `BOOST_COOLDOWN_SECS = 3600` of `last_boost_at` (0 = never) is
   dropped (`boost_until = 0`). Never fails. `reason = Reason::Owner` (code `owner`, appended last:
   borsh index 9). Caller: store `last_boost_at = now` when the result's `boost_until > now`.
@@ -123,7 +125,9 @@ Plain-English rules in the module doc. Every function takes its randomness as `&
   `BidEmpty(u128)`, `Outbid(u128)` (off floor: call `bid_for_seat`), `Stay`.
   `RentReason`: `DefendingSeat` (`defending_seat`), `BiddingForSeat` (`bidding_for_seat`),
   `CuttingRent` (`cutting_rent`), each with `code()` and `explain()`. Earnings are
-  `-player_net_1h` (what players lost at the table). JSON: `{"action":{"outbid":"1000000"},"reason":"bidding_for_seat"}`.
+  `-player_net_1h` (what players lost at the table). A defensive raise is capped at
+  `defend_cap(lowest) = lowest × (BP + DEFEND_MARGIN_BP) / BP + 1`: one unit above the at-risk
+  band, never straight to the target. JSON: `{"action":{"outbid":"1000000"},"reason":"bidding_for_seat"}`.
 
 ## Sim JSON (`web/public/sim.json`, `sim --days 7 --seed 42`)
 

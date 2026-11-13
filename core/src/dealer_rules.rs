@@ -35,7 +35,8 @@
 //!   its table): 10 % for the greediest dealer up to 50 % for the biggest promoter, who pays
 //!   more to stay visible; never under the floor's minimum rent;
 //! - **seated and near the bottom** (its rent within 15 % of the lowest seated rent, on a full
-//!   floor, where a newcomer could outbid it): it raises toward its target to defend its seat;
+//!   floor, where a newcomer could outbid it): it raises toward its target to defend its seat,
+//!   but never past one unit above that band (`defend_cap`): leaving the band is enough;
 //! - **seated and safe** but paying more than 15 % above its target: it cuts its rent to the
 //!   target;
 //! - **off the floor**: it bids for an empty seat at its target, or outbids the weakest table,
@@ -481,6 +482,22 @@ pub fn reprice(
     clamp(game, pool, chosen, now)
 }
 
+/// The poker big blind the session server deals with (0.20 chips).
+pub const POKER_BIG_BLIND: u128 = 2 * SESSION_MIN_BET;
+
+/// A poker table's max bet is its largest buy-in (`core::poker`): repricing never takes it under
+/// 25 big blinds, so the 20-big-blind minimum buy-in always fits while the pool can cover it.
+pub const POKER_MIN_MAX_BET: u128 = 25 * POKER_BIG_BLIND;
+const _: () = assert!(POKER_MIN_MAX_BET >= POKER_BIG_BLIND * crate::poker::MIN_BUY_IN_BB);
+
+/// The lowest max bet repricing keeps (while the free bankroll covers it at the worst case).
+pub fn min_max_bet(game: Game) -> u128 {
+    match game {
+        Game::Poker => POKER_MIN_MAX_BET,
+        _ => SESSION_MIN_BET,
+    }
+}
+
 /// Hard limits no rule can get around.
 fn clamp(game: Game, pool: &Pool, offer: Offer, now: u64) -> Offer {
     let (min_rake, max_rake) = rake_bounds(game);
@@ -491,11 +508,12 @@ fn clamp(game: Game, pool: &Pool, offer: Offer, now: u64) -> Offer {
     };
     Offer {
         rake_bp: offer.rake_bp.clamp(min_rake, max_rake),
-        // A small pool's cautious max bet can fall under the minimum bet, which closes the table
-        // although its bankroll covers a minimum bet: keep it playable while the pool allows.
+        // A small pool's cautious max bet can fall under the minimum bet (poker: the minimum
+        // buy-in), which closes the table although its bankroll covers it: keep it playable
+        // while the pool allows.
         max_bet: offer
             .max_bet
-            .max(SESSION_MIN_BET)
+            .max(min_max_bet(game))
             .min(pool.free() / worst_case_multiple(game)),
         boost_until,
         reason: offer.reason,
@@ -662,22 +680,27 @@ pub fn rent_bid(
 
 /// Seated: defend when near the bottom of a full floor, cut when safe and overpaying.
 fn seated_rent(rent: u128, target: u128, affordable: u128, floor: &FloorView) -> RentDecision {
-    let at_risk = floor.empty_seats == 0
-        && floor.lowest_rent.is_some_and(|lowest| {
-            rent.saturating_mul(BP) <= lowest.saturating_mul(BP + DEFEND_MARGIN_BP)
-        });
-    if at_risk {
-        let raise_to = target.min(affordable);
-        return if raise_to > rent {
-            decide(RentAction::Raise(raise_to), RentReason::DefendingSeat)
-        } else {
-            KEEP
-        };
+    let full_floor_lowest = floor.lowest_rent.filter(|_| floor.empty_seats == 0);
+    if let Some(lowest) = full_floor_lowest {
+        if rent.saturating_mul(BP) <= lowest.saturating_mul(BP + DEFEND_MARGIN_BP) {
+            let raise_to = target.min(affordable).min(defend_cap(lowest));
+            return if raise_to > rent {
+                decide(RentAction::Raise(raise_to), RentReason::DefendingSeat)
+            } else {
+                KEEP
+            };
+        }
     }
     if rent.saturating_mul(BP) > target.saturating_mul(BP + CUT_MARGIN_BP) {
         return decide(RentAction::Lower(target), RentReason::CuttingRent);
     }
     KEEP
+}
+
+/// The highest defensive raise: one base unit above the at-risk band (`DEFEND_MARGIN_BP` over
+/// the lowest seated rent). Defending only needs to leave the band, not to jump to the target.
+pub fn defend_cap(lowest_rent: u128) -> u128 {
+    lowest_rent.saturating_mul(BP + DEFEND_MARGIN_BP) / BP + 1
 }
 
 /// Off the floor: an empty seat at the target, else the weakest seat if `ceiling` reaches it.
@@ -1050,15 +1073,15 @@ mod tests {
     fn rent_target_follows_earnings_and_temperament() {
         // Share of 100 USDC: balanced (appetite 50) 30 %, greedy (appetite 12) 14.8 %,
         // promoter (appetite 82) 42.8 %.
-        let at_risk = floor(Some(2 * USDC), 2 * USDC, 0);
+        let empty_seat = floor(None, 5 * USDC, 1);
         for (temperament, target) in [
             (BALANCED, 30_000_000),
             (GREEDY, 14_800_000),
             (PROMOTER, 42_800_000),
         ] {
             assert_eq!(
-                rent_bid(&pool(10_000), &earning(), &temperament, &at_risk, NOW),
-                decide(RentAction::Raise(target), RentReason::DefendingSeat)
+                rent_bid(&pool(10_000), &earning(), &temperament, &empty_seat, NOW),
+                decide(RentAction::BidEmpty(target), RentReason::BiddingForSeat)
             );
         }
     }
@@ -1066,11 +1089,18 @@ mod tests {
     #[test]
     fn seated_dealer_defends_cuts_or_keeps() {
         let p = pool(10_000);
-        // Within 15 % of the lowest on a full floor, earnings allow: raise.
+        // Within 15 % of the lowest on a full floor, earnings allow: raise, but only just out of
+        // the at-risk band (10 × 115 % + 1 unit), not straight to the 30 USDC target.
         let near = floor(Some(11 * USDC), 10 * USDC, 0);
         assert_eq!(
             rent_bid(&p, &earning(), &BALANCED, &near, NOW).action,
-            RentAction::Raise(30 * USDC)
+            RentAction::Raise(11_500_001)
+        );
+        // The target is lower than the band's edge: raise to the target.
+        let bottom = floor(Some(28 * USDC), 28 * USDC, 0);
+        assert_eq!(
+            rent_bid(&p, &earning(), &BALANCED, &bottom, NOW),
+            decide(RentAction::Raise(30 * USDC), RentReason::DefendingSeat)
         );
         // At risk but earnings do not allow more: keep (never cut under threat).
         assert_eq!(rent_bid(&p, &calm(), &BALANCED, &near, NOW), KEEP);
@@ -1307,6 +1337,9 @@ mod tests {
                 offer.max_bet.saturating_mul(worst_case_multiple(game)) <= pool.free(),
                 "{offer:?} {pool:?}"
             );
+            if pool.free() / worst_case_multiple(game) >= min_max_bet(game) {
+                assert!(offer.max_bet >= min_max_bet(game), "{offer:?} {pool:?}");
+            }
             assert!(
                 offer.boost_until == 0
                     || (offer.boost_until > now && offer.boost_until - now <= MAX_BOOST_SECS),
@@ -1314,5 +1347,55 @@ mod tests {
             );
             assert!((min..=max).contains(&offer.effective_rake_bp(game, now)));
         }
+    }
+
+    /// Property: a poker pool that covers 25 big blinds at the worst case never prices its max
+    /// bet (the largest buy-in) under that, whatever the temperament and the hour; a smaller
+    /// pool never offers more than it covers.
+    #[test]
+    fn poker_max_bet_keeps_the_minimum_buy_in() {
+        let mut rng = Rng::new(*b"poker max bet property seed 0001");
+        let covered = POKER_MIN_MAX_BET * worst_case_multiple(Game::Poker);
+        for _ in 0..100_000 {
+            let bankroll = u128::from(rng.below(3)) * covered + u128::from(rng.below(u32::MAX));
+            let pool = Pool {
+                bankroll,
+                shares: bankroll,
+                reserved: 0,
+                open_stakes: 0,
+            };
+            let stats = Stats {
+                bets_1h: rng.below(50),
+                volume_1h: u128::from(rng.below(u32::MAX)),
+                player_net_1h: random_i128(&mut rng) % (1_000 * USDC as i128),
+                idle_secs: u64::from(rng.below(10_000)),
+                inflow_1h: random_i128(&mut rng) % (1_000 * USDC as i128),
+                game_share_bp: rng.below(10_001) as u16,
+            };
+            let temperament = Temperament {
+                greed: rng.below(101) as u8,
+                caution: rng.below(101) as u8,
+                promo: rng.below(101) as u8,
+            };
+            let offer = reprice(Game::Poker, &pool, &stats, &temperament, &[], NOW);
+            if pool.free() >= covered {
+                assert!(offer.max_bet >= POKER_MIN_MAX_BET, "{offer:?} {pool:?}");
+            }
+            assert!(offer.max_bet * worst_case_multiple(Game::Poker) <= pool.free());
+        }
+    }
+
+    #[test]
+    fn idle_cautious_poker_table_stays_sittable() {
+        // Live case: Faye (cautious, idle) on a 1 984-chip pool priced her max bet at 4.63
+        // chips, under the 4.00 minimum buy-in plus room: she now keeps 25 big blinds.
+        let idle = Stats {
+            bets_1h: 0,
+            volume_1h: 0,
+            idle_secs: 3_600,
+            ..calm()
+        };
+        let offer = reprice(Game::Poker, &pool(1_984), &idle, &CAUTIOUS, &[], NOW);
+        assert_eq!(offer.max_bet, POKER_MIN_MAX_BET);
     }
 }
