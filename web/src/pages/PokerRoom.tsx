@@ -1,12 +1,21 @@
 // A poker table, full screen: the 3D felt and players, with the player's controls floating over
-// it: the seat card (buy-in), the action bar (fold, check/call, bet/raise with a slider and pot
+// it: the seat card (buy-in, docked in a corner and foldable), the action bar (fold, check/call, bet/raise with a slider and pot
 // presets, all in) with the turn timer, and the proof of the last hand, replayed in the browser.
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
-import { LoginPrompt } from '../components/LoginPrompt'
 import { formatBp, formatUsdc, parseUsdc, tokenSymbol } from '../format'
-import { NO_BUY_IN, actionProblem, buyInRange, raiseAction, raisePresets, type TableState } from '../near/poker-client'
+import {
+  NO_BUY_IN,
+  actionProblem,
+  buyInRange,
+  loadSeatCardMinimized,
+  raiseAction,
+  raisePresets,
+  saveSeatCardMinimized,
+  type TableState,
+} from '../near/poker-client'
 import type { Legal, PokerAction } from '../near/poker-rules'
+import { useNear } from '../near/useNear'
 import type { PokerTableApi } from '../near/usePokerTable'
 import { createPokerScene, type PokerSceneApi } from '../scene/poker/PokerScene'
 import { pokerScene, potTotal } from '../scene/poker/view'
@@ -130,15 +139,36 @@ interface SeatCardProps {
   wallet: bigint | null
 }
 
+const SEAT_CARD_HELP = 'Your buy-in is locked on chain as a session; each hand is one signed round of it.'
+
+/**
+ * Docked bottom-right, off the felt's centre, so spectators keep watching the hand; folds into a
+ * "Sit down" pill (remembered in this browser).
+ */
 function SeatCard({ table, api, demo, loggedIn, wallet }: SeatCardProps) {
+  const { auth } = useNear()
+  const [minimized, setMinimized] = useState(() => loadSeatCardMinimized(localStorage))
   const range = buyInRange(table.config)
   const preferred = BigInt(table.config.big_blind) * DEFAULT_BUY_IN_BB
   const [text, setText] = useState(() =>
     formatUsdc(range === null ? preferred : preferred < range.min ? range.min : preferred > range.max ? range.max : preferred, 0),
   )
+  const minimize = (value: boolean) => {
+    setMinimized(value)
+    saveSeatCardMinimized(localStorage, value)
+  }
+  if (minimized) {
+    return (
+      <button type="button" className="poker-seat-pill" aria-expanded={false} onClick={() => minimize(false)}>
+        Sit down ▸
+      </button>
+    )
+  }
+
   const buyIn = parseUsdc(text)
   const humans = table.seats.filter((s) => s && !s.npc).length
   const full = humans >= table.seats.length
+  const playable = loggedIn || demo
   const problem = !range
     ? NO_BUY_IN + (table.config.reason ? ` (${table.config.reason})` : '')
     : buyIn === null || buyIn < range.min || buyIn > range.max
@@ -148,27 +178,49 @@ function SeatCard({ table, api, demo, loggedIn, wallet }: SeatCardProps) {
         : full
           ? 'every seat has a human player'
           : ''
-  const canSit = (loggedIn || demo) && problem === '' && !api.busy && api.progress === ''
+  const canSit = playable && problem === '' && !api.busy && api.progress === ''
+  const login = !playable && auth.available ? auth : null
   return (
-    <div className="center-card poker-seat-card">
-      <h2>Sit down at {table.name}</h2>
-      <p className="muted">Your buy-in is locked on chain as a session; each hand is one signed round of it.</p>
-      {loggedIn || demo ? null : <LoginPrompt action="play poker" />}
-      <label className="stake">
-        buy-in ({demo ? 'practice chips' : tokenSymbol()})
-        <input value={text} inputMode="decimal" onChange={(event) => setText(event.target.value)} />
-        {wallet !== null ? <span className="muted">balance {formatUsdc(wallet)}</span> : null}
-      </label>
-      {(loggedIn || demo || !range) && problem ? <p className="loss">{problem}</p> : null}
-      <button type="button" className="tilt-button" disabled={!canSit} onClick={() => buyIn !== null && void api.sit(buyIn)}>
-        {api.progress || 'Sit down'}
-      </button>
-      {demo ? null : (
-        <p className="muted">
-          Just looking? <Link to="/poker?demo=1">Practice against bots</Link>, no login.
-        </p>
-      )}
-    </div>
+    <section className="hud poker-seat-card" aria-label={`Sit down at ${table.name}`}>
+      <div className="poker-seat-row">
+        <strong>Sit down at {table.name}</strong>
+        <span className="poker-help" title={SEAT_CARD_HELP} aria-label={SEAT_CARD_HELP} tabIndex={0}>
+          ?
+        </span>
+        <button type="button" className="ghost poker-minimize" aria-label="Minimize" aria-expanded={true} onClick={() => minimize(true)}>
+          ▾
+        </button>
+      </div>
+      {range ? (
+        <form
+          className="poker-seat-row"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (canSit && buyIn !== null) void api.sit(buyIn)
+          }}
+        >
+          <label>
+            buy-in <input value={text} inputMode="decimal" size={7} onChange={(event) => setText(event.target.value)} />{' '}
+            {demo ? 'chips' : tokenSymbol()}
+          </label>
+          {login ? (
+            <button type="button" disabled={!login.ready} onClick={login.login}>
+              Login to sit
+            </button>
+          ) : (
+            <button type="submit" disabled={!canSit}>
+              {api.progress || 'Sit down'}
+            </button>
+          )}
+        </form>
+      ) : null}
+      {(playable || !range) && problem ? <span className="loss">{problem}</span> : null}
+      <span className="muted poker-seat-footer">
+        {wallet !== null ? `balance ${formatUsdc(wallet)} · ` : ''}
+        {!playable && !auth.available ? `login off (${auth.reason}) · ` : ''}
+        {demo ? 'practice: local bots, nothing on chain' : <Link to="/poker?demo=1">practice against bots, no login</Link>}
+      </span>
+    </section>
   )
 }
 

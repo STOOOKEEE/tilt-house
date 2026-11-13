@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   actionProblem,
+  SEAT_CARD_STORAGE_KEY,
   buyInRange,
   expectedRound,
+  loadSeatCardMinimized,
+  saveSeatCardMinimized,
   parseHandHistory,
   parseLegal,
   parseTableState,
@@ -165,6 +168,24 @@ describe('buyInRange', () => {
     // No 2-decimal amount between 3.721 and 3.729.
     expect(buyInRange(config('3721000', '3729000'))).toBeNull()
     expect(buyInRange(config('0', '0', false))).toBeNull()
+  })
+})
+
+describe('seat card fold', () => {
+  it('is remembered in this browser, open by default or when storage fails', () => {
+    const store = new Map<string, string>()
+    const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) }
+    expect(loadSeatCardMinimized(storage)).toBe(false)
+    saveSeatCardMinimized(storage, true)
+    expect(store.get(SEAT_CARD_STORAGE_KEY)).toBe('min')
+    expect(loadSeatCardMinimized(storage)).toBe(true)
+    saveSeatCardMinimized(storage, false)
+    expect(loadSeatCardMinimized(storage)).toBe(false)
+    const denied = () => {
+      throw new Error('denied')
+    }
+    expect(loadSeatCardMinimized({ getItem: denied })).toBe(false)
+    expect(() => saveSeatCardMinimized({ setItem: denied }, true)).not.toThrow()
   })
 })
 

@@ -175,6 +175,25 @@ const CENT = 10_000n
 
 export const NO_BUY_IN = "This table's pool can't cover a buy-in right now"
 
+export const SEAT_CARD_STORAGE_KEY = 'tilt-house:poker-seat-card'
+
+/** Whether the player folded the seat card into its pill; unreadable storage means open. */
+export function loadSeatCardMinimized(storage: Pick<Storage, 'getItem'>): boolean {
+  try {
+    return storage.getItem(SEAT_CARD_STORAGE_KEY) === 'min'
+  } catch {
+    return false
+  }
+}
+
+export function saveSeatCardMinimized(storage: Pick<Storage, 'setItem'>, minimized: boolean): void {
+  try {
+    storage.setItem(SEAT_CARD_STORAGE_KEY, minimized ? 'min' : 'open')
+  } catch {
+    // Not remembered: the card opens again next visit, which is harmless.
+  }
+}
+
 /**
  * The buy-in range at 2 decimals: min rounded up, max rounded down, so both ends shown are
  * accepted. Null when the table is closed or no buy-in fits (an old server reported min > max).
