@@ -276,6 +276,7 @@ const LOG_TEXT: Record<string, string> = {
   'mint:welcome': 'welcome',
   'burn:daily': 'treasury burned: the house won',
   'burn:tilt_hour': 'burned for Tilt Hour',
+  'burn:unregister': 'burned: account unregistered',
   'streak:grow': 'streak grew to',
   'streak:reset': 'streak reset',
   'tilt_hour:triggered': 'Tilt Hour goal reached',

@@ -44,7 +44,7 @@ export interface TiltState {
 export interface TiltLogEntry {
   seq: number
   kind: TiltLogKind
-  /** mint: launch|daily|welcome · burn: daily|tilt_hour · streak: grow|reset · tilt_hour: triggered|started|failed. */
+  /** mint: launch|daily|welcome · burn: daily|tilt_hour|unregister · streak: grow|reset · tilt_hour: triggered|started|failed. */
   reason: string
   account: string | null
   /** Base units; for `streak` the new streak, for `tilt_hour` what burned in the window. */
@@ -305,28 +305,28 @@ export async function getTiltHourUntil(rpcUrl: string, usdFloor: string): Promis
 const UNIT = 1_000_000n
 const tilt = (whole: number) => (BigInt(whole) * UNIT).toString()
 
-/** Launch parameters as docs/tilt.md lists them, with plausible values; shown only while undeployed. */
+/** The launch parameters of docs/tilt.md (`LAUNCH`); shown only while the token is undeployed. */
 export const MOCK_PARAMS: Record<string, TiltParam> = {
   floor: 'floor.tilthouse.testnet',
   welcome_operator: 'relayer.tilthouse.testnet',
-  house_receiver: 'floor-tilt.tilthouse.testnet',
+  house_receiver: 'tilthouse.testnet',
   launch_day: 20_405,
-  treasury_initial: tilt(600_000_000),
-  house_allocation: tilt(200_000_000),
-  welcome_pool: tilt(200_000_000),
-  welcome_amount: tilt(1_000),
-  welcome_daily_claims: 500,
-  mint_rate_bp: 1_000,
+  treasury_initial: '1000000000000',
+  house_allocation: '300000000000',
+  welcome_pool: '500000000000',
+  welcome_amount: '100000000',
+  welcome_daily_claims: 200,
+  mint_rate_bp: 100_000,
   streak_bonus_bp: 1_000,
   streak_bonus_max_days: 7,
-  player_day_cap: tilt(50_000),
-  day_cap: tilt(1_000_000),
+  player_day_cap: '500000000',
+  day_cap: '5000000000',
   burn_bp: 100,
-  max_players: 50,
-  tilt_hour_amount: tilt(10_000),
+  tilt_hour_amount: '500000000',
   tilt_hour_min_burners: 5,
-  tilt_hour_min_burn: tilt(10),
+  tilt_hour_min_burn: '20000000',
   tilt_hour_window_secs: 3_600,
+  max_players: 50,
   log_capacity: 256,
 }
 
@@ -334,24 +334,24 @@ export function mockTilt(now: number): TiltSnapshot {
   const today = Math.floor(now / SECS_PER_DAY)
   const at = (secsAgo: number) => (BigInt(Math.floor(now) - secsAgo) * NS_PER_SEC).toString()
   const log: TiltLogEntry[] = [
-    { seq: 0, kind: 'mint', reason: 'launch', account: null, amount: tilt(1_000_000_000), day: today - 3, timestamp_ns: at(3 * SECS_PER_DAY) },
-    { seq: 1, kind: 'mint', reason: 'welcome', account: 'alice.testnet', amount: tilt(1_000), day: today - 2, timestamp_ns: at(2 * SECS_PER_DAY) },
-    { seq: 2, kind: 'mint', reason: 'daily', account: 'alice.testnet', amount: tilt(4_200), day: today - 2, timestamp_ns: at(2 * SECS_PER_DAY - 600) },
+    { seq: 0, kind: 'mint', reason: 'launch', account: null, amount: tilt(1_300_000), day: today - 3, timestamp_ns: at(3 * SECS_PER_DAY) },
+    { seq: 1, kind: 'mint', reason: 'welcome', account: 'alice.testnet', amount: tilt(100), day: today - 2, timestamp_ns: at(2 * SECS_PER_DAY) },
+    { seq: 2, kind: 'mint', reason: 'daily', account: 'alice.testnet', amount: tilt(40), day: today - 2, timestamp_ns: at(2 * SECS_PER_DAY - 600) },
     { seq: 3, kind: 'streak', reason: 'grow', account: null, amount: '1', day: today - 2, timestamp_ns: at(2 * SECS_PER_DAY - 600) },
-    { seq: 4, kind: 'burn', reason: 'daily', account: null, amount: tilt(6_000_000), day: today - 1, timestamp_ns: at(SECS_PER_DAY - 600) },
+    { seq: 4, kind: 'burn', reason: 'daily', account: null, amount: tilt(10_000), day: today - 1, timestamp_ns: at(SECS_PER_DAY - 600) },
     { seq: 5, kind: 'streak', reason: 'reset', account: null, amount: '0', day: today - 1, timestamp_ns: at(SECS_PER_DAY - 600) },
-    { seq: 6, kind: 'burn', reason: 'tilt_hour', account: 'bob.testnet', amount: tilt(500), day: today, timestamp_ns: at(1_200) },
+    { seq: 6, kind: 'burn', reason: 'tilt_hour', account: 'bob.testnet', amount: tilt(50), day: today, timestamp_ns: at(1_200) },
   ]
   return {
     params: MOCK_PARAMS,
     state: {
-      total_supply: tilt(993_996_700),
-      treasury: tilt(594_000_000),
-      circulating: tilt(5_200),
-      welcome_remaining: tilt(199_999_000),
+      total_supply: tilt(1_290_090),
+      treasury: tilt(990_000),
+      circulating: tilt(300_090),
+      welcome_remaining: tilt(499_900),
       welcome_claims: 1,
-      minted_total: tilt(1_000_005_200),
-      burned_total: tilt(6_000_500),
+      minted_total: tilt(1_300_140),
+      burned_total: tilt(10_050),
       today,
       last_reported_day: today - 1,
       streak: 0,
@@ -359,7 +359,7 @@ export function mockTilt(now: number): TiltSnapshot {
       longest_streak_day: today - 2,
       tilt_hour: {
         round: 0,
-        burned: tilt(500),
+        burned: tilt(50),
         burners: 1,
         window_end_ns: at(-2_400),
         triggers: 0,

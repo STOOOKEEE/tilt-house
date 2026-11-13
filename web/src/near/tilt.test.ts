@@ -16,6 +16,7 @@ import {
   windowSecsLeft,
 } from './tilt'
 import { record, str } from './views'
+import tiltSimJson from '../../public/tilt-sim.json?raw'
 
 const NOW = 1_763_030_000
 const ns = (secs: number) => `${secs}000000000`
@@ -73,7 +74,7 @@ describe('parseTiltParams and formatParam', () => {
   it('keeps every parameter and shows it in its unit', () => {
     const params = parseTiltParams({ ...MOCK_PARAMS, welcome_daily_claims: '500' })
     expect(Object.keys(params)).toHaveLength(Object.keys(MOCK_PARAMS).length)
-    expect(formatParam('tilt_hour_amount', params.tilt_hour_amount)).toBe('10,000.00 TILT')
+    expect(formatParam('tilt_hour_amount', params.tilt_hour_amount)).toBe('500.00 TILT')
     expect(formatParam('burn_bp', 100)).toBe('1.00%')
     expect(formatParam('tilt_hour_window_secs', 3_600)).toBe('60 min')
     expect(formatParam('launch_day', 20_405)).toBe(dayLabel(20_405))
@@ -126,6 +127,13 @@ describe('parseTiltSim', () => {
     const sim = parseTiltSim({ params: {}, days: 60, scenarios: { quiet: { description: 'q', series: [day] }, busy: { description: 'b', series: [] } } })
     expect(sim.scenarios.map((s) => s.id)).toEqual(['quiet', 'busy'])
     expect(sim.scenarios[0].series[0]).toEqual(day)
+  })
+
+  it('reads the file the sim writes', () => {
+    const sim = parseTiltSim(JSON.parse(tiltSimJson))
+    expect(sim.days).toBe(60)
+    expect(sim.scenarios.map((s) => s.id).sort()).toEqual(['busy', 'hot-streak', 'quiet', 'whales'])
+    for (const s of sim.scenarios) expect(s.series).toHaveLength(60)
   })
 
   it('refuses no scenario or a float amount', () => {
