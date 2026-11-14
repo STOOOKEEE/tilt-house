@@ -1,9 +1,12 @@
 # Tilt House: guide for AI agents (Claude Code, Codex)
 
-You are evaluating or working on Tilt House, a casino tycoon on NEAR testnet: players own tables,
-24 NPC gamblers with their own NEAR wallets are the customers, rent fills an on-chain jackpot, and
-every round is provably fair. $TILT is its memecoin: minted to players on days they beat the house,
-burned on days the house wins, and burned together to start a Tilt Hour (tracks `games` and `memecoins`). Human overview: `README.md`.
+You are evaluating or working on Tilt House, a casino tycoon on NEAR testnet where the player is the
+house: owners open tables, rent seats by the hour and compete for 24 NPC gamblers with their own NEAR
+wallets; a gambler close to choosing a player's table stops and asks its owner for one thing (lower
+edge, higher max bet, boost) and sits there if the owner answers in time. Rent fills an on-chain
+jackpot and every round is provably fair (track `games`). $TILT is its memecoin: minted to players on
+days they beat the house, burned on days the house wins, burned together to start a Tilt Hour (track
+`memecoins`). Human overview: `README.md`.
 
 ## Evaluate it
 
@@ -37,7 +40,8 @@ machine, ~20 of them in the contract sandbox, which needs `wasm32-unknown-unknow
 
 | Question | File |
 | --- | --- |
-| How do NPC gamblers decide where to play? | `core/src/gambler_rules.rs` (module doc first) |
+| How do NPC gamblers decide where to play, and what do they ask an owner? | `core/src/gambler_rules.rs` (module doc first; `choose_table`, `hesitation`); the live feed's `hesitating` field: `docs/gamblers-api.md` |
+| What does an owner see and do? | `web/src/pages/MyTable.tsx` and `web/src/pages/mytable/` (customers at the door, capital at risk, rent and seat, rivals) |
 | How do dealers price their tables? | `core/src/dealer_rules.rs` |
 | How is a round provably fair? | `core/src/session.rs`, `docs/sessions.md` |
 | Poker rules, bots and hand verification | `core/src/poker.rs`, `core/src/poker_npc.rs`, `docs/poker-rules.md`, `docs/poker-api.md` |

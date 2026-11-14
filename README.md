@@ -16,19 +16,20 @@ poker clips use the practice tables (same rules, local seed, nothing signed); th
 the odds, holds the money and keeps the edge. Tilt House turns that around: the players own the
 tables, the odds and the money live in a NEAR contract, and every round can be replayed by anyone.
 
-**What it is.** A casino tycoon on NEAR. Players own the tables; 24 NPC gamblers, each with its own NEAR wallet,
-are the customers. Owners rent seats on the floor by the hour, set their house edge and compete for
-the gamblers, who compare every table and say why they sit where they sit. Rent fills a jackpot that
-any settled bet can win. Dice, roulette, blackjack and multiplayer no-limit hold'em, every round
-answered in tens of milliseconds and provably fair, settled on NEAR testnet. Bet in test dollars
-or in **$TILT**, a memecoin whose supply follows the house's luck: it mints to the players on the
-days they beat the casino, burns on the days the house wins, and its holders can burn it together
-to put the whole casino "on tilt" for an hour.
+**What it is.** A casino tycoon on NEAR where you are the house. You open a table, rent a seat on a
+shared casino floor by the hour and compete with NPC dealers and other owners for the customers: 24
+NPC gamblers, each with its own NEAR wallet and a persona. A gambler that is close to choosing your
+table stops at your door and says what would win it (a bargain hunter wants a lower edge, a whale a
+higher max bet, a thrill seeker a boost); you have 30 seconds to answer. Every customer's win is
+your loss, rent is due every hour, and the seat by the entrance goes to whoever pays for it. Dice,
+roulette, blackjack and multiplayer no-limit hold'em: every bet is escrowed and settled in a NEAR
+contract, answered in tens of milliseconds and replayable by anyone.
 
-- **Play:** https://tilt-house-beta.vercel.app (email, Google or X login; test chips on the house).
+- **Play:** https://tilt-house-beta.vercel.app (email, Google or X login; a new account gets 300 test tUSDC, enough to open a table).
   Guided tour of the economy: https://tilt-house-beta.vercel.app/?tour=1 · poker: https://tilt-house-beta.vercel.app/poker · $TILT: https://tilt-house-beta.vercel.app/tilt
   · no login, practice in the browser (local seed, nothing on chain): https://tilt-house-beta.vercel.app/table/ada?demo=1 (any table) and https://tilt-house-beta.vercel.app/poker?demo=1
-- **Tracks:** `games` (Games With Real Economies) and `memecoins` (Memecoins With Mechanics).
+- **Tracks:** `games` (Games With Real Economies): the owner's game below. `memecoins` (Memecoins
+  With Mechanics): **$TILT**, the casino's memecoin, in its own section.
 
 ## Judge it in one minute
 
@@ -70,11 +71,11 @@ Hints: Agent NPCs, Social login, NEAR Intents, NEP-245.
 
 | Criterion | What Tilt House does | Check it |
 | --- | --- | --- |
-| NPCs with wallets | 24 NPC gamblers, each its own NEAR account `g-<name>.tilthouse.testnet` with its own in-contract balance; they sign their own `open_session` transactions. 6 NPC dealers (`ada`, `bruno`, `chloe`, `dmitri`, `eve`, `faye`) control their tables from their own accounts. Every choice comes from one readable rules file. | `core/src/gambler_rules.rs`, `core/src/dealer_rules.rs`; claims 1–3 below |
+| NPCs with wallets | 24 NPC gamblers, each its own NEAR account `g-<name>.tilthouse.testnet` with its own in-contract balance; they sign their own `open_session` transactions. They bargain: a gambler close to choosing a player's table stops at it and asks its owner for one thing, and sits there if the owner answers in time. 6 NPC dealers (`ada`, `bruno`, `chloe`, `dmitri`, `eve`, `faye`) control their tables from their own accounts. Every choice comes from two readable rules files. | `core/src/gambler_rules.rs`, `core/src/dealer_rules.rs`; claims 1–3, 34–35 |
 | Player-owned markets | Any player opens a table (an LP pool they found), rents one of 6 seats by the hour, outbids the weakest seat, buys or sells seats on the seat market (seat leases are NEP-245 tokens `seat-<n>`), and anyone can buy LP shares of any table. | `docs/floor.md`, `docs/tycoon.md`; claims 7–10 |
 | Economies that evolve without a dev patch | NPC dealers reprice from on-chain rules, gamblers move to better offers, unpaid rent evicts, rent fills a jackpot that pays a bettor, the only inflow is a capped hourly salary. A simulated week (seed 42) produces 165 price wars, 37 jackpots, 73 evictions, a seat sale and busted tables reopened by new liquidity, with money conserved at every frame. | claims 4–6, 10 |
 | Players never notice the chain | Social login (Privy: email, Google, X) with an embedded NEAR wallet; a function-call key limited to the session methods; moves relayed as NEP-366 meta-transactions, so no gas and no popups; rounds answer in ~40 ms off chain and settle on chain in batches. | `relayer/src/policy.ts`, `docs/sessions.md`; claims 11, 16, 18 |
-| Hint: Agent NPCs | Yes: gamblers, dealers (rule-based agents with personas and temperaments, each with a wallet). | `core/src/gambler_rules.rs` |
+| Hint: Agent NPCs | Yes: gamblers (personas, memory of past sessions, the ask at a player's door) and dealers (temperaments, repricing, rent bids), each with a wallet. | `core/src/gambler_rules.rs`, `core/src/dealer_rules.rs` |
 | Hint: Social login | Yes: Privy (email, Google, X), NEAR embedded wallet. | https://tilt-house-beta.vercel.app |
 | Hint: NEP-245 | Yes: LP shares of every table and the seat leases `seat-<n>` are NEP-245 tokens of `floor.tilthouse.testnet`. | `contract/src/mt.rs`; claim 7 |
 | Hint: NEAR Intents | Not used: Intents have no testnet (HACKATHON.md Q-007) and the game runs on testnet play money. | — |
@@ -95,29 +96,40 @@ chart." Hints: Memecoins, Token mechanics, NEP-141. Design: `docs/tilt.md`.
 | Hint: NEP-141 | Yes: `tilt.tilthouse.testnet` is NEP-141 + NEP-145 + NEP-148 + NEP-297 events + NEP-330; the TILT floor `floor-tilt.tilthouse.testnet` takes TILT deposits with `ft_transfer_call` (same contract as the USD floor). | claims 17, 27 |
 | Hint: Token mechanics | Mint on player wins, burn on house wins, ritual burn with an on-chain effect, streak bonus, per-player and per-day caps, sybil limits stated plainly (`docs/tilt.md`, Sybil resistance). | `meme/src/rules.rs` (property tests) |
 
-## Game loop
+## Game loop: you run a table
 
-From `docs/tycoon.md` and `docs/floor.md`, by time scale (constants from the code):
+From `docs/tycoon.md` and `docs/floor.md`; the numbers are constants in the code.
 
-- **Every 30 s: a customer decides.** A gambler arriving on the floor (arrivals are drawn every
-  minute, with a day/night curve) scores every seated table on edge, boost, max bet, seat traffic,
-  loyalty and the jackpot, then walks to the best one or leaves, and says why ("Ada's 1.0 % beats
-  Bruno's 2.4 %"). Seated, it bets a round every 3 s; a human's round answers in ~40 ms. Every
-  settled bet can hit the jackpot.
-- **Every few minutes: the market moves.** The keeper passes every 3 minutes on the live floor (every minute by default): it collects rent into the
-  jackpot, reprices autopilot and NPC tables from `core/src/dealer_rules.rs` (cut the edge after
-  20 min without players, raise it when busy, undercut a rival that took the players, boosts of up
-  to 15 min once an hour) and places NPC rent bids. Owners watch footfall and P&L on "My table"
-  and answer: undercut, boost, outbid the weakest seat (+10 %), list their seat for sale, or switch to
-  autopilot. Price wars start here; sessions settle on chain every 50 rounds or 60 s.
-- **Every session: money moves on chain.** `open_session` escrows the stake and freezes the seed
-  hash and the offer; rounds run off chain, signed and hash-chained; `settle_session` batches pay
-  the table and the player; `close_session` reveals the seed so anyone can replay every round. The
-  gambler remembers how the table treated it (loyalty up after a win, down after a loss).
-- **Every hour and beyond.** Rent is due per seat (seat 1 by the entrance gets 1.5× the passers-by
-  and costs most); a table that can't pay is evicted and its seat goes to the next bidder; each
-  gambler gets a 5 tUSDC salary up to 200 tUSDC, the economy's only inflow. Over days seats change
-  hands, tables go bust and reopen when LPs refill them; `sim/` plays a week in seconds.
+- **Start.** Log in: 300 test tUSDC, no wallet, no gas. Deposit them, open a table with 200 (you
+  found its LP pool and pick the game, the dealer's look and temperament) and bid for a seat. The
+  floor has 6; on a full floor you outbid the cheapest seat by 10 % and take it, so you usually
+  start at the back (seat 6, 0.6× the passers-by of seat 1).
+- **Every 30 s: win a customer.** A gambler walks in, scores every table on edge, boost, max bet
+  against its stake, seat traffic, its memory of past sessions and the jackpot, and picks one,
+  saying why ("Ada's 1.0 % beats Bruno's 2.4 %"). When your table comes within reach, it stops at
+  your door and asks for one thing, by persona: a bargain hunter a lower edge ("Ada's at 1.0 %: go
+  under 1.1 % and I'm yours"), a whale a max bet that takes its whole stake, a thrill seeker a
+  boost. You answer from My table in one click (`set_offer`) before its 30-second pause ends, or it
+  goes to the rival (`hesitation` in `core/src/gambler_rules.rs`; claims 34–35).
+- **Every session: hold your nerve.** When a customer sits, its possible win is reserved from your
+  bankroll; rounds are instant and provably fair, so a whale on a streak drains your pool for real.
+  My table shows the capital at risk and who is up; you cap your max bet or let it run. Sessions
+  settle on chain every 50 rounds or 60 s and the seed is revealed at the end.
+- **Every few minutes: rivals answer.** The keeper passes every 3 minutes: NPC dealers reprice by
+  their rules (`core/src/dealer_rules.rs`: cut the edge after 20 min without players, raise it when
+  busy, undercut a rival that took their players, boosts of up to 15 min once an hour) and bid for
+  seats. My table names the rival coming for you.
+- **Every hour: pay the rent, climb the floor.** Rent is due per seat and fills the jackpot; a
+  table that can't pay is evicted at the next pass and its seat goes to the next bidder. Climb
+  toward seat 1 by the entrance (1.5× the passers-by) by outbidding a seat or buying one on the
+  seat market; a rival that can't pay frees its seat.
+- **The season.** `/season` ranks every table, NPC or player, by its LPs' profit since it opened
+  (Season 1 from 2026-11-14). Tables go bust and come back when LPs refill them; each gambler earns a
+  5 tUSDC salary up to 200, the economy's only inflow; `sim/` plays a week in seconds. Events hit
+  everyone: during a Tilt Hour (started by $TILT holders) every table plays at its minimum edge for
+  an hour, so customers choose on max bet, seat and boost.
+- **Test your table.** You can sit at any table yourself as a customer: practice in the browser
+  (`?demo=1`) or live; `pnpm --filter cli-demo demo` plays as a customer and verifies every round.
 
 ## $TILT
 
@@ -205,6 +217,8 @@ hashes with the chain.
 | 31 | NPC gamblers can only play: withdraw, invest, divest, open a table, trade seats or tokens are refused; salary only from the keeper | `cargo test -p tilt-house-contract --test sandbox npc_gamblers_only_play_sessions_and_take_salary_from_the_keeper` | `test npc_gamblers_only_play_sessions_and_take_salary_from_the_keeper ... ok` |
 | 32 | A table's owner can rename it and retire it once off the floor and fully owned; retired tables leave the lobby | `cargo test -p tilt-house-contract --test sandbox controller_renames_and_retires_an_off_floor_table` | `test controller_renames_and_retires_an_off_floor_table ... ok` |
 | 33 | The first UTC day closed on chain by itself: the keeper's `close_day` reported day 20770 (2026-11-13) to $TILT; the humans lost to the house that day, so 1 % of the treasury burned and the streak reset | `view floor.tilthouse.testnet get_day '{"day":20770}'`, then `view tilt.tilthouse.testnet get_log '{"from":10,"limit":2}'` (close_day transaction `BNBmXPo3VMp3tE8rX9J2mfsFhetmcCSWFxJjG1NSpWwz`, 2026-11-14 00:05 UTC) | `{"day":20770,"closed":true,"report":"reported","players_net":"-7820524","wagered":"61300000","players":[…]}` (10 players), then `{"seq":10,"kind":"streak","reason":"reset",…,"day":20770,…}`, `{"seq":11,"kind":"burn","reason":"daily","account":"tilt.tilthouse.testnet","amount":"10000000000","day":20770,…}` (10,000 TILT = 1 % of the 1,000,000 treasury) |
+| 34 | A gambler close to choosing a player's table asks its owner for one thing, by persona, and granting it wins the gambler (same noise; property test over 20,000 random floors) | `cargo test -p tilt-house-core --lib -- ask hesitation` | `test gambler_rules::tests::bargain_hunters_ask_for_a_lower_edge ... ok`, `…whales_ask_for_a_higher_max_bet ... ok`, `…thrill_seekers_ask_for_a_boost ... ok`, `…regulars_and_tourists_ask_for_whatever_closes_the_gap ... ok`, `…no_hesitation_when_out_of_reach_or_no_player_table ... ok`, `…granting_the_ask_wins_the_gambler ... ok`, `test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 153 filtered out` |
+| 35 | The live runner: the gambler waits at the owner's table for its 30-second pause; if the owner answers (`set_offer`) in time it sits there; the feed publishes the ask | `cargo test -p tilt-house-session-server --test gamblers`, `cargo test -p tilt-house-session-server --lib hesitating_feed_shape`, then `curl -s https://tilt-house-beta.vercel.app/session/gamblers/floor` | `test a_hesitating_gambler_sits_when_the_owner_answers ... ok`, `test an_evening_hour_of_gamblers ... ok`, `test result: ok. 2 passed; 0 failed`, then `test gamblers::tests::hesitating_feed_shape ... ok`; every live entry carries `"hesitating"`: `null`, or `{"dealer_id":…,"rival_id":…,"want":"lower_edge","edge_bp":…,"max_bet":null,"until":…}` while it waits at a player's table |
 
 
 ## How NEAR is used
