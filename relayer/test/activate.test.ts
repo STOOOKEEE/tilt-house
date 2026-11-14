@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
-import { LIMITS, MINT_AMOUNT } from "../src/app.ts";
+import { ACTIVATION_AMOUNT, LIMITS } from "../src/app.ts";
 import { fundingNeeded } from "../src/chain.ts";
 import { StateStore } from "../src/state.ts";
 import { CONFIG, FakeChain, NEAR, privyToken, testApp } from "./helpers.ts";
@@ -45,7 +45,7 @@ async function activate(accountId: unknown, { ip = "10.0.0.1", forwardedFor, as 
 
 describe("POST /activate", () => {
   it("funds and registers a new implicit account once", async () => {
-    expect(await activate(implicit(1))).toEqual({ status: 200, body: { funded: true, registered: true, minted: "100000000" } });
+    expect(await activate(implicit(1))).toEqual({ status: 200, body: { funded: true, registered: true, minted: "300000000" } });
     expect(chain.activations).toEqual([implicit(1)]);
     expect(await activate(implicit(1))).toEqual({ status: 409, body: { error: "already_activated" } });
     expect(chain.activations).toHaveLength(1);
@@ -165,9 +165,9 @@ describe("POST /activate: Privy login", () => {
 });
 
 describe("POST /activate: plans", () => {
-  it("tops up and mints 100 tUSDC in mint mode", async () => {
+  it("tops up and mints 300 tUSDC in mint mode (a table seed plus rent)", async () => {
     expect((await activate(implicit(1))).status).toBe(200);
-    expect(chain.plans).toEqual([{ near: CONFIG.activationYocto, topUp: true, tokens: MINT_AMOUNT }]);
+    expect(chain.plans).toEqual([{ near: CONFIG.activationYocto, topUp: true, tokens: ACTIVATION_AMOUNT }]);
   });
 
   it("welcome mode (TILT floor): funds only a new account and mints nothing", async () => {

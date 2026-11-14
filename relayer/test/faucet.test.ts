@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
-import { LIMITS, MINT_AMOUNT } from "../src/app.ts";
+import { FAUCET_AMOUNT, LIMITS } from "../src/app.ts";
 import { StateStore } from "../src/state.ts";
 import { CONFIG, FakeChain, NEAR, WELCOME_AMOUNT, privyToken, testApp } from "./helpers.ts";
 
@@ -32,8 +32,8 @@ describe("POST /faucet", () => {
     expect(await claim("alice.testnet")).toEqual({ status: 200, body: { minted: "100000000" } });
     expect((await claim(implicit)).status).toBe(200);
     expect(chain.mints).toEqual([
-      { accountId: "alice.testnet", tokens: MINT_AMOUNT },
-      { accountId: implicit, tokens: MINT_AMOUNT },
+      { accountId: "alice.testnet", tokens: FAUCET_AMOUNT },
+      { accountId: implicit, tokens: FAUCET_AMOUNT },
     ]);
   });
 
@@ -123,7 +123,7 @@ describe("POST /faucet on mainnet", () => {
     expect(await claimAs("cd".repeat(32), token)).toEqual({ status: 403, body: { error: "not_your_account" } });
     expect(await claimAs(wallet, token)).toEqual({ status: 200, body: { minted: "100000000" } });
     expect(await claimAs(wallet, token)).toEqual({ status: 429, body: { error: "already_claimed" } });
-    expect(chain.mints).toEqual([{ accountId: wallet, tokens: MINT_AMOUNT }]);
+    expect(chain.mints).toEqual([{ accountId: wallet, tokens: FAUCET_AMOUNT }]);
   });
 
   it("refuses a user who was never activated", async () => {

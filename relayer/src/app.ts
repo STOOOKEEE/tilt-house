@@ -27,8 +27,10 @@ const MAX_BODY_BYTES = 16 * 1024;
 const IMPLICIT_ACCOUNT = /^[0-9a-f]{64}$/;
 /** The TILT token's refusal of a second welcome for an account (meme/). */
 const WELCOME_ALREADY_CLAIMED = "Welcome already claimed";
-/** 100 tUSDC (6 decimals), minted on activation and per faucet claim. */
-export const MINT_AMOUNT = 100_000_000n;
+/** 300 tUSDC (6 decimals), minted on activation: a 200 tUSDC table seed plus a seat's rent. */
+export const ACTIVATION_AMOUNT = 300_000_000n;
+/** 100 tUSDC, minted per faucet claim. */
+export const FAUCET_AMOUNT = 100_000_000n;
 
 export const LIMITS = {
   relayPerSender: 30,
@@ -196,7 +198,7 @@ export function createApp({ config, chain, verifyToken, store, now = Date.now }:
     if (store.hasUser(userId) || store.hasAccount(accountId)) return fail(c, 409, "already_activated");
     store.bind(userId, accountId, now());
     try {
-      const plan = { near: config.activationYocto, topUp: !welcome, tokens: welcome ? 0n : MINT_AMOUNT };
+      const plan = { near: config.activationYocto, topUp: !welcome, tokens: welcome ? 0n : ACTIVATION_AMOUNT };
       return c.json(await chain.activate(accountId, plan));
     } catch (error) {
       // Let the player retry; a retry skips the transfer and registration already done.
@@ -229,8 +231,8 @@ export function createApp({ config, chain, verifyToken, store, now = Date.now }:
     // The claim is spent even if the mint fails: fail closed, the player retries in an hour.
     if (!faucetAccount.take(claimant, now())) return fail(c, 429, "already_claimed");
     try {
-      await chain.mint(accountId, MINT_AMOUNT);
-      return c.json({ minted: MINT_AMOUNT.toString() });
+      await chain.mint(accountId, FAUCET_AMOUNT);
+      return c.json({ minted: FAUCET_AMOUNT.toString() });
     } catch (error) {
       console.error("faucet mint failed", error);
       return fail(c, 502, "mint_failed");

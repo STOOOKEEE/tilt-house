@@ -61,7 +61,8 @@ on chain with a nonce below the delegate's, `maxBlockHeight` in (now, now + 600]
 
 For a 64-hex implicit account (Privy wallet), once per Privy user and once per account:
 sends `ACTIVATION_NEAR` if it holds less, registers it on the token (`storage_deposit`) and
-mints 100 tUSDC. The token is an ES256 JWT checked against the app's JWKS
+mints 300 tUSDC: enough to seed a table (200) and rent a seat in the first visit (the faucet
+gives 100). The token is an ES256 JWT checked against the app's JWKS
 (`https://auth.privy.io/api/v1/apps/<PRIVY_APP_ID>/jwks.json`, cached 1 h): signature,
 issuer `privy.io`, audience = the app id, expiry, subject `did:privy:…` (`src/privy.ts`).
 
@@ -74,7 +75,7 @@ TILT token) activation sends NEAR only to an account that does not exist yet (th
 may have funded it already; each instance keeps its own `RELAYER_DATA_DIR`), registers it on TILT
 and mints nothing: `minted: "0"`.
 
-- `200 { funded, registered, minted: "100000000" }` (`funded`/`registered`: done by this call)
+- `200 { funded, registered, minted: "300000000" }` (`funded`/`registered`: done by this call)
 - `401 missing_token | invalid_token`, `403 not_implicit_account`, `409 already_activated`,
   `429 rate_limited` (15/min per IP, 100/hour overall), `502 rpc_error` (retry is safe),
   `503 paused | daily_budget_exhausted | auth_unavailable` (Privy keys unreachable)
