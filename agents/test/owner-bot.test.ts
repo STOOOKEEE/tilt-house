@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decide, investAmount, loadBotConfig, maxBetTopUp, offerFor, parseAsks, parseFloorRents, parseOwnedTable, rebid, rentRaise, shouldAnswer, SKIP_CHANCE, type Ask, type FloorRents, type OwnedTable } from "../src/owner-bot.ts";
+import { decide, investAmount, loadBotConfig, maxBetAdjust, offerFor, parseAsks, parseFloorRents, parseOwnedTable, rebid, rentRaise, shouldAnswer, SKIP_CHANCE, type Ask, type FloorRents, type OwnedTable } from "../src/owner-bot.ts";
 
 const NOW = 1_794_660_000;
 const TUSDC = 1_000_000n;
@@ -59,11 +59,11 @@ describe("offerFor", () => {
     expect(offerFor(table({ rakeBp: 150 }), ask({ edgeBp: 200 }), NOW)).toBeNull(); // already there
   });
 
-  it("raises the max bet up to what the pool covers", () => {
+  it("raises the max bet up to half of what the pool covers", () => {
     expect(offerFor(table(), ask({ want: "higher_max_bet", maxBet: 2n * TUSDC }), NOW)?.max_bet).toBe("2000000");
-    // 450 tUSDC free / ×100 worst case = 4.5 tUSDC at most.
-    expect(offerFor(table(), ask({ want: "higher_max_bet", maxBet: 25n * TUSDC }), NOW)?.max_bet).toBe("4500000");
-    expect(offerFor(table({ maxBet: 4_500_000n }), ask({ want: "higher_max_bet", maxBet: 25n * TUSDC }), NOW)).toBeNull();
+    // 450 tUSDC free / ×100 worst case = 4.5 tUSDC cap: the bot keeps half, 2.25.
+    expect(offerFor(table(), ask({ want: "higher_max_bet", maxBet: 25n * TUSDC }), NOW)?.max_bet).toBe("2250000");
+    expect(offerFor(table({ maxBet: 2_250_000n }), ask({ want: "higher_max_bet", maxBet: 25n * TUSDC }), NOW)).toBeNull();
   });
 
   it("boosts 15 min at most once an hour", () => {
@@ -108,17 +108,23 @@ describe("investAmount", () => {
   });
 });
 
-describe("maxBetTopUp", () => {
-  it("lifts the max bet to what the pool covers, rake kept", () => {
-    // 450 tUSDC free / ×100 (dice) = 4.5; roulette ×36 = 12.5.
-    expect(maxBetTopUp(table())).toEqual({ dealer_id: "test-1", rake_bp: 300, max_bet: "4500000", boost_secs: 0 });
-    expect(maxBetTopUp(table({ game: "roulette", worstCaseMultiple: 36n, maxBet: 170_000n, rakeBp: 79 }))).toMatchObject({ rake_bp: 79, max_bet: "12500000" });
+describe("maxBetAdjust", () => {
+  it("keeps the max bet at half of what the pool covers, rake kept", () => {
+    // 450 tUSDC free / ×100 (dice) = 4.5 cap → 2.25; roulette ×36 = 12.5 cap → 6.25.
+    expect(maxBetAdjust(table())).toEqual({ dealer_id: "test-1", rake_bp: 300, max_bet: "2250000", boost_secs: 0 });
+    expect(maxBetAdjust(table({ game: "roulette", worstCaseMultiple: 36n, maxBet: 170_000n, rakeBp: 79 }))).toMatchObject({ rake_bp: 79, max_bet: "6250000" });
   });
 
-  it("leaves a max bet near the cap alone, and never offers under the minimum bet", () => {
-    expect(maxBetTopUp(table({ maxBet: 4_050_000n }))).toBeNull();
-    expect(maxBetTopUp(table({ maxBet: 4_049_999n }))?.max_bet).toBe("4500000");
-    expect(maxBetTopUp(table({ maxBet: 50_000n, free: 9n * TUSDC }))).toBeNull();
+  it("cuts a max bet pinned at the cap, which would refuse concurrent players", () => {
+    expect(maxBetAdjust(table({ maxBet: 4_500_000n }))?.max_bet).toBe("2250000");
+    expect(maxBetAdjust(table({ maxBet: 4_050_001n }))?.max_bet).toBe("2250000");
+  });
+
+  it("leaves a max bet inside 40-90 % of the cap alone, and never offers under the minimum bet", () => {
+    expect(maxBetAdjust(table({ maxBet: 1_800_000n }))).toBeNull();
+    expect(maxBetAdjust(table({ maxBet: 4_050_000n }))).toBeNull();
+    expect(maxBetAdjust(table({ maxBet: 1_799_999n }))?.max_bet).toBe("2250000");
+    expect(maxBetAdjust(table({ maxBet: 50_000n, free: 15n * TUSDC }))).toBeNull();
   });
 });
 
@@ -129,8 +135,8 @@ describe("decide", () => {
     expect(decide(table(), weakest, ask({}), false, 0n, MAX_RENT, NOW)).toMatchObject({ method: "bid_for_seat", args: { rent_per_hour: "1210000" } });
     expect(decide(table({ seat: null, rent: null }), FLOOR, null, false, 0n, MAX_RENT, NOW)).toMatchObject({ method: "bid_for_seat", why: "off the floor" });
     expect(decide(table({ free: 2_000_000n }), FLOOR, null, false, 5n * TUSDC, MAX_RENT, NOW)).toMatchObject({ method: "invest", args: { amount: "5000000" } });
-    expect(decide(table(), FLOOR, null, false, 5n * TUSDC, MAX_RENT, NOW)).toMatchObject({ method: "set_offer", args: { max_bet: "4500000" } });
-    expect(decide(table({ maxBet: 4_500_000n }), FLOOR, null, false, 5n * TUSDC, MAX_RENT, NOW)).toBeNull();
+    expect(decide(table(), FLOOR, null, false, 5n * TUSDC, MAX_RENT, NOW)).toMatchObject({ method: "set_offer", args: { max_bet: "2250000" } });
+    expect(decide(table({ maxBet: 2_250_000n }), FLOOR, null, false, 5n * TUSDC, MAX_RENT, NOW)).toBeNull();
   });
 });
 

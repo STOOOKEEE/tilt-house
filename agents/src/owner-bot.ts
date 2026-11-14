@@ -7,7 +7,7 @@
 //   2. bid for a seat again when evicted (after the contract's cooldown),
 //   3. raise its rent ~10 % when it is the weakest on the floor (under OWNER_BOT_MAX_RENT),
 //   4. invest its in-contract balance when the free bankroll covers under 2 h of rent,
-//   5. keep the max bet at the largest the pool covers (the contract's clamp), rake kept.
+//   5. keep the max bet at half of what the pool covers (the contract's clamp), rake kept.
 //
 // Every transaction is logged as one JSON line (action, dealer, args, tx hash). On any error it
 // logs at level error and exits: the unit (ops/th-owner-bot.service) restarts it a few times, then
@@ -37,8 +37,17 @@ const PREPAID_HOURS = 2n;
 /** Invest once the free bankroll covers less than this many hours of rent. */
 const INVEST_BELOW_HOURS = 2n;
 const RAISE_PERCENT = 110n;
-/** Lift the max bet to the cap once it falls under this share of it. */
-const TOP_UP_BELOW_PERCENT = 90n;
+/**
+ * The max bet the bot keeps: half of what the pool covers. The contract opens a session only if
+ * its ticket's max bet is ≤ min(offer, free / worst case) at open time, and every open session
+ * reserves up to 10 % of the free bankroll (`core::session_max_win`): an offer at the full cap
+ * would refuse the next player whenever another session opens between pricing and opening. Half
+ * leaves room for ~6 concurrent sessions.
+ */
+const MAX_BET_PERCENT_OF_CAP = 50n;
+/** Reset it to that share once it leaves this band of the cap (the cap moves with every session). */
+const TOP_UP_BELOW_PERCENT = 40n;
+const CUT_ABOVE_PERCENT = 90n;
 /** `core::SESSION_MIN_BET` (0.1 tUSDC): a max bet under it closes the table. */
 const SESSION_MIN_BET = 100_000n;
 
@@ -115,9 +124,10 @@ export function offerFor(table: OwnedTable, ask: Ask, now: number): SetOfferArgs
       return { ...keep, rake_bp: rake };
     }
     case "higher_max_bet": {
-      // Up to what the pool covers: it may fall short of the ask, but never past the contract's cap.
+      // Up to the max bet the bot keeps (half the cap): it may fall short of the ask.
       const wanted = ask.maxBet ?? 0n;
-      const target = wanted < cap ? wanted : cap;
+      const limit = (cap * MAX_BET_PERCENT_OF_CAP) / 100n;
+      const target = wanted < limit ? wanted : limit;
       return target > table.maxBet ? { ...keep, max_bet: String(target) } : null;
     }
     case "boost":
@@ -146,14 +156,16 @@ export function investAmount(table: OwnedTable, floor: FloorRents, balance: bigi
 }
 
 /**
- * The `set_offer` that lifts the max bet to the cap, rake kept, once it sits under
- * `TOP_UP_BELOW_PERCENT` of what the pool covers (sessions reserving and releasing the pool move
- * the cap a little all the time: no offer for that); null otherwise.
+ * The `set_offer` that puts the max bet back at `MAX_BET_PERCENT_OF_CAP` of what the pool covers,
+ * rake kept, once it sits under `TOP_UP_BELOW_PERCENT` or over `CUT_ABOVE_PERCENT` of it; null
+ * inside the band (each change can itself refuse a ticket priced just before it).
  */
-export function maxBetTopUp(table: OwnedTable): SetOfferArgs | null {
+export function maxBetAdjust(table: OwnedTable): SetOfferArgs | null {
   const cap = maxBetCap(table);
-  if (cap < SESSION_MIN_BET || table.maxBet * 100n >= cap * TOP_UP_BELOW_PERCENT) return null;
-  return { dealer_id: table.id, rake_bp: table.rakeBp, max_bet: String(cap), boost_secs: 0 };
+  const target = (cap * MAX_BET_PERCENT_OF_CAP) / 100n;
+  const share = table.maxBet * 100n;
+  if (target < SESSION_MIN_BET || (share >= cap * TOP_UP_BELOW_PERCENT && share <= cap * CUT_ABOVE_PERCENT)) return null;
+  return { dealer_id: table.id, rake_bp: table.rakeBp, max_bet: String(target), boost_secs: 0 };
 }
 
 /** This pass's one action for a table; `answer` says whether the live ask (if any) gets answered. */
@@ -166,8 +178,8 @@ export function decide(table: OwnedTable, floor: FloorRents, ask: Ask | null, an
   if (raise !== null) return { method: "bid_for_seat", args: { dealer_id: table.id, rent_per_hour: String(raise) }, why: "weakest rent on the floor" };
   const invest = investAmount(table, floor, balance);
   if (invest > 0n) return { method: "invest", args: { dealer_id: table.id, amount: String(invest) }, why: "free bankroll under 2 h of rent" };
-  const topUp = maxBetTopUp(table);
-  if (topUp) return { method: "set_offer", args: topUp, why: "max bet under what the pool covers" };
+  const adjust = maxBetAdjust(table);
+  if (adjust) return { method: "set_offer", args: adjust, why: "max bet back to half of what the pool covers" };
   return null;
 }
 
