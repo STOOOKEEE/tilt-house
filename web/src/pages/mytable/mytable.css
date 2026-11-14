@@ -1,0 +1,75 @@
+/* The owner's cockpit on My table: customers at the door first, then risk, rent and rivals. */
+.cockpit-block {
+  border-top: 1px solid #222428;
+  padding-top: 0.4rem;
+}
+
+.cockpit-block p {
+  margin: 0.4rem 0;
+}
+
+.cockpit-door {
+  border: 1px solid var(--pink);
+  padding: 0.6rem 0.8rem;
+}
+
+.cockpit-door h3 {
+  color: var(--pink);
+}
+
+.customer-card {
+  margin: 0.6rem 0;
+  padding: 0.5rem 0.7rem;
+  background: var(--bg);
+  border-left: 3px solid var(--gold);
+}
+
+.customer-card.outcome-sat {
+  border-left-color: var(--win);
+}
+
+.customer-card.outcome-rival,
+.customer-card.outcome-left {
+  border-left-color: var(--loss);
+  opacity: 0.8;
+}
+
+.customer-ask {
+  font-style: italic;
+}
+
+.countdown {
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+}
+
+.gauge {
+  height: 0.6rem;
+  background: var(--bg);
+  border: 1px solid #33363b;
+}
+
+.gauge-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--gold), var(--loss));
+}
+
+.customers,
+.ladder {
+  margin: 0.4rem 0;
+  padding-left: 1.2rem;
+}
+
+.customers li.watch {
+  color: var(--gold);
+}
+
+.rival-callout {
+  padding: 0.4rem 0.7rem;
+  border-left: 3px solid var(--loss);
+  background: #1d1213;
+}
+
+.cockpit-test {
+  margin: 0.4rem 0;
+}

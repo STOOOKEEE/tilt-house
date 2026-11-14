@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react'
-import { Link } from 'react-router'
+import { useCallback, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router'
 import { ActionStatus, type ActionState } from '../components/ActionStatus'
 import { LoginPrompt } from '../components/LoginPrompt'
 import { formatAmount, formatBp, formatCountdown, formatUsdc, parseUsdc, tokenSymbol } from '../format'
@@ -9,7 +9,7 @@ import { fullAccessCall } from '../near/session'
 import { useNear } from '../near/useNear'
 import { PAGE_POLL_MS, usePlayer, usePoll } from '../near/usePoll'
 import type { DealerView, PlayerView } from '../near/views'
-import { getFootfall, type Arrival, type FootfallReply } from '../sim/gamblers'
+import { getFootfall, getLiveFloor, type Arrival, type FootfallReply, type GamblerSnapshot } from '../sim/gamblers'
 import {
   BOOST_COOLDOWN_SECS,
   MAX_BOOST_SECS,
@@ -31,9 +31,11 @@ import {
   type Temperament,
 } from '../tycoon'
 import { useNow } from '../useNow'
-
-/** Sends one relayed owner call (`set_offer`, `invest`, …) to the house. */
-type Send = (label: string, method: string, args: object) => void
+import { CapitalAtRisk, OwnerTiltHour, RentAndSeats, RivalCallouts, TestTable } from './mytable/Cockpit'
+import type { Send } from './mytable/cockpit'
+import { Door } from './mytable/Door'
+import { sampleFeed } from './mytable/preview'
+import './mytable/mytable.css'
 
 interface TableProps {
   dealer: DealerView
@@ -55,11 +57,23 @@ export function MyTable() {
   const { config, walletId, nearAccount } = useNear()
   const loadFloor = useCallback(() => getFloorState(config), [config])
   const floor = usePoll(loadFloor, PAGE_POLL_MS)
+  const loadFeed = useCallback(() => getLiveFloor(config.sessionUrl), [config.sessionUrl])
+  const feed = usePoll(config.sessionUrl ? loadFeed : null, PAGE_POLL_MS)
   const player = usePlayer()
   const now = useNow()
   const [action, setAction] = useState<ActionState>({ state: 'idle' })
+  // Dev only: `?as=<dealer_id>` shows that table's cockpit read-only, `&sample=1` adds made-up gamblers.
+  const [params] = useSearchParams()
+  const previewId = import.meta.env.DEV ? params.get('as') : null
+  const [sampleAnchor] = useState(now)
+  const state = floor.data
+  const sample = previewId !== null && params.get('sample') === '1'
+  const gamblers = useMemo(
+    () => (sample && state && previewId ? [...sampleFeed(state, previewId, sampleAnchor, now), ...(feed.data ?? [])] : feed.data),
+    [sample, state, previewId, sampleAnchor, now, feed.data],
+  )
 
-  if (!walletId || !nearAccount) {
+  if (previewId === null && (!walletId || !nearAccount)) {
     return (
       <>
         <h1>My table</h1>
@@ -69,6 +83,10 @@ export function MyTable() {
   }
 
   const send: Send = (label, method, args) => {
+    if (previewId !== null || !nearAccount) {
+      setAction({ state: 'error', message: `read-only preview: ${label} (${method}) was not sent` })
+      return
+    }
     setAction({ state: 'busy', label })
     void fullAccessCall(nearAccount, config, config.houseContract, method, args, 0n)
       .then(({ txHash }) => setAction({ state: 'done', label, txHash }))
@@ -76,10 +94,10 @@ export function MyTable() {
       .finally(() => {
         floor.refresh()
         player.refresh()
+        feed.refresh()
       })
   }
-  const state = floor.data
-  const tables = state ? myTables(state.dealers, player.data, walletId) : []
+  const tables = !state ? [] : previewId !== null ? state.dealers.filter((d) => d.id === previewId) : myTables(state.dealers, player.data, walletId)
 
   return (
     <>
@@ -88,6 +106,8 @@ export function MyTable() {
         You earn your table's edge on every gambler who sits, minus the rent of your seat. Set the offer yourself or put
         the dealer on autopilot; offers apply to sessions opened after the change.
       </p>
+      {previewId !== null ? <p className="loss">Dev preview of {previewId}, read-only: nothing is sent.</p> : null}
+      <OwnerTiltHour now={now} />
       {state?.mock ? (
         <p className="loss">
           This contract ({config.houseContract}) has no floor yet: the controls below will fail until the new contract
@@ -108,6 +128,8 @@ export function MyTable() {
               dealer={dealer}
               state={state}
               player={player.data}
+              feed={gamblers}
+              feedError={feed.error}
               now={now}
               busy={action.state === 'busy'}
               send={send}
@@ -118,7 +140,15 @@ export function MyTable() {
   )
 }
 
-function TableDashboard({ dealer, state, player, now, busy, send }: TableProps & { state: FloorState; player: PlayerView | null }) {
+interface DashboardProps extends TableProps {
+  state: FloorState
+  player: PlayerView | null
+  /** The live gambler feed; null while it is unreachable. */
+  feed: GamblerSnapshot[] | null
+  feedError: string
+}
+
+function TableDashboard({ dealer, state, player, feed, feedError, now, busy, send }: DashboardProps) {
   const { config } = useNear()
   const loadFootfall = useCallback(() => getFootfall(config.sessionUrl, dealer.id), [config.sessionUrl, dealer.id])
   const footfall = usePoll(config.sessionUrl ? loadFootfall : null, PAGE_POLL_MS)
@@ -136,6 +166,11 @@ function TableDashboard({ dealer, state, player, now, busy, send }: TableProps &
           ? `seat ${seat.seat + 1} · ${trafficMultiple(seat.traffic_bp)} traffic`
           : 'off the floor: no gambler sees the table until it takes a seat'}
       </p>
+      <TestTable dealer={dealer} />
+      <Door dealer={dealer} dealers={state.dealers} feed={feed} feedError={feedError} now={now} busy={busy} send={send} />
+      <RivalCallouts dealer={dealer} state={state} />
+      <CapitalAtRisk {...props} feed={feed} />
+      <RentAndSeats {...props} state={state} />
       <Footfall reply={footfall.data} error={footfall.error} gamblers={dealer.gamblers_1h} />
       <p>
         last hour: revenue <span className="money">{usdcOrDash(money.revenue)}</span> · rent{' '}
@@ -292,7 +327,7 @@ function PoolForms({ dealer, busy, send, player }: TableProps & { player: Player
 
   return (
     <>
-      <h3>Pool</h3>
+      <h3 id={`pool-${dealer.id}`}>Pool</h3>
       <p>
         free bankroll <span className="money">{formatUsdc(freeBankroll(dealer))}</span> {tokenSymbol()} · you hold{' '}
         <span className="money">{formatUsdc(owned / SHARES_PER_UNIT)}</span> LP tokens · house balance{' '}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { diffGamblers, footfall, parseGamblerTimeline, toCues, type GamblerSnapshot, type GamblerState } from './gamblers'
+import { diffGamblers, footfall, parseGamblerList, parseGamblerTimeline, toCues, type GamblerSnapshot, type GamblerState } from './gamblers'
 
 function g(id: string, state: GamblerState, dealer_id: string | null = null, seat: number | null = null): GamblerSnapshot {
   return { id, name: null, persona: null, state, dealer_id, seat, reason_code: null, reason: `${id} reason`, balance: '0', session_net: '0' }
@@ -69,5 +69,56 @@ describe('parseGamblerTimeline', () => {
 
   it('refuses an unknown persona', () => {
     expect(() => parseGamblerTimeline({ gamblers: [{ id: 'x', name: 'X', persona: 'robot' }], frames: [] })).toThrow()
+  })
+})
+
+describe('parseGamblerList: hesitating', () => {
+  const entry = (hesitating: unknown, extra: object = {}) => ({
+    id: 'g-mia',
+    name: 'Mia',
+    persona: 'bargain_hunter',
+    state: 'deciding',
+    dealer_id: 'mine',
+    seat: 2,
+    reason: "Ada's at 1.0 %: go under 1.1 % and I'm yours",
+    balance: '5000000',
+    session_net: '0',
+    hesitating,
+    ...extra,
+  })
+  const lowerEdge = { dealer_id: 'mine', rival_id: 'ada', want: 'lower_edge', edge_bp: 110, max_bet: null, until: 1_800_000_000 }
+
+  it('is null when absent or null', () => {
+    const old: Record<string, unknown> = entry(null)
+    delete old.hesitating
+    expect(parseGamblerList([old, entry(null)]).map((g) => g.hesitating)).toEqual([null, null])
+  })
+
+  it('reads every field of the contract', () => {
+    expect(parseGamblerList([entry(lowerEdge)])[0].hesitating).toEqual(lowerEdge)
+    const whale = { dealer_id: 'mine', rival_id: null, want: 'higher_max_bet', edge_bp: null, max_bet: '20000000', until: 5 }
+    expect(parseGamblerList([entry(whale)])[0].hesitating).toEqual(whale)
+    const boost = { dealer_id: 'mine', rival_id: 'bruno', want: 'boost', until: 5 }
+    expect(parseGamblerList([entry(boost)])[0].hesitating).toMatchObject({ want: 'boost', edge_bp: null, max_bet: null })
+  })
+
+  it('refuses a malformed hesitation', () => {
+    for (const bad of [
+      { ...lowerEdge, want: 'free_drinks' },
+      { ...lowerEdge, edge_bp: null },
+      { ...lowerEdge, edge_bp: 1.5 },
+      { ...lowerEdge, want: 'higher_max_bet', max_bet: null },
+      { ...lowerEdge, want: 'higher_max_bet', max_bet: 20 },
+      { ...lowerEdge, until: '5' },
+      { ...lowerEdge, rival_id: 7 },
+      { ...lowerEdge, dealer_id: 'other' },
+      'lower_edge',
+    ]) {
+      expect(() => parseGamblerList([entry(bad)])).toThrow()
+    }
+  })
+
+  it('refuses a hesitation outside the deciding state', () => {
+    expect(() => parseGamblerList([entry(lowerEdge, { state: 'seated' })])).toThrow()
   })
 })

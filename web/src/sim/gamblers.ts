@@ -12,6 +12,28 @@ export type Persona = (typeof PERSONAS)[number]
 export const GAMBLER_STATES = ['walking', 'deciding', 'seated', 'leaving'] as const
 export type GamblerState = (typeof GAMBLER_STATES)[number]
 
+/** What a gambler hesitating at a player's table asks for before sitting there. */
+export const WANTS = ['lower_edge', 'higher_max_bet', 'boost'] as const
+export type Want = (typeof WANTS)[number]
+
+/**
+ * A gambler standing at a player-owned table while it decides (live feed only): the table it
+ * would pick right now and the one change that would win it over, until `until`.
+ */
+export interface Hesitation {
+  /** The player-owned table it stands at (also the snapshot's `dealer_id`). */
+  dealer_id: string
+  /** The table it would pick right now; null = it would leave the floor. */
+  rival_id: string | null
+  want: Want
+  /** lower_edge: total edge (game edge + rake) in bp at or below which it sits. */
+  edge_bp: number | null
+  /** higher_max_bet: max bet in base units at or above which it sits. */
+  max_bet: string | null
+  /** Unix seconds: the end of its deciding pause. */
+  until: number
+}
+
 export interface GamblerInfo {
   id: string
   name: string
@@ -33,6 +55,8 @@ export interface GamblerSnapshot {
   balance: string
   /** Signed decimal string: the session's result so far. */
   session_net: string
+  /** Always set by the parser (null unless hesitating); test literals may leave it out. */
+  hesitating?: Hesitation | null
 }
 
 export interface GamblerFrame {
@@ -48,20 +72,40 @@ export interface GamblerTimeline {
 
 const SIGNED = /^-?\d+$/
 
+function parseHesitation(value: unknown, path: string, dealerId: string | null, state: GamblerState): Hesitation {
+  const h = record(value, path)
+  const hesitation = {
+    dealer_id: str(h.dealer_id, `${path}.dealer_id`),
+    rival_id: optional(h.rival_id, (v) => str(v, `${path}.rival_id`)),
+    want: oneOf(WANTS, h.want, `${path}.want`),
+    edge_bp: optional(h.edge_bp, (v) => int(v, `${path}.edge_bp`)),
+    max_bet: optional(h.max_bet, (v) => amount(v, `${path}.max_bet`)),
+    until: int(h.until, `${path}.until`),
+  }
+  if (hesitation.dealer_id !== dealerId) fail(`${path}.dealer_id`, "the gambler's dealer_id")
+  if (state !== 'deciding') fail(`${path}`, 'null unless the gambler is deciding')
+  if (hesitation.want === 'lower_edge' && hesitation.edge_bp === null) fail(`${path}.edge_bp`, 'set for lower_edge')
+  if (hesitation.want === 'higher_max_bet' && hesitation.max_bet === null) fail(`${path}.max_bet`, 'set for higher_max_bet')
+  return hesitation
+}
+
 function parseSnapshot(value: unknown, path: string): GamblerSnapshot {
   const g = record(value, path)
   const net = str(g.session_net ?? '0', `${path}.session_net`)
+  const state = oneOf(GAMBLER_STATES, g.state, `${path}.state`)
+  const dealerId = optional(g.dealer_id, (v) => str(v, `${path}.dealer_id`))
   return {
     id: str(g.id, `${path}.id`),
     name: optional(g.name, (v) => str(v, `${path}.name`)),
     persona: optional(g.persona, (v) => oneOf(PERSONAS, v, `${path}.persona`)),
-    state: oneOf(GAMBLER_STATES, g.state, `${path}.state`),
-    dealer_id: optional(g.dealer_id, (v) => str(v, `${path}.dealer_id`)),
+    state,
+    dealer_id: dealerId,
     seat: optional(g.seat, (v) => int(v, `${path}.seat`)),
     reason_code: optional(g.reason_code, (v) => str(v, `${path}.reason_code`)),
     reason: optional(g.reason, (v) => str(v, `${path}.reason`)),
     balance: amount(g.balance, `${path}.balance`),
     session_net: SIGNED.test(net) ? net : '0',
+    hesitating: optional(g.hesitating, (v) => parseHesitation(v, `${path}.hesitating`, dealerId, state)),
   }
 }
 
