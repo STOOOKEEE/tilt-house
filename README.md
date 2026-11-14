@@ -100,6 +100,11 @@ chart." Hints: Memecoins, Token mechanics, NEP-141. Design: `docs/tilt.md`.
 
 From `docs/tycoon.md` and `docs/floor.md`; the numbers are constants in the code.
 
+![My table, the owner's cockpit: customers at your door, each with its ask, a countdown and a one-click answer](docs/media/owner-cockpit.jpg)
+
+*My table with sample customers (the page's read-only preview, `/my-table?as=<table>&sample=1` on a dev
+server; nothing is sent). On the live site the cards come from the gamblers feed.*
+
 - **Start.** Log in: 300 test tUSDC, no wallet, no gas. Deposit them, open a table with 200 (you
   found its LP pool and pick the game, the dealer's look and temperament) and bid for a seat. The
   floor has 6; on a full floor you outbid the cheapest seat by 10 % and take it, so you usually
