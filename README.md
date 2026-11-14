@@ -7,9 +7,10 @@
 
 ![Tilt House: NPC gamblers walk the floor, a multi-spot roulette spin, a poker hand verified after the deal](docs/media/tilt-house.gif)
 
-80-second demo video with voice-over: https://tilt-house-beta.vercel.app/tilt-house-demo.mp4 (file:
-`web/public/tilt-house-demo.mp4`). The roulette and poker clips use the practice tables (same rules, local
-seed, nothing signed); the terminal clip is a real `demo --new` run on testnet with the waits shortened.
+Demo post on X: https://x.com/STOOOKEEE/status/2121546762401747252. The same 80-second video with voice-over:
+https://tilt-house-beta.vercel.app/tilt-house-demo.mp4 (file: `web/public/tilt-house-demo.mp4`). The roulette and
+poker clips use the practice tables (same rules, local seed, nothing signed); the terminal clip is a real
+`demo --new` run on testnet with the waits shortened.
 
 **The problem.** An online casino asks players to trust a house they cannot inspect: the house sets
 the odds, holds the money and keeps the edge. Tilt House turns that around: the players own the
@@ -322,6 +323,8 @@ e.g. the live gamblers feed `https://tilt-house-beta.vercel.app/session/gamblers
 
 - Tilt House is a new code base started on 2026-11-03 for this hackathon; its rules were written
   from scratch in `core/`.
+- Other submission by the same author: [SHED](https://github.com/STOOOKEEE/shed), a memecoin where the
+  mascot is the mechanic (track `memecoins`). The two projects are independent and share no code.
 - Libraries: near-sdk, near-contract-standards, near-workspaces, cargo-near, near-api-js, axum,
   tokio, ed25519-dalek, borsh, Privy, Hono, Vite, React, three.js, vitest, @noble/hashes; plus serde,
   sha2, hmac, bs58, anyhow, react-router and the rest listed in each `Cargo.toml` and `package.json`.
