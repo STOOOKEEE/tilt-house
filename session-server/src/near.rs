@@ -71,6 +71,8 @@ struct LobbyDealer {
     #[serde(with = "core_rules::amount_str")]
     reserved: u128,
     open: bool,
+    /// Absent from older contracts: then every dealer counts as an NPC's.
+    npc: Option<bool>,
     /// 1-based seat number in the contract views.
     seat: Option<usize>,
 }
@@ -152,8 +154,12 @@ impl NearChain {
         serde_json::from_slice(&bytes).with_context(|| format!("decode {method}"))
     }
 
-    /// A floor-wide view without arguments, reused for `view_ttl` (errors are not cached).
-    async fn cached_view<T: DeserializeOwned>(&self, method: &'static str) -> anyhow::Result<T> {
+    /// A floor-wide view without arguments, reused for `ttl` (errors are not cached).
+    async fn cached_view<T: DeserializeOwned>(
+        &self,
+        method: &'static str,
+        ttl: Duration,
+    ) -> anyhow::Result<T> {
         let entry = {
             let mut views = self
                 .views
@@ -163,7 +169,7 @@ impl NearChain {
         };
         let mut cached = entry.lock().await;
         let bytes = match cached.as_ref() {
-            Some((read_at, bytes)) if read_at.elapsed() < self.view_ttl => {
+            Some((read_at, bytes)) if read_at.elapsed() < ttl => {
                 self.rpc.stats().cache_hits.fetch_add(1, Ordering::Relaxed);
                 Arc::clone(bytes)
             }
@@ -241,7 +247,31 @@ impl NearChain {
     }
 
     async fn lobby(&self) -> anyhow::Result<Vec<LobbyDealer>> {
-        self.cached_view("get_lobby").await
+        self.cached_view("get_lobby", self.view_ttl).await
+    }
+
+    /// The floor from views at most `ttl` old.
+    async fn floor_within(&self, ttl: Duration) -> anyhow::Result<FloorInfo> {
+        let lobby: Vec<LobbyDealer> = self.cached_view("get_lobby", ttl).await?;
+        let floor: FloorJackpot = self.cached_view("get_floor", ttl).await?;
+        let tables = lobby
+            .into_iter()
+            .map(|dealer| FloorTable {
+                seat: dealer.seat.and_then(|n| n.checked_sub(1)),
+                dealer_id: dealer.id,
+                name: dealer.name,
+                game: dealer.game,
+                edge_bp: dealer.total_edge_bp,
+                boost_until: dealer.boost_until,
+                max_bet: dealer.max_bet,
+                open: dealer.open,
+                player_owned: dealer.npc == Some(false),
+            })
+            .collect();
+        Ok(FloorInfo {
+            tables,
+            jackpot: floor.jackpot,
+        })
     }
 }
 
@@ -269,25 +299,11 @@ impl Chain for NearChain {
     }
 
     async fn floor(&self) -> anyhow::Result<FloorInfo> {
-        let lobby = self.lobby().await?;
-        let floor: FloorJackpot = self.cached_view("get_floor").await?;
-        let tables = lobby
-            .into_iter()
-            .map(|dealer| FloorTable {
-                seat: dealer.seat.and_then(|n| n.checked_sub(1)),
-                dealer_id: dealer.id,
-                name: dealer.name,
-                game: dealer.game,
-                edge_bp: dealer.total_edge_bp,
-                boost_until: dealer.boost_until,
-                max_bet: dealer.max_bet,
-                open: dealer.open,
-            })
-            .collect();
-        Ok(FloorInfo {
-            tables,
-            jackpot: floor.jackpot,
-        })
+        self.floor_within(self.view_ttl).await
+    }
+
+    async fn fresh_floor(&self) -> anyhow::Result<FloorInfo> {
+        self.floor_within(Duration::ZERO).await
     }
 
     async fn balance(&self, account: &str) -> anyhow::Result<u128> {

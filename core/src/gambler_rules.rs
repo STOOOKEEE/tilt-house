@@ -24,6 +24,12 @@
 //! "nothing worth it". Every decision comes with a one-line reason, e.g. "Ada's 1.0 % beats
 //! Bruno's 2.4 %", naming what made the winner beat the runner-up.
 //!
+//! **Hesitating.** A gambler that passes up a player-owned table one owner action would win (it
+//! scores within `HESITATION_MARGIN_POINTS` of the winner, or of the threshold when nothing
+//! cleared it) stops there and says what it wants (`hesitation`): a lower edge, a higher max bet
+//! or a boost, whichever closes the gap and its persona weighs most. The live runner gives the
+//! owner the deciding pause to answer, then decides again with the same noise.
+//!
 //! **Playing.** At the table the gambler plays one session (docs/sessions.md): a persona-sized
 //! stake (never above the table's max bet, never more than a fifth of its balance) for a
 //! persona-sized number of rounds, then leaves. It locks at most its balance.
@@ -45,7 +51,7 @@ use crate::jackpot::MIN_JACKPOT;
 use crate::roulette::RouletteBet;
 use crate::seats::SEAT_TRAFFIC_BP;
 use crate::session::SESSION_MIN_BET;
-use crate::{Bet, Game, Rng, BP};
+use crate::{base_edge_bp, rake_bounds, Bet, Game, Rng, BP};
 
 /// How many NPC gamblers walk the floor.
 pub const GAMBLERS: usize = 24;
@@ -425,8 +431,21 @@ fn usdc(amount: u128) -> String {
     format!("{}.{}", amount / 1_000_000, amount % 1_000_000 / 100_000)
 }
 
+/// `usdc` rounded up to the 0.1 shown, so an ask never reads below what it needs.
+fn usdc_up(amount: u128) -> String {
+    usdc(amount.div_ceil(100_000) * 100_000)
+}
+
+/// The noise `choose_table` adds to each of `tables` tables' scores, drawn in table order. Draw it
+/// from a clone of the `Rng` given to `choose_table` to know (or replay) its noise.
+pub fn table_noise(rng: &mut Rng, tables: usize) -> Vec<i32> {
+    (0..tables)
+        .map(|_| rng.below(2 * NOISE_POINTS + 1) as i32 - NOISE_POINTS as i32)
+        .collect()
+}
+
 /// Scores every table and picks one (see the module doc). `tables` are the seated, open tables;
-/// noise is drawn once per table, in order.
+/// noise is drawn once per table, in order (`table_noise`).
 pub fn choose_table(
     persona: Persona,
     balance: u128,
@@ -443,12 +462,25 @@ pub fn choose_table(
             text: "broke until payday".to_string(),
         };
     }
+    let noise = table_noise(rng, tables.len());
+    decide(persona, stake, tables, memory, jackpot, &noise)
+}
+
+/// `choose_table` once the noise is drawn (one per table).
+fn decide(
+    persona: Persona,
+    stake: u128,
+    tables: &[TableView],
+    memory: &Memory,
+    jackpot: u128,
+    noise: &[i32],
+) -> Decision {
     let w = weights(persona);
     let mut scored: Vec<(usize, i32, Parts)> = tables
         .iter()
+        .zip(noise)
         .enumerate()
-        .map(|(i, table)| {
-            let noise = rng.below(2 * NOISE_POINTS + 1) as i32 - NOISE_POINTS as i32;
+        .map(|(i, (table, &noise))| {
             let p = parts(table, stake, memory.loyalty(table.dealer_id), jackpot);
             (i, score(persona, &p, noise), p)
         })
@@ -553,6 +585,152 @@ fn explain(
         }
         Some(Part::Jackpot) | None => (GamblerReason::BestOverall, format!("{name} feels right")),
     }
+}
+
+/// A player-owned table this close (in score points) to winning a gambler makes it stop and ask
+/// the owner for one change before walking on: about one noise draw (`NOISE_POINTS`). For a
+/// bargain hunter that is 0.4 % of edge; for a whale, a max bet 12 % short of its stake.
+pub const HESITATION_MARGIN_POINTS: i32 = 30;
+
+/// The one owner action (`set_offer`) that would win a hesitating gambler.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Want {
+    /// A total edge (game edge + rake) at or below `edge_bp`, within the game's 1–5 % bounds.
+    LowerEdge {
+        edge_bp: u16,
+    },
+    /// A max bet at or above `max_bet`, never above the stake.
+    HigherMaxBet {
+        max_bet: u128,
+    },
+    Boost,
+}
+
+impl Want {
+    /// Stable identifier for JSON and logs.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::LowerEdge { .. } => "lower_edge",
+            Self::HigherMaxBet { .. } => "higher_max_bet",
+            Self::Boost => "boost",
+        }
+    }
+}
+
+/// A gambler that passed up a player-owned table one owner action would win, and stops there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hesitation {
+    /// The player-owned table it stands at (index into the `tables` given).
+    pub table: usize,
+    /// The table it would pick now; `None`: it would leave.
+    pub rival: Option<usize>,
+    pub want: Want,
+    /// The ask, shown above the gambler: "Ada's at 1.0 %: go to 0.9 % and I'm yours".
+    pub text: String,
+}
+
+impl Hesitation {
+    /// What the gambler says when it sits at the player-owned table after all (`table`: that
+    /// table read again): "deal: Pat's 0.9 % it is".
+    pub fn deal(&self, table: &TableView) -> String {
+        let name = table.name;
+        match self.want {
+            Want::LowerEdge { .. } => format!("deal: {name}'s {} it is", percent(table.edge_bp)),
+            Want::HigherMaxBet { .. } => {
+                format!("deal: {name} takes up to {} a round", usdc(table.max_bet))
+            }
+            Want::Boost => format!("deal: {name} is boosting, I'm in"),
+        }
+    }
+}
+
+/// Whether the gambler hesitates instead of following `decision` (see the module doc). `noise` is
+/// what `choose_table` drew for that decision (`table_noise` on a clone of its `Rng`);
+/// `player_owned` flags each table. `None` when it picked a player-owned table, is broke, or no
+/// player-owned table comes within `HESITATION_MARGIN_POINTS` of winning it with one change.
+#[allow(clippy::too_many_arguments)] // `choose_table`'s inputs plus its noise and decision
+pub fn hesitation(
+    persona: Persona,
+    stake: u128,
+    tables: &[TableView],
+    player_owned: &[bool],
+    memory: &Memory,
+    jackpot: u128,
+    noise: &[i32],
+    decision: &Decision,
+) -> Option<Hesitation> {
+    let owned = |i: usize| player_owned.get(i) == Some(&true);
+    if decision.reason == GamblerReason::Broke || decision.table.is_some_and(owned) {
+        return None;
+    }
+    let score_of = |view: &TableView, noise: i32| {
+        let p = parts(view, stake, memory.loyalty(view.dealer_id), jackpot);
+        score(persona, &p, noise)
+    };
+    // The best player-owned table, ties broken as `choose_table` does.
+    let (table, current) = (0..tables.len())
+        .filter(|&i| owned(i))
+        .map(|i| (i, score_of(&tables[i], noise[i])))
+        .min_by_key(|&(i, s)| (-s, tables[i].seat, i))?;
+    // Beating the winner by a point wins against any tie-break.
+    let target = match decision.table {
+        Some(rival) => score_of(&tables[rival], noise[rival]) + 1,
+        None => weights(persona).threshold,
+    };
+    if target - current > HESITATION_MARGIN_POINTS {
+        return None;
+    }
+    let mine = tables[table];
+    let wins = |view: TableView| score_of(&view, noise[table]) >= target;
+    // The dearest edge that wins, within what the game's rake bounds allow.
+    let lowest_edge = (base_edge_bp(mine.game) + rake_bounds(mine.game).0).max(EDGE_FLOOR_BP);
+    let edge = (lowest_edge..mine.edge_bp.min(EDGE_CEILING_BP + 1))
+        .rev()
+        .find(|&edge_bp| wins(TableView { edge_bp, ..mine }))
+        .map(|edge_bp| Want::LowerEdge { edge_bp });
+    // The smallest max bet that wins, one fit point at a time.
+    let max_bet = (1..=100u128)
+        .map(|fit| (stake * fit).div_ceil(100))
+        .filter(|&max_bet| max_bet > mine.max_bet)
+        .find(|&max_bet| wins(TableView { max_bet, ..mine }))
+        .map(|max_bet| Want::HigherMaxBet { max_bet });
+    let boost = (!mine.boosting
+        && wins(TableView {
+            boosting: true,
+            ..mine
+        }))
+    .then_some(Want::Boost);
+    let w = weights(persona);
+    // What the persona weighs most among the wants that close the gap (first listed on a tie).
+    let (_, want) = [(w.edge, edge), (w.fit, max_bet), (w.boost, boost)]
+        .into_iter()
+        .filter_map(|(weight, want)| Some((weight, want?)))
+        .min_by_key(|&(weight, _)| -weight)?;
+    let rival = decision.table.map(|i| &tables[i]);
+    let text = match (want, rival) {
+        (Want::LowerEdge { edge_bp }, Some(rival)) => format!(
+            "{}'s at {}: go to {} and I'm yours",
+            rival.name,
+            percent(rival.edge_bp),
+            percent(edge_bp)
+        ),
+        (Want::LowerEdge { edge_bp }, None) => format!(
+            "nothing's worth it yet: go to {} and I'm yours",
+            percent(edge_bp)
+        ),
+        (Want::HigherMaxBet { max_bet }, _) => format!(
+            "I bet {} a round: raise your max bet to {}",
+            usdc_up(stake),
+            usdc_up(max_bet)
+        ),
+        (Want::Boost, _) => "boost your table and I'll sit".to_string(),
+    };
+    Some(Hesitation {
+        table,
+        rival: decision.table,
+        want,
+        text,
+    })
 }
 
 /// One session's plan: the stake per round, how many rounds, and what to lock.
@@ -909,6 +1087,237 @@ mod tests {
                 assert!(bet.is_valid() && bet.game() == game);
             }
         }
+    }
+
+    /// `decide` with the given noise, then whether the gambler hesitates.
+    fn ask(
+        persona: Persona,
+        stake: u128,
+        tables: &[TableView],
+        owned: &[bool],
+        noise: &[i32],
+    ) -> (Decision, Option<Hesitation>) {
+        let memory = Memory::default();
+        let decision = decide(persona, stake, tables, &memory, 0, noise);
+        let h = hesitation(persona, stake, tables, owned, &memory, 0, noise, &decision);
+        (decision, h)
+    }
+
+    #[test]
+    fn bargain_hunters_ask_for_a_lower_edge() {
+        let tables = [table("Ada", 0, 200), table("Pat", 1, 210)];
+        let (d, h) = ask(
+            Persona::BargainHunter,
+            USDC,
+            &tables,
+            &[false, true],
+            &[0, 0],
+        );
+        assert_eq!(d.table, Some(0));
+        let h = h.unwrap();
+        assert_eq!((h.table, h.rival), (1, Some(0)));
+        assert_eq!(h.want, Want::LowerEdge { edge_bp: 192 });
+        assert_eq!(h.want.code(), "lower_edge");
+        assert_eq!(h.text, "Ada's at 2.0 %: go to 1.9 % and I'm yours");
+        let granted = TableView {
+            edge_bp: 192,
+            ..tables[1]
+        };
+        assert_eq!(h.deal(&granted), "deal: Pat's 1.9 % it is");
+    }
+
+    #[test]
+    fn whales_ask_for_a_higher_max_bet() {
+        let mut pat = table("Pat", 1, 300);
+        pat.max_bet = 18 * USDC;
+        let tables = [table("Big", 2, 300), pat];
+        let (d, h) = ask(Persona::Whale, 20 * USDC, &tables, &[false, true], &[0, 0]);
+        assert_eq!(d.table, Some(0));
+        let h = h.unwrap();
+        assert_eq!(h.want, Want::HigherMaxBet { max_bet: 20 * USDC });
+        assert_eq!(h.want.code(), "higher_max_bet");
+        assert_eq!(h.text, "I bet 20.0 a round: raise your max bet to 20.0");
+    }
+
+    #[test]
+    fn thrill_seekers_ask_for_a_boost() {
+        // Nothing clears its bar: the ask closes the gap to the threshold.
+        let tables = [table("Ada", 0, 200), table("Pat", 2, 200)];
+        let (d, h) = ask(
+            Persona::ThrillSeeker,
+            USDC,
+            &tables,
+            &[false, true],
+            &[0, 0],
+        );
+        assert_eq!((d.table, d.reason), (None, GamblerReason::NothingWorthIt));
+        let h = h.unwrap();
+        assert_eq!((h.table, h.rival, h.want), (1, None, Want::Boost));
+        assert_eq!(h.want.code(), "boost");
+        assert_eq!(h.text, "boost your table and I'll sit");
+    }
+
+    #[test]
+    fn regulars_and_tourists_ask_for_whatever_closes_the_gap() {
+        let tables = [table("Ada", 0, 200), table("Pat", 1, 250)];
+        let (_, h) = ask(Persona::Regular, USDC, &tables, &[false, true], &[0, 0]);
+        assert_eq!(h.unwrap().want, Want::LowerEdge { edge_bp: 168 });
+        // A roulette table at its lowest edge can only boost.
+        let mut door = table("Door", 0, 270);
+        door.game = Game::Roulette;
+        let pat = TableView {
+            name: "Pat",
+            dealer_id: "Pat",
+            seat: 1,
+            ..door
+        };
+        let (_, h) = ask(
+            Persona::Tourist,
+            USDC / 2,
+            &[door, pat],
+            &[false, true],
+            &[0, 0],
+        );
+        assert_eq!(h.unwrap().want, Want::Boost);
+    }
+
+    #[test]
+    fn no_hesitation_when_out_of_reach_or_no_player_table() {
+        let tables = [table("Ada", 0, 100), table("Pat", 1, 400)];
+        let (_, h) = ask(
+            Persona::BargainHunter,
+            USDC,
+            &tables,
+            &[false, true],
+            &[0, 0],
+        );
+        assert_eq!(h, None, "a 3 % gap is out of reach");
+        let close = [table("Ada", 0, 200), table("Pat", 1, 210)];
+        let (_, h) = ask(
+            Persona::BargainHunter,
+            USDC,
+            &close,
+            &[false, false],
+            &[0, 0],
+        );
+        assert_eq!(h, None, "no player table on the floor");
+        let (d, h) = ask(
+            Persona::BargainHunter,
+            USDC,
+            &close,
+            &[true, false],
+            &[0, 0],
+        );
+        assert_eq!(
+            (d.table, h),
+            (Some(0), None),
+            "it picked the player's table"
+        );
+        let broke = choose_table(
+            Persona::BargainHunter,
+            0,
+            0,
+            &close,
+            &Memory::default(),
+            0,
+            &mut rng(12),
+        );
+        let h = hesitation(
+            Persona::BargainHunter,
+            0,
+            &close,
+            &[false, true],
+            &Memory::default(),
+            0,
+            &[0, 0],
+            &broke,
+        );
+        assert_eq!(h, None);
+    }
+
+    /// Property: on any floor, for any persona and draws, granting what a hesitating gambler asks
+    /// (to the player's table only) and deciding again with the same noise sits it there; every
+    /// ask is one `set_offer` can grant.
+    #[test]
+    fn granting_the_ask_wins_the_gambler() {
+        const NAMES: [&str; 5] = ["A", "B", "C", "D", "E"];
+        let mut r = rng(11);
+        let mut seen = [0usize; 3];
+        for round in 1..=20_000u32 {
+            let persona = Persona::ALL[r.below(5) as usize];
+            let n = 1 + r.below(5) as usize;
+            let tables: Vec<TableView> = NAMES[..n]
+                .iter()
+                .map(|&name| {
+                    let game = [Game::Dice, Game::Roulette, Game::Blackjack][r.below(3) as usize];
+                    let (lo, hi) = rake_bounds(game);
+                    TableView {
+                        game,
+                        boosting: r.below(4) == 0,
+                        max_bet: SESSION_MIN_BET + u128::from(r.below(30_000_000)),
+                        ..table(
+                            name,
+                            r.below(6) as usize,
+                            base_edge_bp(game) + lo + r.below(u32::from(hi - lo) + 1) as u16,
+                        )
+                    }
+                })
+                .collect();
+            let owned: Vec<bool> = (0..n).map(|_| r.below(2) == 1).collect();
+            let stake = SESSION_MIN_BET + u128::from(r.below(30_000_000));
+            let mut memory = Memory::default();
+            for name in &NAMES[..n] {
+                let net = i128::from(r.below(20_000_001)) - 10_000_000;
+                memory.remember(name, net, 10 * USDC);
+            }
+            let jackpot = u128::from(r.below(200_000_000));
+            let mut seed = [7u8; 32];
+            seed[..4].copy_from_slice(&round.to_le_bytes());
+            let draws = Rng::new(seed);
+            let decide_with = |tables: &[TableView]| {
+                let mut draws = draws.clone();
+                choose_table(
+                    persona,
+                    100 * USDC,
+                    stake,
+                    tables,
+                    &memory,
+                    jackpot,
+                    &mut draws,
+                )
+            };
+            let decision = decide_with(&tables);
+            let noise = table_noise(&mut draws.clone(), n);
+            let found = hesitation(
+                persona, stake, &tables, &owned, &memory, jackpot, &noise, &decision,
+            );
+            let Some(h) = found else { continue };
+            assert!(owned[h.table] && h.rival == decision.table);
+            assert!(decision.table.is_none_or(|i| !owned[i]));
+            let mut granted = tables.clone();
+            let t = &mut granted[h.table];
+            match h.want {
+                Want::LowerEdge { edge_bp } => {
+                    let lowest = (base_edge_bp(t.game) + rake_bounds(t.game).0).max(100);
+                    assert!((lowest..t.edge_bp.min(501)).contains(&edge_bp), "{h:?}");
+                    t.edge_bp = edge_bp;
+                    seen[0] += 1;
+                }
+                Want::HigherMaxBet { max_bet } => {
+                    assert!(max_bet > t.max_bet && max_bet <= stake, "{h:?}");
+                    t.max_bet = max_bet;
+                    seen[1] += 1;
+                }
+                Want::Boost => {
+                    assert!(!t.boosting);
+                    t.boosting = true;
+                    seen[2] += 1;
+                }
+            }
+            let again = decide_with(&granted);
+            assert_eq!(again.table, Some(h.table), "{persona:?} {h:?} {tables:?}");
+        }
+        assert!(seen.iter().all(|&count| count > 50), "{seen:?}");
     }
 
     #[test]

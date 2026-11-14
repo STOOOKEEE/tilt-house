@@ -20,10 +20,18 @@ interface GamblerSnapshot {
   state: GamblerState
   dealer_id: string | null // the table it is deciding at / seated at; null while walking
   seat: number | null      // 0-based seat of dealer_id
-  reason_code: string | null // cheapest | loyal | fits_my_bets | boosting | jackpot | near_entrance | best_overall | nothing_worth_it | broke
+  reason_code: string | null // cheapest | loyal | fits_my_bets | boosting | jackpot | near_entrance | best_overall | nothing_worth_it | broke | hesitating | deal | session_over | poker
   reason: string | null    // one line, e.g. "Ada's 1.0 % beats Bruno's 2.4 %"
   balance: string          // in-contract balance, base units
   session_net: string      // signed, current session's result so far ("0" when not playing)
+  hesitating: null | {     // null (or absent, for old servers) unless it stands at a player's table, asking
+    dealer_id: string        // the player-owned table it stands at while deciding (also the entry's dealer_id)
+    rival_id: string | null  // the table it would pick right now (null = it would leave)
+    want: 'lower_edge' | 'higher_max_bet' | 'boost'
+    edge_bp: number | null   // lower_edge: total edge (game edge + rake) in bp at or below which it sits
+    max_bet: string | null   // higher_max_bet: max bet in base units at or above which it sits
+    until: number            // unix seconds: when it decides (end of its deciding pause)
+  }
 }
 
 type FloorReply = GamblerSnapshot[]
@@ -31,6 +39,18 @@ type FloorReply = GamblerSnapshot[]
 
 `name` and `persona` are optional in sim.json frames (they come from the top-level list there) but
 required here.
+
+**Hesitating** (`core/src/gambler_rules.rs`, `hesitation`). A gambler that passes up a player-owned table
+(the contract's `npc: false`) stops there instead when one owner action would win it: that table is the
+best-scoring player table and comes within `HESITATION_MARGIN_POINTS` (30) of the winner, or of the
+persona's threshold when nothing cleared it. It asks for what its persona weighs most among the changes
+that close the gap: a lower total edge (within the game's 1–5 % bounds), a higher max bet (at most its
+stake) or a boost (only when not boosting). While it asks, `state` is `"deciding"`, `dealer_id`/`seat`
+are the player's table, `reason_code` is `"hesitating"` and `reason` the ask in plain words ("Ada's at
+1.0 %: go to 0.9 % and I'm yours", "I bet 25.0 a round: raise your max bet to 25.0", "boost your table
+and I'll sit"). The owner answers with `set_offer` (rake = target total edge − the game's base edge).
+At `until` the gambler reads the floor again and decides with the same noise: at the player's table
+`reason_code` is `"deal"` ("deal: Pat's 0.9 % it is"), otherwise its usual reason.
 
 ## `GET /gamblers/footfall?dealer_id=<id>`
 

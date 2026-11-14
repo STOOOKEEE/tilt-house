@@ -9,16 +9,21 @@ use axum::body::Body;
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::{Request, StatusCode};
 use axum::Router;
+use core_rules::session::{Hash32, SessionTicket, SettleBatch};
+use core_rules::Game;
 use http_body_util::BodyExt;
 use serde_json::Value;
 use tilt_house_session_server::app::App;
-use tilt_house_session_server::chain::NoChain;
-use tilt_house_session_server::gamblers::{Clock, Gamblers, DEFAULT_ACCOUNT_SUFFIX};
+use tilt_house_session_server::chain::{
+    Chain, ChainSession, DealerInfo, FloorInfo, FloorTable, NoChain,
+};
+use tilt_house_session_server::gamblers::{Clock, GamblerState, Gamblers, DEFAULT_ACCOUNT_SUFFIX};
 use tilt_house_session_server::http::router;
 use tilt_house_session_server::keys::Signer;
 use tilt_house_session_server::poker::{Poker, PokerConfig};
 use tilt_house_session_server::poker_hands::HandLog;
 use tilt_house_session_server::store::Store;
+use tokio::sync::Mutex;
 use tower::ServiceExt;
 
 /// 2026-11-05 20:00 UTC: the evening rush of the day curve.
@@ -70,6 +75,7 @@ fn check_snapshot(g: &Value) {
         [
             "balance",
             "dealer_id",
+            "hesitating",
             "id",
             "name",
             "persona",
@@ -91,6 +97,9 @@ fn check_snapshot(g: &Value) {
     }
     if g["state"] == "walking" {
         assert!(g["dealer_id"].is_null());
+    }
+    if g["state"] != "deciding" {
+        assert!(g["hesitating"].is_null());
     }
 }
 
@@ -201,4 +210,170 @@ async fn an_evening_hour_of_gamblers() {
     let (status, reply) = get(&router, "/gamblers/footfall?dealer_id=nobody").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(reply, serde_json::json!({ "error": "unknown dealer" }));
+}
+
+const USDC: u128 = 1_000_000;
+
+fn dice_table(id: &str, name: &str, seat: usize, edge_bp: u16, player_owned: bool) -> FloorTable {
+    FloorTable {
+        dealer_id: id.to_string(),
+        name: name.to_string(),
+        game: Game::Dice,
+        seat: Some(seat),
+        edge_bp,
+        boost_until: 0,
+        max_bet: 100 * USDC,
+        open: true,
+        player_owned,
+    }
+}
+
+/// `NoChain` with a two-table floor: Ada (an NPC's) by the door, and a player's table, Pat,
+/// next to it and a hair dearer. The test plays its owner through `pat`.
+struct PlayerSecond {
+    inner: NoChain,
+    ada: FloorTable,
+    pat: Mutex<FloorTable>,
+}
+
+impl PlayerSecond {
+    async fn pat(&self) -> FloorTable {
+        self.pat.lock().await.clone()
+    }
+}
+
+impl Chain for PlayerSecond {
+    async fn dealer(&self, dealer_id: &str) -> anyhow::Result<Option<DealerInfo>> {
+        let table = [self.ada.clone(), self.pat().await]
+            .into_iter()
+            .find(|t| t.dealer_id == dealer_id);
+        Ok(table.map(|t| DealerInfo {
+            game: t.game,
+            // Dice: the whole edge is the rake.
+            rake_bp: t.edge_bp,
+            max_bet: t.max_bet,
+            pool_free: 100_000 * USDC,
+            open: t.open,
+        }))
+    }
+    async fn floor(&self) -> anyhow::Result<FloorInfo> {
+        Ok(FloorInfo {
+            tables: vec![self.ada.clone(), self.pat().await],
+            jackpot: 0,
+        })
+    }
+    async fn balance(&self, account: &str) -> anyhow::Result<u128> {
+        self.inner.balance(account).await
+    }
+    async fn open_session(
+        &self,
+        player: &str,
+        key: Option<&str>,
+        ticket: &SessionTicket,
+        sig: &[u8; 64],
+    ) -> anyhow::Result<()> {
+        self.inner.open_session(player, key, ticket, sig).await
+    }
+    async fn session(&self, session_id: &str) -> anyhow::Result<Option<ChainSession>> {
+        self.inner.session(session_id).await
+    }
+    async fn settle(&self, batch: &SettleBatch) -> anyhow::Result<()> {
+        self.inner.settle(batch).await
+    }
+    async fn close(&self, session_id: &str, seed: &Hash32) -> anyhow::Result<()> {
+        self.inner.close(session_id, seed).await
+    }
+}
+
+/// A gambler passing up the player's table stops there and asks (the feed's `hesitating`); the
+/// owner grants it before the pause ends, and the gambler sits at the player's table.
+#[tokio::test(start_paused = true)]
+async fn a_hesitating_gambler_sits_when_the_owner_answers() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let (store, events) = Store::open(dir.path()).unwrap();
+    let chain = PlayerSecond {
+        inner: NoChain::default(),
+        ada: dice_table("ada", "Ada", 0, 200, false),
+        pat: Mutex::new(dice_table("pat", "Pat", 1, 215, true)),
+    };
+    let app = Arc::new(App::load(Signer::random().unwrap(), chain, store, events).unwrap());
+    let clock = Clock::starting_at(EVENING);
+    let gamblers = Arc::new(
+        Gamblers::new(
+            Arc::clone(&app),
+            clock,
+            dir.path(),
+            None,
+            DEFAULT_ACCOUNT_SUFFIX,
+            [42; 32],
+        )
+        .unwrap(),
+    );
+    gamblers.start();
+
+    // Wait for a gambler to stop at Pat and ask.
+    let mut asked = None;
+    for _ in 0..720 {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        asked = gamblers
+            .floor_snapshot()
+            .into_iter()
+            .find(|g| g.hesitating.is_some());
+        if asked.is_some() {
+            break;
+        }
+    }
+    let g = asked.expect("nobody hesitated in an hour");
+    let h = g.hesitating.clone().unwrap();
+    assert_eq!(g.state, GamblerState::Deciding);
+    assert_eq!((g.dealer_id.as_deref(), g.seat), (Some("pat"), Some(1)));
+    assert_eq!(h.dealer_id, "pat");
+    assert_eq!(g.reason_code, Some("hesitating"));
+    let now = clock.now();
+    assert!(h.until > now && h.until <= now + 30, "{h:?} at {now}");
+    let json = serde_json::to_value(&g).unwrap();
+    assert_eq!(
+        keys(&json["hesitating"]),
+        [
+            "dealer_id",
+            "edge_bp",
+            "max_bet",
+            "rival_id",
+            "until",
+            "want"
+        ]
+    );
+
+    // The owner answers through set_offer before the pause ends.
+    {
+        let chain = app.chain();
+        let mut pat = chain.pat.lock().await;
+        match h.want {
+            "lower_edge" => pat.edge_bp = h.edge_bp.unwrap(),
+            "higher_max_bet" => pat.max_bet = h.max_bet.as_ref().unwrap().parse().unwrap(),
+            "boost" => pat.boost_until = u64::MAX,
+            other => panic!("unknown want {other}"),
+        }
+    }
+    let mut sat = None;
+    for _ in 0..12 {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let now = gamblers
+            .floor_snapshot()
+            .into_iter()
+            .find(|s| s.id == g.id)
+            .unwrap();
+        if now.hesitating.is_none() {
+            sat = Some(now);
+            break;
+        }
+    }
+    let now = sat.expect("still hesitating after the pause");
+    assert_eq!(now.dealer_id.as_deref(), Some("pat"), "{now:?}");
+    assert!(matches!(
+        now.state,
+        GamblerState::Deciding | GamblerState::Seated
+    ));
+    assert_eq!(now.reason_code, Some("deal"));
+    assert!(now.reason.unwrap().starts_with("deal: Pat"));
 }

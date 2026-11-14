@@ -37,6 +37,9 @@ pub struct FloorTable {
     pub boost_until: u64,
     pub max_bet: u128,
     pub open: bool,
+    /// Run by a player, not an NPC dealer (the contract's `npc: false`): gamblers that pass it
+    /// up may stop and ask its owner for a better offer.
+    pub player_owned: bool,
 }
 
 /// A session as the contract has it (`get_session`): what landed, whatever the RPC answered.
@@ -63,6 +66,11 @@ pub trait Chain: Send + Sync + 'static {
     ) -> impl Future<Output = anyhow::Result<Option<DealerInfo>>> + Send;
 
     fn floor(&self) -> impl Future<Output = anyhow::Result<FloorInfo>> + Send;
+
+    /// `floor` read now, past any view cache: a hesitating gambler's second look.
+    fn fresh_floor(&self) -> impl Future<Output = anyhow::Result<FloorInfo>> + Send {
+        self.floor()
+    }
 
     /// A player's in-contract balance.
     fn balance(&self, account: &str) -> impl Future<Output = anyhow::Result<u128>> + Send;
@@ -172,6 +180,7 @@ impl Chain for NoChain {
                 boost_until: if boosting { u64::MAX } else { 0 },
                 max_bet: DEMO_MAX_BET,
                 open: true,
+                player_owned: false,
             })
             .collect();
         Ok(FloorInfo { tables, jackpot: 0 })

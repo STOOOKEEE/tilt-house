@@ -17,8 +17,9 @@ use anyhow::{anyhow, Context};
 use axum::http::StatusCode;
 use core_rules::floor::SEATS;
 use core_rules::gambler_rules::{
-    arrives, choose_table, desired_stake, parts, pick_bet, plan_session, score, GamblerReason,
-    Memory, Persona, SessionPlan, TableView, LINEUP,
+    arrives, choose_table, desired_stake, hesitation, parts, pick_bet, plan_session, score,
+    table_noise, Decision, GamblerReason, Hesitation, Memory, Persona, SessionPlan, TableView,
+    Want, LINEUP,
 };
 use core_rules::session::{sha256, BjAction, SESSION_MIN_BET};
 use core_rules::{Bet, BjMove, BjStrategy, DiceBet, Game, Rng, RouletteBet};
@@ -94,6 +95,43 @@ pub struct GamblerSnapshot {
     pub balance: u128,
     #[serde(with = "core_rules::amount_str")]
     pub session_net: i128,
+    /// Set while it stands at a player-owned table, asking its owner for one change.
+    pub hesitating: Option<Hesitating>,
+}
+
+/// What a hesitating gambler asks of the owner of the table it stands at
+/// (docs/gamblers-api.md).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Hesitating {
+    pub dealer_id: String,
+    /// The table it would pick now; `None`: it would leave.
+    pub rival_id: Option<String>,
+    /// `lower_edge` | `higher_max_bet` | `boost`.
+    pub want: &'static str,
+    /// `lower_edge`: the total edge in bp at or below which it sits.
+    pub edge_bp: Option<u16>,
+    /// `higher_max_bet`: the max bet in base units at or above which it sits.
+    pub max_bet: Option<String>,
+    /// Unix seconds: when it decides.
+    pub until: u64,
+}
+
+impl Hesitating {
+    fn new(dealer_id: &str, rival_id: Option<String>, want: Want, until: u64) -> Self {
+        let (edge_bp, max_bet) = match want {
+            Want::LowerEdge { edge_bp } => (Some(edge_bp), None),
+            Want::HigherMaxBet { max_bet } => (None, Some(max_bet.to_string())),
+            Want::Boost => (None, None),
+        };
+        Self {
+            dealer_id: dealer_id.to_string(),
+            rival_id,
+            want: want.code(),
+            edge_bp,
+            max_bet,
+            until,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -123,6 +161,23 @@ struct ArrivalRecord {
     on_floor: Vec<String>,
     chose: Option<String>,
     reason: String,
+}
+
+/// One look at the floor: what the gambler picks there, and whether it stops to ask first.
+struct Look {
+    at: u64,
+    jackpot: u128,
+    on_floor: Vec<String>,
+    chosen: Option<FloorTable>,
+    decision: Decision,
+    ask: Option<Ask>,
+}
+
+/// A hesitation: the player-owned table, the feed's payload and the rule's answer.
+struct Ask {
+    table: FloorTable,
+    hesitating: Hesitating,
+    rule: Hesitation,
 }
 
 struct Member {
@@ -243,6 +298,7 @@ impl<C: Chain> Gamblers<C> {
                 seat: None,
                 reason_code: None,
                 reason: None,
+                hesitating: None,
                 balance: 0,
                 session_net: 0,
             })
@@ -372,6 +428,7 @@ impl<C: Chain> Gamblers<C> {
             s.state = state;
             s.dealer_id = table.map(|t| t.dealer_id.clone());
             s.seat = table.and_then(|t| t.seat);
+            s.hesitating = None;
             if state != GamblerState::Seated {
                 s.session_net = 0;
             }
@@ -483,7 +540,10 @@ impl<C: Chain> Gamblers<C> {
             if let Err(err) = self.visit(index, balance, &mut rng).await {
                 eprintln!("gambler {}: {err:#}", self.members[index].id);
             }
-            self.update(index, |s| s.state = GamblerState::Leaving);
+            self.update(index, |s| {
+                s.state = GamblerState::Leaving;
+                s.hesitating = None;
+            });
             sleep(Duration::from_secs(LEAVE_SECS)).await;
             self.show(index, GamblerState::Away, None);
             balance = self.read_balance(index).await.unwrap_or(balance);
@@ -502,47 +562,51 @@ impl<C: Chain> Gamblers<C> {
         self.show(index, GamblerState::Walking, None);
         sleep(Duration::from_secs(WALK_SECS)).await;
 
-        let floor = self.floor().await?;
-        let at = self.clock.now();
-        let mut seated: Vec<&FloorTable> = floor
-            .tables
-            .iter()
-            .filter(|t| t.open && t.seat.is_some() && t.max_bet >= SESSION_MIN_BET)
-            // Poker tables call their NPCs in themselves (`Poker`), by the seat rule.
-            .filter(|t| t.game != Game::Poker)
-            .collect();
-        seated.sort_by_key(|t| t.seat);
-        let views: Vec<TableView> = seated.iter().map(|t| self.table_view(t, at)).collect();
         let memory = lock(&self.memories)
             .get(&member.id)
             .cloned()
             .unwrap_or_default();
-        let decision = choose_table(
-            member.persona,
-            balance,
-            stake,
-            &views,
-            &memory,
-            floor.jackpot,
-            rng,
-        );
-        let chosen = decision.table.and_then(|i| seated.get(i).copied());
-        self.record_arrival(ArrivalRecord {
-            at,
-            gambler: member.id.clone(),
-            persona: member.persona,
-            stake,
-            memory,
-            jackpot: floor.jackpot,
-            on_floor: seated.iter().map(|t| t.dealer_id.clone()).collect(),
-            chose: chosen.map(|t| t.dealer_id.clone()),
-            reason: decision.text.clone(),
-        });
-        self.say(index, decision.reason.code(), decision.text);
-        self.show(index, GamblerState::Deciding, chosen);
-        sleep(Duration::from_secs(DECIDE_SECS)).await;
+        // A hesitating gambler decides again on these same draws.
+        let mut replay = rng.clone();
+        let floor = self.floor().await?;
+        let mut look = self.look(&floor, member.persona, balance, stake, &memory, rng);
+        let chosen = match look.ask.take() {
+            None => {
+                self.say(
+                    index,
+                    look.decision.reason.code(),
+                    look.decision.text.clone(),
+                );
+                self.show(index, GamblerState::Deciding, look.chosen.as_ref());
+                let chosen = self.record_look(index, stake, memory, look);
+                sleep(Duration::from_secs(DECIDE_SECS)).await;
+                chosen
+            }
+            Some(ask) => {
+                self.say(index, "hesitating", ask.rule.text.clone());
+                self.show(index, GamblerState::Deciding, Some(&ask.table));
+                self.update(index, |s| s.hesitating = Some(ask.hesitating));
+                sleep(Duration::from_secs(DECIDE_SECS)).await;
+                // The owner may have answered: read the floor as it is now.
+                let floor = self.app.chain().fresh_floor().await?;
+                let mut look =
+                    self.look(&floor, member.persona, balance, stake, &memory, &mut replay);
+                let mut code = look.decision.reason.code();
+                let won = look
+                    .chosen
+                    .as_ref()
+                    .filter(|t| t.dealer_id == ask.table.dealer_id);
+                if let Some(table) = won {
+                    code = "deal";
+                    look.decision.text = ask.rule.deal(&self.table_view(table, look.at));
+                }
+                self.say(index, code, look.decision.text.clone());
+                self.show(index, GamblerState::Deciding, look.chosen.as_ref());
+                self.record_look(index, stake, memory, look)
+            }
+        };
 
-        let Some(table) = chosen else {
+        let Some(table) = chosen.as_ref() else {
             return Ok(());
         };
         let Some(plan) = plan_at(member.persona, stake, table.max_bet, balance, rng) else {
@@ -570,6 +634,84 @@ impl<C: Chain> Gamblers<C> {
         };
         self.say(index, "session_over", text);
         Ok(())
+    }
+
+    /// Scores the seated tables of `floor` (`choose_table`, drawing from `rng`) and checks
+    /// whether the gambler stops at a player-owned table to ask first (`hesitation`).
+    fn look(
+        &self,
+        floor: &FloorInfo,
+        persona: Persona,
+        balance: u128,
+        stake: u128,
+        memory: &Memory,
+        rng: &mut Rng,
+    ) -> Look {
+        let at = self.clock.now();
+        let mut seated: Vec<&FloorTable> = floor
+            .tables
+            .iter()
+            .filter(|t| t.open && t.seat.is_some() && t.max_bet >= SESSION_MIN_BET)
+            // Poker tables call their NPCs in themselves (`Poker`), by the seat rule.
+            .filter(|t| t.game != Game::Poker)
+            .collect();
+        seated.sort_by_key(|t| t.seat);
+        let views: Vec<TableView> = seated.iter().map(|t| self.table_view(t, at)).collect();
+        let noise = table_noise(&mut rng.clone(), views.len());
+        let decision = choose_table(persona, balance, stake, &views, memory, floor.jackpot, rng);
+        let owned: Vec<bool> = seated.iter().map(|t| t.player_owned).collect();
+        let ask = hesitation(
+            persona,
+            stake,
+            &views,
+            &owned,
+            memory,
+            floor.jackpot,
+            &noise,
+            &decision,
+        )
+        .map(|rule| {
+            let table = seated[rule.table].clone();
+            let rival_id = rule.rival.map(|i| seated[i].dealer_id.clone());
+            let hesitating =
+                Hesitating::new(&table.dealer_id, rival_id, rule.want, at + DECIDE_SECS);
+            Ask {
+                table,
+                hesitating,
+                rule,
+            }
+        });
+        Look {
+            at,
+            jackpot: floor.jackpot,
+            on_floor: seated.iter().map(|t| t.dealer_id.clone()).collect(),
+            chosen: decision.table.map(|i| seated[i].clone()),
+            decision,
+            ask,
+        }
+    }
+
+    /// Keeps a look's outcome for the footfall; returns the table chosen.
+    fn record_look(
+        &self,
+        index: usize,
+        stake: u128,
+        memory: Memory,
+        look: Look,
+    ) -> Option<FloorTable> {
+        let member = &self.members[index];
+        self.record_arrival(ArrivalRecord {
+            at: look.at,
+            gambler: member.id.clone(),
+            persona: member.persona,
+            stake,
+            memory,
+            jackpot: look.jackpot,
+            on_floor: look.on_floor,
+            chose: look.chosen.as_ref().map(|t| t.dealer_id.clone()),
+            reason: look.decision.text,
+        });
+        look.chosen
     }
 
     fn record_arrival(&self, record: ArrivalRecord) {
@@ -821,5 +963,52 @@ mod tests {
             &mut rng,
         );
         assert_eq!(plan.unwrap().stake, SESSION_MIN_BET);
+    }
+
+    /// The `hesitating` field of `GET /gamblers/floor`, as docs/gamblers-api.md has it.
+    #[test]
+    fn hesitating_feed_shape() {
+        let json = |h: Hesitating| serde_json::to_value(h).unwrap();
+        let edge = Hesitating::new(
+            "pat",
+            Some("ada".to_string()),
+            Want::LowerEdge { edge_bp: 192 },
+            1_000,
+        );
+        assert_eq!(
+            json(edge),
+            serde_json::json!({"dealer_id": "pat", "rival_id": "ada", "want": "lower_edge",
+                "edge_bp": 192, "max_bet": null, "until": 1_000})
+        );
+        let bet = Hesitating::new(
+            "pat",
+            None,
+            Want::HigherMaxBet {
+                max_bet: 25_000_000,
+            },
+            1_000,
+        );
+        assert_eq!(
+            json(bet),
+            serde_json::json!({"dealer_id": "pat", "rival_id": null, "want": "higher_max_bet",
+                "edge_bp": null, "max_bet": "25000000", "until": 1_000})
+        );
+        let boost = json(Hesitating::new("pat", None, Want::Boost, 1_000));
+        assert_eq!(boost["want"], "boost");
+        assert!(boost["edge_bp"].is_null() && boost["max_bet"].is_null());
+        let snapshot = GamblerSnapshot {
+            id: "g-mia".to_string(),
+            name: "Mia".to_string(),
+            persona: Persona::BargainHunter,
+            state: GamblerState::Walking,
+            dealer_id: None,
+            seat: None,
+            reason_code: None,
+            reason: None,
+            balance: 0,
+            session_net: 0,
+            hesitating: None,
+        };
+        assert!(serde_json::to_value(snapshot).unwrap()["hesitating"].is_null());
     }
 }
