@@ -60,6 +60,7 @@ the team's two labeled house test tables, `test-1` and `test-2` (accounts
 action at most: answer a gambler hesitating at the table (`set_offer`, at most half of the asks and
 some left at random), bid for a seat again when evicted, raise its rent ~10 % when it is the
 floor's weakest (up to `OWNER_BOT_MAX_RENT`, 2 tUSDC/h), invest its in-contract balance when the
-free bankroll covers under 2 h of rent. It sends only `set_offer`, `bid_for_seat` and `invest`:
+free bankroll covers under 2 h of rent, and keep the max bet at the largest the pool covers (the
+contract's clamp, free bankroll / worst-case multiple; lifted once it falls under 90 % of it). It sends only `set_offer`, `bid_for_seat` and `invest`:
 never a session, never $TILT. One JSON line per decision and per transaction (with its hash); on
 any error it logs at level error and exits, and the unit gives up after 3 restarts in an hour.

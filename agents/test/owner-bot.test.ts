@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decide, investAmount, loadBotConfig, offerFor, parseAsks, parseFloorRents, parseOwnedTable, rebid, rentRaise, shouldAnswer, SKIP_CHANCE, type Ask, type FloorRents, type OwnedTable } from "../src/owner-bot.ts";
+import { decide, investAmount, loadBotConfig, maxBetTopUp, offerFor, parseAsks, parseFloorRents, parseOwnedTable, rebid, rentRaise, shouldAnswer, SKIP_CHANCE, type Ask, type FloorRents, type OwnedTable } from "../src/owner-bot.ts";
 
 const NOW = 1_794_660_000;
 const TUSDC = 1_000_000n;
@@ -108,6 +108,20 @@ describe("investAmount", () => {
   });
 });
 
+describe("maxBetTopUp", () => {
+  it("lifts the max bet to what the pool covers, rake kept", () => {
+    // 450 tUSDC free / ×100 (dice) = 4.5; roulette ×36 = 12.5.
+    expect(maxBetTopUp(table())).toEqual({ dealer_id: "test-1", rake_bp: 300, max_bet: "4500000", boost_secs: 0 });
+    expect(maxBetTopUp(table({ game: "roulette", worstCaseMultiple: 36n, maxBet: 170_000n, rakeBp: 79 }))).toMatchObject({ rake_bp: 79, max_bet: "12500000" });
+  });
+
+  it("leaves a max bet near the cap alone, and never offers under the minimum bet", () => {
+    expect(maxBetTopUp(table({ maxBet: 4_050_000n }))).toBeNull();
+    expect(maxBetTopUp(table({ maxBet: 4_049_999n }))?.max_bet).toBe("4500000");
+    expect(maxBetTopUp(table({ maxBet: 50_000n, free: 9n * TUSDC }))).toBeNull();
+  });
+});
+
 describe("decide", () => {
   it("does one thing per pass: the ask first, then the seat, then the bankroll", () => {
     const weakest = { lowestRent: 1_100_000n, outbidMin: 1_210_000n };
@@ -115,7 +129,8 @@ describe("decide", () => {
     expect(decide(table(), weakest, ask({}), false, 0n, MAX_RENT, NOW)).toMatchObject({ method: "bid_for_seat", args: { rent_per_hour: "1210000" } });
     expect(decide(table({ seat: null, rent: null }), FLOOR, null, false, 0n, MAX_RENT, NOW)).toMatchObject({ method: "bid_for_seat", why: "off the floor" });
     expect(decide(table({ free: 2_000_000n }), FLOOR, null, false, 5n * TUSDC, MAX_RENT, NOW)).toMatchObject({ method: "invest", args: { amount: "5000000" } });
-    expect(decide(table(), FLOOR, null, false, 5n * TUSDC, MAX_RENT, NOW)).toBeNull();
+    expect(decide(table(), FLOOR, null, false, 5n * TUSDC, MAX_RENT, NOW)).toMatchObject({ method: "set_offer", args: { max_bet: "4500000" } });
+    expect(decide(table({ maxBet: 4_500_000n }), FLOOR, null, false, 5n * TUSDC, MAX_RENT, NOW)).toBeNull();
   });
 });
 
