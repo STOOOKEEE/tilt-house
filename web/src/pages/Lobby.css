@@ -1,0 +1,42 @@
+/* The lobby's owner hero: run a table, the four steps to a seat. */
+
+.owner-hero {
+  border-left: 3px solid var(--pink);
+}
+
+.owner-hero h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--pink);
+}
+
+.owner-hero p {
+  margin: 0;
+}
+
+.owner-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.6rem 1.5rem;
+  margin: 0;
+  padding-left: 1.4rem;
+  font-size: 0.85rem;
+}
+
+.owner-steps li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.owner-steps a {
+  font-weight: 700;
+}
+
+.owner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+}

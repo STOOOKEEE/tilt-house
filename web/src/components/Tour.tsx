@@ -45,7 +45,7 @@ export function TourOffer({ dispatch }: { dispatch: Dispatch<TourAction> }) {
   return (
     <div className="tour-card tour-offer" role="dialog" aria-label="Tour offer">
       <strong>New in the house?</strong>
-      <span>One minute, seven stops: how gamblers, tables, rent and the jackpot fit together.</span>
+      <span>One minute, seven stops: your customers, your seat, your rivals and the jackpot.</span>
       <div className="tour-actions">
         <button type="button" onClick={() => dispatch({ type: 'start' })}>
           Show me
@@ -124,44 +124,47 @@ interface BodyProps {
 
 const STEP_VIEWS: Record<(typeof TOUR_STEPS)[number], { title: string; caption: ReactNode; Body: (props: BodyProps) => ReactNode }> = {
   walk_in: {
-    title: 'Gamblers walk in',
+    title: 'Your customers walk in',
     caption: (
       <>
-        The customers are NPC gamblers, each with its own NEAR wallet. The house pays them a salary of{' '}
+        Your customers are NPC gamblers, each with its own NEAR wallet. The house pays them a salary of{' '}
         {formatUsdc(GAMBLER_SALARY_PER_HOUR, 0)} {tokenSymbol()} an hour (up to {formatUsdc(GAMBLER_MAX_BALANCE, 0)}): the only
-        money that enters the economy.
+        money that enters the economy, and your table&apos;s to win.
       </>
     ),
     Body: WalkInBody,
   },
   compare: {
-    title: 'They shop for the best table',
-    caption: 'Every gambler scores every table on the floor: edge, max bet, boosts, the walk from the door. Then it picks one.',
+    title: 'They weigh you against your rivals',
+    caption:
+      'Every gambler scores every table on the floor: edge, max bet, boosts, the walk from the door. Your offer has to beat your rivals’ to win it.',
     Body: CompareBody,
   },
   pools: {
-    title: 'Every table is a liquidity pool',
-    caption: 'The pool banks every bet and earns the edge. Players or NPC dealers own the tables; anyone can back one and share the profit.',
+    title: 'Your table is a liquidity pool',
+    caption:
+      'The pool banks every bet your customers place and earns the edge, minus your rent. NPC dealers run the launch tables; anyone can back yours, or a rival’s, and share the profit.',
     Body: PoolBody,
   },
   seats: {
-    title: 'Location, location',
-    caption: `Seat 1 is by the door and sees ${SEAT_TRAFFIC_BP[0] / 10_000}× the passers-by, so it rents for more. Floor full? Outbid the cheapest seat by 10 % and it is yours.`,
+    title: 'Your seat: location, location',
+    caption: `Seat 1 is by the door and sees ${SEAT_TRAFFIC_BP[0] / 10_000}× the passers-by, so it rents for more; your first seat is likely the back one (${SEAT_TRAFFIC_BP[SEAT_TRAFFIC_BP.length - 1] / 10_000}×). Floor full? Outbid your cheapest rival by 10 % and its seat is yours.`,
     Body: SeatsBody,
   },
   jackpot: {
-    title: 'Rent fills the jackpot',
-    caption: `Every ${tokenSymbol()} of rent goes into one pot, and every settled bet has a shot at all of it. Money comes back to the players.`,
+    title: 'Your rent fills the jackpot',
+    caption: `Every ${tokenSymbol()} of rent you and your rivals pay goes into one pot, and every settled bet has a shot at all of it: money comes back to your customers.`,
     Body: JackpotBody,
   },
   fair: {
-    title: 'Provably fair, every round',
-    caption: 'Sit down and the server commits to a secret seed (its hash goes on chain). Play. Leave, the seed is revealed, and your browser replays every round.',
+    title: 'Provably fair, your table too',
+    caption:
+      'A customer sits down and the server commits to a secret seed (its hash goes on chain). They play. They leave, the seed is revealed, and their browser replays every round: no house can cheat, yours included.',
     Body: FairBody,
   },
   your_move: {
     title: 'Your move',
-    caption: `Run a table, back a dealer, or try your luck. Testnet ${tokenSymbol()}, real rules.`,
+    caption: `Open your table and win your customers from your rivals. Or back a table, or sit at one as a customer. Testnet ${tokenSymbol()}, real rules.`,
     Body: YourMoveBody,
   },
 }
@@ -195,7 +198,7 @@ function WalkInBody({ floor }: BodyProps) {
           </span>
         </div>
       ) : (
-        <span className="muted">The floor is quiet right now: the next gambler is on its way.</span>
+        <span className="muted">The floor is quiet right now: your next customer is on its way.</span>
       )}
     </div>
   )
@@ -392,13 +395,13 @@ function YourMoveBody({ floor, dispatch }: BodyProps) {
   return (
     <div className="tour-actions">
       <Link className="button" to="/open" onClick={close}>
-        Open a table
+        Open your table
       </Link>
       <Link className="button" to="/pools" onClick={close}>
-        Back a dealer
+        Back a table
       </Link>
-      <Link className="button" to={table ? `/table/${table.dealer.id}` : '/'} onClick={close}>
-        Play{table ? ` at ${table.dealer.name}` : ''}
+      <Link className="button ghost" to={table ? `/table/${table.dealer.id}` : '/'} onClick={close}>
+        Sit as a customer{table ? ` at ${table.dealer.name}` : ''}
       </Link>
     </div>
   )

@@ -11,6 +11,7 @@ import { MyTable } from './pages/MyTable'
 import { OpenTable } from './pages/OpenTable'
 import { Poker } from './pages/Poker'
 import { Pools } from './pages/Pools'
+import { Season } from './pages/Season'
 import { SeatMarket } from './pages/SeatMarket'
 import { Table } from './pages/Table'
 import { Tilt } from './pages/Tilt'
@@ -31,6 +32,7 @@ export default function App({ config }: { config: Config }) {
           <Route path="/seats" element={<SeatMarket />} />
           <Route path="/pools" element={<Pools />} />
           <Route path="/dealers" element={<Dealers />} />
+          <Route path="/season" element={<Season />} />
           <Route path="/sim" element={<FastForward />} />
           <Route path="/tilt" element={<Tilt />} />
           {/* Not in the nav until the go decision: reachable by URL only. */}

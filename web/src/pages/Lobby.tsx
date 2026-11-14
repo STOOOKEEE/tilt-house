@@ -6,7 +6,7 @@ import { TiltHourBanner } from '../components/TiltHourBanner'
 import { TourOffer, TourPanel, useFootfalls, type TourFloor } from '../components/Tour'
 import { formatBp, formatCountdown, formatPrice, formatPriceChange, formatUsdc, tokenSymbol } from '../format'
 import { freeBankroll, reopenNeeds } from '../house'
-import { devEvict, floorSeats, getFloorState, type FloorState, type SeatedTable } from '../near/floor'
+import { devEvict, floorSeats, MIN_TABLE_SEED, type FloorState, getFloorState, type SeatedTable } from '../near/floor'
 import { useNear } from '../near/useNear'
 import { PAGE_POLL_MS, usePoll } from '../near/usePoll'
 import type { DealerView } from '../near/views'
@@ -36,6 +36,8 @@ import {
   type TourState,
 } from '../tour'
 import { useNow } from '../useNow'
+import { SeasonPodium, useSeasonRanking } from './Season'
+import './Lobby.css'
 
 /** Dev demo `?evict=<id>`: wait this long after the floor appears, then play the seat change. */
 const DEV_EVICT_DELAY_MS = 3_000
@@ -45,6 +47,8 @@ const LIVE_GAMBLERS_POLL_MS = 2_000
 const DEMO_FRAME_MS = 6_000
 /** The demo starts at the first frame with this many gamblers on the floor, so it is lively at once. */
 const DEMO_START_CROWD = 4
+/** The relayer's `ACTIVATION_AMOUNT`: what a new USD player's first login brings (300 tUSDC). */
+const STARTER_CAPITAL = 300_000_000n
 
 export function Lobby() {
   const { config } = useNear()
@@ -74,13 +78,12 @@ export function Lobby() {
     footfalls,
     tableSeat,
   }
+  const season = useSeasonRanking(state, config.houseContract === config.usdFloor)
   return (
     <>
       <h1>Lobby</h1>
-      <p className="muted">
-        Six seats on the floor, rented by the hour. Every dealer is a liquidity pool: pick the table with the offer you
-        like, back a dealer in Pools, or <Link to="/open">open your own table</Link>.
-      </p>
+      <OwnerHero seats={seats} rentFrom={state?.floor.outbid_min ?? null} />
+      {season.rows ? <SeasonPodium rows={season.rows} /> : null}
       <TiltHourBanner />
       {polled.error ? <p className="loss">Could not load the floor: {polled.error}</p> : null}
       {state === null && !polled.error ? <p className="muted">loading tables…</p> : null}
@@ -95,6 +98,62 @@ export function Lobby() {
       <p className="muted floor-mode">{gamblers.label}</p>
       {state && seats ? <DealerList dealers={state.dealers} seats={seats} /> : null}
     </>
+  )
+}
+
+/** The main loop: the player runs a table and the NPC gamblers are its customers. */
+function OwnerHero({ seats, rentFrom }: { seats: (SeatedTable | null)[] | null; rentFrom: string | null }) {
+  const { config } = useNear()
+  // Practice play at a seated table: same rules, local seed, no login, nothing on chain.
+  const practice = seats?.find((s) => s !== null && s.dealer.open)?.dealer
+  const testPath = practice ? `${tablePath(practice)}?demo=1` : '/poker?demo=1'
+  const chips =
+    config.currency === 'usd'
+      ? `log in: your first visit brings ${formatUsdc(STARTER_CAPITAL, 0)} ${tokenSymbol()}, deposit them in the house`
+      : `log in, claim your welcome ${tokenSymbol()} and deposit it in the house`
+  return (
+    <section className="panel owner-hero">
+      <h2>Run a table: you are the house</h2>
+      <p className="muted">
+        The NPC gamblers walking this floor are your customers: each has its own NEAR wallet and sits at the table with the
+        best offer. Win them over and your table earns the edge on every bet.
+      </p>
+      <ol className="owner-steps">
+        <li>
+          <Link to="/pools">Get chips</Link>
+          <span className="muted">{chips}</span>
+        </li>
+        <li>
+          <Link to="/open">Open a table</Link>
+          <span className="muted">
+            seed it with {formatUsdc(MIN_TABLE_SEED, 0)} {tokenSymbol()} or more: you own its pool
+          </span>
+        </li>
+        <li>
+          <Link to="/my-table">Take a seat</Link>
+          <span className="muted">
+            from {rentFrom === null ? '…' : formatUsdc(rentFrom)} {tokenSymbol()}/h; seat 1 by the entrance sees the most
+            passers-by
+          </span>
+        </li>
+        <li>
+          <Link to="/my-table">Win customers</Link>
+          <span className="muted">beat your rivals on edge, max bet and boosts</span>
+        </li>
+      </ol>
+      <div className="owner-actions">
+        <Link className="button" to="/open">
+          Open your table
+        </Link>
+        <Link className="button ghost" to="/my-table">
+          My table
+        </Link>
+        <Link className="button ghost" to={testPath}>
+          Test a table
+        </Link>
+        <span className="muted">practice as a customer: no login, nothing on chain</span>
+      </div>
+    </section>
   )
 }
 
@@ -263,8 +322,8 @@ function DealerRow({ dealer, seat }: { dealer: DealerView; seat: SeatInfo | null
       </td>
       <td>
         {dealer.open && seat ? (
-          <Link className="button" to={tablePath(dealer)}>
-            Play
+          <Link className="button ghost" to={tablePath(dealer)}>
+            Sit as a customer
           </Link>
         ) : dealer.open ? (
           <span className="muted">no seat: no bets</span>

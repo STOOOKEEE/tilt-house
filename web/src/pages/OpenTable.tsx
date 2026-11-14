@@ -3,11 +3,11 @@ import { Link } from 'react-router'
 import { LoginPrompt } from '../components/LoginPrompt'
 import { formatUsdc, parseUsdc, tokenSymbol } from '../format'
 import { EXPLORER_TX } from '../house'
-import { getFloorState, MIN_TABLE_SEED, openTableProblem, PREPAY_HOURS } from '../near/floor'
+import { getFloorState, MIN_TABLE_SEED, openTableProblem, PREPAY_HOURS, SEAT_TRAFFIC_BP, SEATS, type SeatView } from '../near/floor'
 import { fullAccessCall } from '../near/session'
 import { useNear } from '../near/useNear'
 import { PAGE_POLL_MS, usePlayer, usePoll } from '../near/usePoll'
-import type { Game } from '../near/views'
+import { getTokenBalance, type Game } from '../near/views'
 import { dealerLook, LOOK_PRESETS, type LookPreset } from '../scene/looks'
 
 const GAMES: readonly Game[] = ['dice', 'roulette', 'blackjack']
@@ -27,6 +27,15 @@ const LOOK_LABELS: Record<LookPreset, string> = {
   bare: 'bare head',
 }
 
+/** The label of the second call: failing there leaves an open table without a seat. */
+const SEAT_STEP = 'bid for a seat'
+const BACK_SEAT = SEATS - 1
+
+/** 15_000 bp → "1.5×": a seat's share of the passers-by. */
+function trafficText(bp: number): string {
+  return `${(bp / 10_000).toFixed(1)}×`
+}
+
 type Step =
   | { state: 'idle' }
   | { state: 'busy'; label: string }
@@ -38,8 +47,12 @@ export function OpenTable() {
   const loadFloor = useCallback(() => getFloorState(config), [config])
   const floor = usePoll(loadFloor, PAGE_POLL_MS)
   const player = usePlayer()
-  const [id, setId] = useState('')
+  const loadWallet = useCallback(() => getTokenBalance(config.rpcUrl, config.tokenContract, walletId), [config, walletId])
+  const wallet = usePoll(walletId ? loadWallet : null, PAGE_POLL_MS)
   const [name, setName] = useState('')
+  // The id follows the name until the player edits it.
+  const [typedId, setTypedId] = useState<string | null>(null)
+  const id = typedId ?? tableIdFrom(name)
   const [game, setGame] = useState<Game>('dice')
   const [temperament, setTemperament] = useState<Temperament>('promoter')
   const [look, setLook] = useState<LookPreset>('top-hat')
@@ -75,7 +88,7 @@ export function OpenTable() {
     }
     try {
       await call('open the table', 'open_table', { id, name: name.trim(), game, temperament, look, seed_amount: String(seedUnits) })
-      const { txHash } = await call('bid for a seat', 'bid_for_seat', { dealer_id: id, rent_per_hour: String(rentUnits) })
+      const { txHash } = await call(SEAT_STEP, 'bid_for_seat', { dealer_id: id, rent_per_hour: String(rentUnits) })
       setStep({ state: 'done', txHash })
     } catch (error) {
       if (error instanceof StepError) setStep({ state: 'error', label: error.label, message: error.message })
@@ -90,9 +103,17 @@ export function OpenTable() {
     <>
       <h1>Open your table</h1>
       <p className="muted">
-        Seed a table from your house balance and you own it: you hold its founding LP shares and pick how its dealer
-        plays. Then bid rent for a seat on the floor; the rent goes to the jackpot. A table off the floor takes no bets.
+        You are the house. Seed a table from your house balance and you own it: you hold its founding LP shares and pick how
+        its dealer plays. Then rent a seat on the floor, where the NPC gamblers, your customers, walk by; the rent goes to
+        the jackpot. A table off the floor takes no bets.
       </p>
+      <Checklist
+        house={player.data ? BigInt(player.data.balance) : null}
+        wallet={wallet.data ? BigInt(wallet.data) : null}
+        seats={floor.data?.floor.seats ?? null}
+        rentToSit={rentToSit}
+        loggedIn={Boolean(walletId)}
+      />
       {floor.data?.mock ? (
         <p className="loss">
           This contract ({config.houseContract}) has no floor yet (no <code>get_floor</code>): opening a table will fail
@@ -111,7 +132,7 @@ export function OpenTable() {
           <input
             value={id}
             maxLength={16}
-            onChange={(e) => setId(e.target.value.toLowerCase())}
+            onChange={(e) => setTypedId(e.target.value.toLowerCase())}
             placeholder="lucky-lou"
             pattern="[a-z0-9-]{2,16}"
           />
@@ -174,7 +195,7 @@ export function OpenTable() {
           Open the table and bid
         </button>
       </form>
-      <OpenStatus step={step} id={id} />
+      <OpenStatus step={step} id={id} seat={floor.data?.floor.seats.find((s) => s.dealer_id === id) ?? null} />
     </>
   )
 }
@@ -189,7 +210,101 @@ class StepError extends Error {
   }
 }
 
-function OpenStatus({ step, id }: { step: Step; id: string }) {
+/** "Lucky Lou" → "lucky-lou": a valid table id (a-z 0-9 -, at most 16 characters). */
+function tableIdFrom(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .slice(0, 16)
+    .replace(/^-+|-+$/g, '')
+}
+
+/**
+ * The seat a bid at `outbid_min` takes, as core `seat_for_bid` picks it: the cheapest empty seat
+ * (the back of the room), else the weakest seated table's (lowest rent, most recently seated).
+ */
+function seatToTake(seats: readonly SeatView[]): SeatView | null {
+  const empty = seats.filter((s) => s.dealer_id === null)
+  if (empty.length > 0) return empty.reduce((a, b) => (BigInt(b.min_rent) <= BigInt(a.min_rent) ? b : a))
+  let weakest: SeatView | null = null
+  for (const s of seats) {
+    if (weakest === null) {
+      weakest = s
+      continue
+    }
+    const [rent, low] = [BigInt(s.rent_per_hour), BigInt(weakest.rent_per_hour)]
+    if (rent < low || (rent === low && s.seated_at > weakest.seated_at)) weakest = s
+  }
+  return weakest
+}
+
+interface ChecklistProps {
+  house: bigint | null
+  wallet: bigint | null
+  seats: readonly SeatView[] | null
+  rentToSit: bigint | null
+  loggedIn: boolean
+}
+
+/** What the player has and what a table on the floor takes: the seed, then a seat. */
+function Checklist({ house, wallet, seats, rentToSit, loggedIn }: ChecklistProps) {
+  const seat = seats ? seatToTake(seats) : null
+  const symbol = tokenSymbol()
+  const seeded = house !== null && house >= MIN_TABLE_SEED
+  const missing = house === null ? MIN_TABLE_SEED : MIN_TABLE_SEED - house
+  const canDeposit = wallet !== null && wallet >= missing
+  return (
+    <section className="panel">
+      <h2>What it takes</h2>
+      <p>
+        You have: in the house <span className="money">{house === null ? '—' : formatUsdc(house)} {symbol}</span> · in your
+        wallet <span className="money">{wallet === null ? '—' : formatUsdc(wallet)} {symbol}</span>
+      </p>
+      <ol>
+        <li className={seeded ? 'win' : undefined}>
+          {seeded ? '✓ ' : ''}A seed of at least {formatUsdc(MIN_TABLE_SEED, 0)} {symbol} in the house.{' '}
+          {seeded ? null : loggedIn ? (
+            <span className="muted">
+              {canDeposit ? 'Deposit' : 'Get test chips and deposit'} {formatUsdc(missing)} {symbol} in <Link to="/pools">Pools</Link>.
+            </span>
+          ) : (
+            <span className="muted">Log in first: a new account gets its starting chips on the first visit.</span>
+          )}
+        </li>
+        <li>
+          A seat: {rentToSit === null || seat === null ? '…' : <SeatPrice seat={seat} rent={rentToSit} />}{' '}
+          <span className="muted">
+            {String(PREPAY_HOURS)} hours of rent are prepaid from the seed, then the pool pays it by the second.
+          </span>
+        </li>
+      </ol>
+      <p className="muted">
+        The goal: climb to seat 1, by the entrance, where {trafficText(SEAT_TRAFFIC_BP[0])} the passers-by walk past. Buy a
+        better seat when its holder lists it (<Link to="/seats">Seats</Link>), or outbid your way in.
+      </p>
+    </section>
+  )
+}
+
+function SeatPrice({ seat, rent }: { seat: SeatView; rent: bigint }) {
+  const price = (
+    <span className="money">
+      {formatUsdc(rent)} {tokenSymbol()}/h
+    </span>
+  )
+  const where = `${trafficText(seat.traffic_bp)} passers-by${seat.seat === BACK_SEAT ? ', the back of the room' : ''}`
+  return seat.dealer_id === null ? (
+    <>
+      the cheapest is seat {seat.seat + 1} ({where}) at its minimum rent, {price}.
+    </>
+  ) : (
+    <>
+      the floor is full: outbid the cheapest table by 10 % ({price}) and take its seat {seat.seat + 1} ({where}).
+    </>
+  )
+}
+
+function OpenStatus({ step, id, seat }: { step: Step; id: string; seat: SeatView | null }) {
   switch (step.state) {
     case 'idle':
       return null
@@ -197,19 +312,41 @@ function OpenStatus({ step, id }: { step: Step; id: string }) {
       return <p className="muted">{step.label}: confirm in the Privy window…</p>
     case 'done':
       return (
-        <p className="win">
-          Table open and seat bid sent ·{' '}
-          <a href={`${EXPLORER_TX}${step.txHash}`} target="_blank" rel="noreferrer">
-            view tx
-          </a>{' '}
-          · <Link to={`/table/${id}`}>go to your table</Link>
-        </p>
+        <section className="panel">
+          <p className="win">
+            Table open and seat bid sent ·{' '}
+            <a href={`${EXPLORER_TX}${step.txHash}`} target="_blank" rel="noreferrer">
+              view tx
+            </a>
+          </p>
+          <p>
+            {seat ? `You hold seat ${seat.seat + 1} (${trafficText(seat.traffic_bp)} passers-by). ` : ''}
+            Your customers come in from the entrance: set your edge, max bet and boosts to win them from your rivals, and
+            climb to seat 1.
+          </p>
+          <p>
+            <Link className="button" to="/my-table">
+              Run it from My table
+            </Link>{' '}
+            <Link className="button ghost" to={`/table/${id}`}>
+              See your table
+            </Link>
+          </p>
+        </section>
       )
     case 'error':
       return (
-        <p className="loss">
-          Could not {step.label}: {step.message}
-        </p>
+        <section className="panel">
+          <p className="loss">
+            Could not {step.label}: {step.message}
+          </p>
+          {step.label === SEAT_STEP ? (
+            <p>
+              Your table is open but has no seat yet, so no customer can sit. Take one from <Link to="/my-table">My table</Link>{' '}
+              (seat bid): the cheapest is the back seat, {trafficText(SEAT_TRAFFIC_BP[BACK_SEAT])} passers-by.
+            </p>
+          ) : null}
+        </section>
       )
   }
 }

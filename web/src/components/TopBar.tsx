@@ -4,9 +4,11 @@ import { formatAmount, shortAccount, tokenSymbol } from '../format'
 import { useNear, type GameKeyStatus } from '../near/useNear'
 import { usePlayer } from '../near/usePoll'
 
+// The player is the house: its table comes first, playing at others' tables after.
 const NAV = [
-  { to: '/', label: 'Lobby' },
   { to: '/my-table', label: 'My table' },
+  { to: '/', label: 'Lobby' },
+  { to: '/season', label: 'Season 1' },
   { to: '/pools', label: 'Pools' },
   { to: '/poker', label: 'Poker' },
   { to: '/tilt', label: '$TILT' },
