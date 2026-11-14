@@ -35,8 +35,7 @@ export function Season() {
       <p className="muted">
         Season 1 runs from {SEASON_START} (UTC). Every table on the USD floor ({config.usdFloor}) ranked by what it made for
         its LPs: the change of its LP share price since it opened. The house&apos;s NPC dealers and the players&apos; tables
-        are on the same board: <Link to="/open">open a table</Link> and beat them. Tables tagged &quot;house test&quot; are run by
-        the team&apos;s labeled test wallets to keep the floor live; they never play as customers.
+        are on the same board: <Link to="/open">open a table</Link> and beat them.
       </p>
       {error ? <p className="loss">Could not load the floor: {error}</p> : null}
       {rows === null && !error ? <p className="muted">loading tables…</p> : null}
