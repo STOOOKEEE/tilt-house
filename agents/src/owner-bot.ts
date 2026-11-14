@@ -307,7 +307,10 @@ async function pass(provider: JsonRpcProvider, config: BotConfig, tallies: Map<s
     }
     const action = decide(table, floor, ask, answer, BigInt(player.balance), config.maxRent, now);
     if (!action) continue;
-    const tx = await send(provider, config, owner, action.method, { ...action.args });
+    // The floor may move between the read and the send (an NPC outbids the seat): name the call that failed.
+    const tx = await send(provider, config, owner, action.method, { ...action.args }).catch((error: unknown) => {
+      throw new Error(`${action.method} ${dealerId} (${action.why}): ${errorMessage(error)}`);
+    });
     log({ action: action.method, dealer: dealerId, signer: owner, args: action.args, why: action.why, tx });
   }
 }
