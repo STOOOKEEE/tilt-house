@@ -100,7 +100,11 @@ async function pickTable(t: Targets, poker: PokerClient): Promise<DealerView> {
     .filter((d) => (BigInt(d.max_bet) * TICKET_MAX_BET_PCT) / 100n >= BUY_IN)
     .sort((a, b) => a.rake_bp - b.rake_bp || a.id.localeCompare(b.id));
   const best = candidates[0];
-  if (!best) throw new Error(`no seated, open poker table takes a ${money(BUY_IN)} buy-in right now`);
+  if (!best) {
+    const offFloor = live.dealers.filter((d) => d.game === "poker" && d.seat === null).map((d) => d.id);
+    const why = offFloor.length > 0 ? ` (${offFloor.join(", ")} was outbid for its floor seat; it plays again once it wins a seat back)` : "";
+    throw new Error(`no seated, open poker table takes a ${money(BUY_IN)} buy-in right now${why}`);
+  }
   return best;
 }
 

@@ -174,7 +174,7 @@ const lastLine = (output: string, pattern: RegExp): string | undefined =>
 
 // ---- checks ----------------------------------------------------------------------------------
 
-function serviceChecks(): Check[] {
+function serviceChecks(t: Targets, deployment: Deployment): Check[] {
   const health = (path: string): Check => ({
     claim: "live",
     title: `${path} answers`,
@@ -204,7 +204,14 @@ function serviceChecks(): Check[] {
       title: "/session/poker/tables answers",
       run: async () => {
         const tables = list(await getJson(`${SITE}/session/poker/tables`), "poker tables").map((v, i) => record(v, `tables[${i}]`));
-        if (tables.length === 0) return fail("no poker table");
+        if (tables.length === 0) {
+          // A poker table plays only while it holds a floor seat; an owner who outbids it takes the seat.
+          const poker = parseLobby(await view(t, contractId(deployment, "floor"), "get_lobby")).filter((d) => d.game === "poker");
+          if (poker.length > 0 && poker.every((d) => d.seat === null)) {
+            return skip(`${poker.map((d) => d.id).join(", ")} off the floor right now (outbid for its seat); poker reopens when it wins a seat back`);
+          }
+          return fail("no poker table");
+        }
         return pass(
           tables
             .map((t) => `${str(t.table_id, "table_id")}: ${t.open === true ? "open" : "closed"}, rake ${int(t.rake_bp, "rake_bp")} bp, hand #${int(t.hand_number, "hand_number")}`)
@@ -457,7 +464,7 @@ async function judge(options: JudgeOptions): Promise<boolean> {
   const deployment = await readDeployment();
   console.log(color.title(`Tilt House judge · NEAR testnet · README claims, live (${t.rpcUrl})`));
   const checks = [
-    ...serviceChecks(),
+    ...serviceChecks(t, deployment),
     ...deploymentChecks(t, deployment),
     ...chainChecks(t, deployment),
     ...playChecks(t, demo.funder, deployment),
