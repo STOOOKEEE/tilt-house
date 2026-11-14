@@ -47,8 +47,9 @@ your IP, the CLI switches to `https://near-testnet.drpc.org` by itself (`--rpc <
 
 Check every claim that needs no Docker in one command (~1 min, Node only): `pnpm judge` prints one
 `PASS`/`FAIL` line per claim (live services, deployed code hashes vs `deployments/testnet.json`,
-the NPC registry, $TILT parameters and supply, the live Tilt Hour, edge bounds, seat tokens, a played
-and verified session, an NPC's verified session), ends with `17/17 passed`, writes
+the NPC registry, $TILT parameters and supply, the live Tilt Hour, the last UTC day reported to
+$TILT, edge bounds, seat tokens, a played and verified session, an NPC's verified session), ends
+with `18/18 passed`, writes
 `judge-report.json` and exits 1 on any failure; `pnpm judge --rust` adds the simulator and edge tests.
 
 Then:
@@ -86,7 +87,7 @@ chart." Hints: Memecoins, Token mechanics, NEP-141. Design: `docs/tilt.md`.
 | Criterion | What $TILT does | Check it |
 | --- | --- | --- |
 | The meme does something | The meme is "the house on tilt": when the humans beat the casino on a UTC day, the house tilts and mints TILT to them; when the house wins, the treasury burns. Burning TILT together starts a **Tilt Hour**: every table on the USD floor drops to its minimum edge for an hour. | `docs/tilt.md` (The mechanic); claims 25–26 |
-| Supply that reacts to the community | Daily mint = 10 TILT per tUSDC the humans won that day (NPC gamblers excluded by the floor's registry), +10 % per streak day up to +70 %, split by wager, capped at 500 TILT per player and 5,000 per day. The floor reports each day itself (`close_day` → `report_day`), so nobody posts the numbers. Over 60 simulated days (seed 42) the supply goes from 1,300,000 to 957,710 TILT on a busy floor (30 players almost never beat the house: 8 player days) and to 1,118,479 when the players run hot for 14 days (the day cap binds): the treasury, not holders, carries the burn. | `meme/src/rules.rs`, `contract/` `close_day`; claims 22–25 |
+| Supply that reacts to the community | Daily mint = 10 TILT per tUSDC the humans won that day (NPC gamblers excluded by the floor's registry), +10 % per streak day up to +70 %, split by wager, capped at 500 TILT per player and 5,000 per day. The floor reports each day itself (`close_day` → `report_day`), so nobody posts the numbers. Over 60 simulated days (seed 42) the supply goes from 1,300,000 to 957,710 TILT on a busy floor (30 players almost never beat the house: 8 player days) and to 1,118,479 when the players run hot for 14 days (the day cap binds): the treasury, not holders, carries the burn. Live: the first day (2026-11-13) closed with the house up, and 10,000 TILT of the treasury burned. | `meme/src/rules.rs`, `contract/` `close_day`; claims 22–25, 33 |
 | Treasuries with rules | 1,000,000 TILT treasury held by the contract itself; 1 % of it burns on every house day; no method can move it otherwise. Welcome pool of 500,000 TILT paid 100 at a time, once per account, 200 claims a day. | `get_params`; claims 20, 22 |
 | On-chain rituals and challenges | Tilt Hour: 500 TILT burned by at least 5 distinct accounts within one hour → the token contract calls `floor.start_tilt_hour()` (only TILT may call it). The streak is a public high score (`longest_streak`). Triggered live on testnet on 2026-11-13 by 5 accounts. | claims 24–26 |
 | Judged on the mechanic, not the chart | Every parameter is fixed at `new` and readable (`get_params`); no owner, no setter, no admin method (the on-chain ABI lists every method); every mint and burn is a NEP-141 event and a line of the on-chain log (`get_log`). | claims 20–21, 26 |
@@ -126,6 +127,8 @@ From `docs/tycoon.md` and `docs/floor.md`, by time scale (constants from the cod
   `floor.close_day(day)`, which reports the day to the token. Players up on the day: TILT is minted
   to them by chips wagered (streak bonus, per-player and per-day caps) and the streak grows (the
   longest streak is kept as a high score). House up: 1 % of the treasury burns and the streak resets.
+  The first live day, 2026-11-13 (day 20770), closed at 00:05 UTC: the humans were 7.82 tUSDC down,
+  so 10,000 TILT burned and the streak stayed at 0 (claim 33).
 - **Tilt Hour (ritual).** `burn_for_tilt_hour(amount)`: when 5 distinct holders have burned 500
   TILT within an hour, the token calls `floor.start_tilt_hour()` and every USD table plays at its
   game's minimum edge for an hour. Done live on 2026-11-13 (claim 26).
@@ -157,7 +160,7 @@ If `test.rpc.fastnear.com` answers 429 from your IP (shared cloud IPs often do),
 `pnpm judge` runs the claims below that need no Docker and reports them as JSON; the table gives
 every command so each claim can also be checked by hand.
 
-Outputs were pasted from runs on a clean checkout on 2026-11-12 and 2026-11-13. Live values
+Outputs were pasted from runs on a clean checkout on 2026-11-12, 2026-11-13 and 2026-11-14. Live values
 (balances, rents, jackpot, who is seated, sessions) move all the time, so yours will differ; the
 shape and the `✓`/`ok` lines will not. Chain claims read through public RPC (the `view` helper);
 the nearblocks address pages are for humans and refuse most scripted clients. CI
@@ -200,6 +203,7 @@ hashes with the chain.
 | 30 | A poker hand settles for every player and the table pool keeps exactly the rake; books balance | `cargo test -p tilt-house-contract --test sandbox poker_hand_settles_for_both_players_and_the_pool_keeps_the_rake` | `test poker_hand_settles_for_both_players_and_the_pool_keeps_the_rake ... ok` |
 | 31 | NPC gamblers can only play: withdraw, invest, divest, open a table, trade seats or tokens are refused; salary only from the keeper | `cargo test -p tilt-house-contract --test sandbox npc_gamblers_only_play_sessions_and_take_salary_from_the_keeper` | `test npc_gamblers_only_play_sessions_and_take_salary_from_the_keeper ... ok` |
 | 32 | A table's owner can rename it and retire it once off the floor and fully owned; retired tables leave the lobby | `cargo test -p tilt-house-contract --test sandbox controller_renames_and_retires_an_off_floor_table` | `test controller_renames_and_retires_an_off_floor_table ... ok` |
+| 33 | The first UTC day closed on chain by itself: the keeper's `close_day` reported day 20770 (2026-11-13) to $TILT; the humans lost to the house that day, so 1 % of the treasury burned and the streak reset | `view floor.tilthouse.testnet get_day '{"day":20770}'`, then `view tilt.tilthouse.testnet get_log '{"from":10,"limit":2}'` (close_day transaction `BNBmXPo3VMp3tE8rX9J2mfsFhetmcCSWFxJjG1NSpWwz`, 2026-11-14 00:05 UTC) | `{"day":20770,"closed":true,"report":"reported","players_net":"-7820524","wagered":"61300000","players":[…]}` (10 players), then `{"seq":10,"kind":"streak","reason":"reset",…,"day":20770,…}`, `{"seq":11,"kind":"burn","reason":"daily","account":"tilt.tilthouse.testnet","amount":"10000000000","day":20770,…}` (10,000 TILT = 1 % of the 1,000,000 treasury) |
 
 
 ## How NEAR is used

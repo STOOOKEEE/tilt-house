@@ -131,6 +131,29 @@ export function tiltHourBurns(log: readonly unknown[]): number {
   }).length;
 }
 
+/**
+ * The last UTC day the floor reported to $TILT (`get_state.last_reported_day`): its book on the
+ * floor is closed and reported, and the token logged that day's mint to the players or its
+ * treasury burn (`docs/tilt.md`, the daily report).
+ */
+export function dayCloseVerdict(day: number | null, book: unknown, log: readonly unknown[]): Verdict {
+  if (day === null) return fail("no day reported to $TILT yet (last_reported_day null)");
+  const b = record(book, "get_day");
+  if (b.closed !== true) return fail(`day ${day}: the floor's book is still open`);
+  if (b.report !== "reported") return fail(`day ${day}: report ${String(b.report)}`);
+  const daily = log
+    .map((entry, i) => record(entry, `get_log[${i}]`))
+    .filter((e) => e.day === day && e.reason === "daily" && (e.kind === "mint" || e.kind === "burn"));
+  if (daily.length === 0) return fail(`day ${day}: no daily mint or burn in get_log`);
+  const total = (kind: string) =>
+    daily.filter((e) => e.kind === kind).reduce((sum, e, i) => sum + BigInt(amount(e.amount, `daily[${i}].amount`)), 0n);
+  const mints = daily.filter((e) => e.kind === "mint").length;
+  const outcome = mints > 0 ? `mint ${tilt(total("mint"))} TILT to ${mints} player${mints === 1 ? "" : "s"}` : `burn ${tilt(total("burn"))} TILT`;
+  const net = BigInt(amount(String(b.players_net).replace(/^-/, ""), "get_day.players_net"));
+  const sign = String(b.players_net).startsWith("-") ? "−" : "+";
+  return pass(`day ${day} closed and reported · players ${sign}${formatUsdc(net)} tUSDC vs the house · ${outcome}`);
+}
+
 // ---- tables -------------------------------------------------------------------------------
 
 type Table = Pick<DealerView, "id" | "game" | "total_edge_bp" | "rake_bp">;

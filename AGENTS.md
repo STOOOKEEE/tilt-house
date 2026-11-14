@@ -13,7 +13,7 @@ testnet deployment.
 
 ```sh
 pnpm install
-pnpm judge                                                            # ~1 min, Node only: every Docker-free README claim, live; ends "17/17 passed", writes judge-report.json
+pnpm judge                                                            # ~1 min, Node only: every Docker-free README claim, live; ends "18/18 passed", writes judge-report.json
 pnpm --filter cli-demo floor                                          # the live economy right now
 pnpm --filter cli-demo demo                                           # play on testnet (the first run makes a throwaway account), verify every round
 pnpm --filter cli-demo poker                                          # two accounts play hold'em with the NPC bots, every hand verified

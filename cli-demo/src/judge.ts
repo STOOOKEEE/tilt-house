@@ -15,6 +15,7 @@ import { getChainSession, view } from "./chain.ts";
 import fixture from "./claims.json";
 import {
   bytesProblem,
+  dayCloseVerdict,
   edgeEvidence,
   edgeProblems,
   eventCounts,
@@ -116,6 +117,16 @@ async function getJson(url: string): Promise<unknown> {
     if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
     return (await response.json()) as unknown;
   });
+}
+
+/** $TILT's whole on-chain log (`get_log`, the last 256 entries kept), page by page. */
+async function readLog(t: Targets, meme: string): Promise<unknown[]> {
+  const log: unknown[] = [];
+  for (let from = 0; ; from += LOG_PAGE) {
+    const page = list(await view(t, meme, "get_log", { from, limit: LOG_PAGE }), "get_log");
+    log.push(...page);
+    if (page.length < LOG_PAGE) return log;
+  }
 }
 
 /** `view_account` through the run's RPC (retries, then the fallback endpoint). */
@@ -255,15 +266,20 @@ function chainChecks(t: Targets, deployment: Deployment): Check[] {
       run: async () => {
         const state = parseTiltState(await view(t, meme, "get_state"));
         if (state.tilt_hour_triggers < 1) return fail(`tilt_hour.triggers ${state.tilt_hour_triggers}`);
-        const log: unknown[] = [];
-        for (let from = 0; ; from += LOG_PAGE) {
-          const page = list(await view(t, meme, "get_log", { from, limit: LOG_PAGE }), "get_log");
-          log.push(...page);
-          if (page.length < LOG_PAGE) break;
-        }
+        const log = await readLog(t, meme);
         const burns = tiltHourBurns(log);
         if (burns < MIN_TILT_HOUR_BURNS) return fail(`${burns} tilt_hour burns in get_log (${log.length} entries), expected ≥ ${MIN_TILT_HOUR_BURNS}`);
         return pass(`tilt_hour.triggers ${state.tilt_hour_triggers} · ${burns} tilt_hour burns in get_log`);
+      },
+    },
+    {
+      claim: "33",
+      title: "a UTC day closed on the floor, reported to $TILT",
+      run: async () => {
+        const reported = record(await view(t, meme, "get_state"), "get_state").last_reported_day;
+        const day = reported === null ? null : int(reported, "get_state.last_reported_day");
+        if (day === null) return dayCloseVerdict(null, null, []);
+        return dayCloseVerdict(day, await view(t, floor, "get_day", { day }), await readLog(t, meme));
       },
     },
     {

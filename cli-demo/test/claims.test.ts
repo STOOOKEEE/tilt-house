@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   bytesProblem,
+  dayCloseVerdict,
   edgeProblems,
   eventCounts,
   fieldMismatches,
@@ -107,6 +108,30 @@ describe("$TILT supply", () => {
       { kind: "tilt_hour", reason: "started" },
     ];
     expect(tiltHourBurns(log)).toBe(5);
+  });
+});
+
+describe("dayCloseVerdict", () => {
+  // floor get_day(20770) and $TILT get_log after the keeper closed the first day (2026-11-14).
+  const book = { day: 20770, closed: true, report: "reported", players_net: "-7820524", wagered: "61300000", players: [] };
+  const log = [
+    { seq: 9, kind: "mint", reason: "welcome", account: "a.testnet", amount: "100000000", day: 20770 },
+    { seq: 10, kind: "streak", reason: "reset", account: null, amount: "0", day: 20770 },
+    { seq: 11, kind: "burn", reason: "daily", account: "tilt.tilthouse.testnet", amount: "10000000000", day: 20770 },
+  ];
+
+  it("passes on a closed, reported day with its daily mint or burn in the log", () => {
+    const v = dayCloseVerdict(20770, book, log);
+    expect(v.status).toBe("PASS");
+    expect(v.evidence).toContain("day 20770");
+    expect(v.evidence).toContain("burn 10,000 TILT");
+  });
+
+  it("fails when nothing was reported, the book is open or unreported, or the log lacks the day", () => {
+    expect(dayCloseVerdict(null, book, log).status).toBe("FAIL");
+    expect(dayCloseVerdict(20770, { ...book, closed: false }, log).status).toBe("FAIL");
+    expect(dayCloseVerdict(20770, { ...book, report: "failed" }, log).evidence).toContain("failed");
+    expect(dayCloseVerdict(20770, book, log.slice(0, 2)).status).toBe("FAIL");
   });
 });
 
