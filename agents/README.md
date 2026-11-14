@@ -50,3 +50,16 @@ exits after one pass.
 
 near-cli credential files `<KEYS_DIR>/<account>.json` (default `~/.near-credentials/testnet`), never
 the repo: the keeper account's, and each gambler's (created by `scripts/create-gamblers.sh`).
+
+## Owner bot (house test tables)
+
+`pnpm owner-bot` (unit `ops/th-owner-bot.service`, env `ops/owner-bot.env.example`) plays the owner of
+the team's two labeled house test tables, `test-1` and `test-2` (accounts
+`test-owner-1.tilthouse.testnet` and `test-owner-2.tilthouse.testnet`, made once by
+`src/owner-setup.ts`; README, Disclosure). Every `OWNER_BOT_INTERVAL_MS` (20 s), for each table, one
+action at most: answer a gambler hesitating at the table (`set_offer`, at most half of the asks and
+some left at random), bid for a seat again when evicted, raise its rent ~10 % when it is the
+floor's weakest (up to `OWNER_BOT_MAX_RENT`, 2 tUSDC/h), invest its in-contract balance when the
+free bankroll covers under 2 h of rent. It sends only `set_offer`, `bid_for_seat` and `invest`:
+never a session, never $TILT. One JSON line per decision and per transaction (with its hash); on
+any error it logs at level error and exits, and the unit gives up after 3 restarts in an hour.

@@ -25,6 +25,7 @@ pnpm --filter @tilt-house/web build
 | `VITE_MAINNET_RELAYER_URL`, `VITE_MAINNET_SESSION_URL`, `VITE_MAINNET_NEAR_RPC_URL` | Optional, default `/mainnet/relayer`, `/mainnet/session`, `https://rpc.mainnet.fastnear.com`. |
 | `VITE_TILT_FLOOR` | The floor instance that plays in $TILT (`floor-tilt.tilthouse.testnet`). Optional: empty hides the USD / TILT switch (the `/tilt` page still works). Must differ from `VITE_HOUSE_CONTRACT`. |
 | `VITE_TILT_TOKEN`, `VITE_TILT_RELAYER_URL`, `VITE_TILT_SESSION_URL`, `VITE_TILT_RELAYER_ACCOUNT` | Optional, default `tilt.tilthouse.testnet`, `/tilt/relayer`, `/tilt/session`, `VITE_RELAYER_ACCOUNT`. |
+| `VITE_TEST_ACCOUNTS` | Optional, comma-separated: the team's labeled house test wallets (`test-owner-1/2.tilthouse.testnet`, `agents/src/owner-bot.ts`); the Season board and the lobby top 3 tag their tables "house test" instead of a player's. |
 
 The app refuses to start if a required variable is missing (`src/config.ts`). `.env.public` holds
 the public site's values (`vite build --mode public`); `vercel.json` proxies `/relayer`, `/session`

@@ -19,6 +19,7 @@ interface ImportMetaEnv {
   readonly VITE_TILT_RELAYER_URL?: string
   readonly VITE_TILT_RELAYER_ACCOUNT?: string
   readonly VITE_TILT_SESSION_URL?: string
+  readonly VITE_TEST_ACCOUNTS?: string
 }
 
 interface ImportMeta {

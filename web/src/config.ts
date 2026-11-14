@@ -29,6 +29,8 @@ export interface Config {
   rpcUrl: string
   /** Session server (sessions and live gamblers). Empty: no session play, the floor shows the sim demo. */
   sessionUrl: string
+  /** House-run test wallets (VITE_TEST_ACCOUNTS, comma-separated): their tables are tagged "house test", never "player". */
+  testAccounts: string[]
 }
 
 type Env = Record<string, string | undefined>
@@ -113,10 +115,15 @@ function tilt(env: Env, usd: NetworkConfig): NetworkConfig | null {
 export function readConfig(env: Env, choice: NetworkId = 'testnet', currency: Currency = 'usd'): Config {
   const main = mainnet(env)
   const privyAppId = value(env, 'VITE_PRIVY_APP_ID')
+  const testAccounts = value(env, 'VITE_TEST_ACCOUNTS')
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => id !== '')
   // Mainnet stays unreachable, whatever was stored, until it is configured. It has no TILT.
   if (choice === 'mainnet' && main) {
     return {
       privyAppId,
+      testAccounts,
       mainnetReady: true,
       network: 'mainnet',
       currency: 'usd',
@@ -134,6 +141,7 @@ export function readConfig(env: Env, choice: NetworkId = 'testnet', currency: Cu
   const active: Currency = picked ? 'tilt' : 'usd'
   return {
     privyAppId,
+    testAccounts,
     mainnetReady: main !== null,
     network: 'testnet',
     currency: active,

@@ -7,7 +7,7 @@ import { formatPrice, formatPriceChange, formatUsdc, shortAccount } from '../for
 import { getFloorState, type FloorState } from '../near/floor'
 import { useNear } from '../near/useNear'
 import { PAGE_POLL_MS, usePoll } from '../near/usePoll'
-import { SEASON_START, seasonRanking, type SeasonRow } from '../season'
+import { SEASON_START, seasonRanking, tableTag, type SeasonRow } from '../season'
 import './Season.css'
 
 const PODIUM_SIZE = 3
@@ -22,7 +22,7 @@ export function useSeasonRanking(sameFloor: FloorState | null, reuse: boolean): 
   const load = useCallback(() => getFloorState({ rpcUrl: config.rpcUrl, houseContract: config.usdFloor }), [config])
   const polled = usePoll(reuse ? null : load, PAGE_POLL_MS)
   const state = reuse ? sameFloor : polled.data
-  const rows = useMemo(() => (state ? seasonRanking(state) : null), [state])
+  const rows = useMemo(() => (state ? seasonRanking(state, config.testAccounts) : null), [state, config.testAccounts])
   return { rows, error: reuse ? '' : polled.error }
 }
 
@@ -35,7 +35,8 @@ export function Season() {
       <p className="muted">
         Season 1 runs from {SEASON_START} (UTC). Every table on the USD floor ({config.usdFloor}) ranked by what it made for
         its LPs: the change of its LP share price since it opened. The house&apos;s NPC dealers and the players&apos; tables
-        are on the same board: <Link to="/open">open a table</Link> and beat them.
+        are on the same board: <Link to="/open">open a table</Link> and beat them. Tables tagged &quot;house test&quot; are run by
+        the team&apos;s labeled test wallets to keep the floor live; they never play as customers.
       </p>
       {error ? <p className="loss">Could not load the floor: {error}</p> : null}
       {rows === null && !error ? <p className="muted">loading tables…</p> : null}
@@ -64,7 +65,7 @@ function SeasonTable({ rows }: { rows: SeasonRow[] }) {
             <td className={row.rank <= PODIUM_SIZE ? 'season-rank top' : 'season-rank'}>{row.rank}</td>
             <th scope="row">
               {row.name} <span className="muted">· {row.game}</span>
-              {row.playerOwned ? <span className="badge">player-owned</span> : <span className="badge npc">NPC</span>}
+              <span className={row.playerOwned ? 'badge' : 'badge npc'}>{tableTag(row)}</span>
             </th>
             <td>{row.owner ? <span title={row.owner}>{shortAccount(row.owner)}</span> : <span className="muted">the house</span>}</td>
             <td>{row.seat === null ? <span className="muted">off the floor</span> : `seat ${row.seat} · ${formatUsdc(row.rent ?? '0')}/h`}</td>
@@ -87,7 +88,9 @@ export function SeasonPodium({ rows }: { rows: SeasonRow[] }) {
         {rows.slice(0, PODIUM_SIZE).map((row) => (
           <li key={row.dealerId}>
             <strong>{row.name}</strong>{' '}
-            <span className="muted">{row.playerOwned ? `· ${row.owner ? shortAccount(row.owner) : 'a player'}` : '· NPC'}</span>{' '}
+            <span className="muted">
+              · {row.playerOwned && !row.houseTest ? (row.owner ? shortAccount(row.owner) : 'a player') : tableTag(row)}
+            </span>{' '}
             <span className={row.changeBp >= 0 ? 'win' : 'loss'}>{formatPriceChange(row.price)}</span>
           </li>
         ))}

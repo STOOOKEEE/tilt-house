@@ -16,6 +16,8 @@ export interface SeasonRow {
   playerOwned: boolean
   /** The controlling account of a player's table; null for an NPC dealer or when unknown. */
   owner: string | null
+  /** A player's table run by the team's labeled test wallets (config `testAccounts`): tagged "house test", not "player". */
+  houseTest: boolean
   /** 1-based seat; null off the floor. */
   seat: number | null
   /** Rent per hour in base units; null off the floor. */
@@ -32,7 +34,7 @@ export interface SeasonRow {
  * share price is its LPs' profit per share. Ties: the seated table first, then the better seat,
  * then the id, so the order never flickers between polls.
  */
-export function seasonRanking(state: FloorState): SeasonRow[] {
+export function seasonRanking(state: FloorState, testAccounts: readonly string[] = []): SeasonRow[] {
   const seats = floorSeats(state)
   const rows = state.dealers.map((dealer): Omit<SeasonRow, 'rank'> => {
     const index = seats.findIndex((s) => s?.dealer.id === dealer.id)
@@ -40,12 +42,14 @@ export function seasonRanking(state: FloorState): SeasonRow[] {
     const info = state.info.get(dealer.id)
     const playerOwned = seated ? seated.playerOwned : info?.npc === false
     const price = BigInt(dealer.share_price_buy)
+    const owner = playerOwned ? (info?.controller ?? dealer.controller) : null
     return {
       dealerId: dealer.id,
       name: dealer.name,
       game: dealer.game,
       playerOwned,
-      owner: playerOwned ? (info?.controller ?? dealer.controller) : null,
+      owner,
+      houseTest: owner !== null && testAccounts.includes(owner),
       seat: seated ? index + 1 : null,
       rent: seated ? seated.rent : null,
       price: dealer.share_price_buy,
@@ -59,4 +63,10 @@ export function seasonRanking(state: FloorState): SeasonRow[] {
     return (a.seat ?? Infinity) - (b.seat ?? Infinity) || a.dealerId.localeCompare(b.dealerId)
   })
   return rows.map((row, i) => ({ ...row, rank: i + 1 }))
+}
+
+/** The board's tag for a table: a house test wallet's table is never shown as a player's. */
+export function tableTag(row: Pick<SeasonRow, 'houseTest' | 'playerOwned'>): 'house test' | 'player-owned' | 'NPC' {
+  if (row.houseTest) return 'house test'
+  return row.playerOwned ? 'player-owned' : 'NPC'
 }

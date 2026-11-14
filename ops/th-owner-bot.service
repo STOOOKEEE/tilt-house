@@ -1,0 +1,21 @@
+# The house test owners' bot (README, Disclosure): plays the owner of the labeled test tables
+# test-1/test-2 (agents/src/owner-bot.ts). It exits on any error; systemd restarts it at most 3 times
+# an hour, then leaves the unit failed rather than loop.
+# Install: cp ops/th-owner-bot.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+# Env: ~/.tilt-house/owner-bot.env (template: ops/owner-bot.env.example).
+[Unit]
+Description=Tilt House owner bot (house test tables)
+After=network-online.target
+StartLimitIntervalSec=3600
+StartLimitBurst=3
+
+[Service]
+Restart=always
+RestartSec=60
+Environment=PATH=%h/.local/bin:/usr/bin:/bin
+WorkingDirectory=%h/dev/STOOOKEEE/tilt-house/agents
+EnvironmentFile=%h/.tilt-house/owner-bot.env
+ExecStart=/usr/bin/node src/owner-bot.ts
+
+[Install]
+WantedBy=default.target

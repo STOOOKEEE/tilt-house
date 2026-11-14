@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { mockFloor, type DealerFloorInfo, type FloorState } from './near/floor'
 import { parseDealer } from './near/views'
-import { seasonRanking } from './season'
+import { seasonRanking, tableTag } from './season'
 
 function dealer(id: string, price: string, extra: object = {}) {
   return parseDealer({
@@ -76,6 +76,21 @@ describe('seasonRanking', () => {
     const rows = seasonRanking(s)
     expect(rows.map((r) => r.dealerId)).toEqual(['bruno', 'ada', 'zed'])
     expect(rows[2].changeBp).toBe(0)
+  })
+
+  it('tags the house test wallets\' tables "house test", never a player\'s', () => {
+    const rows = seasonRanking(state(), ['alice.testnet'])
+    const mine = rows.find((r) => r.dealerId === 'mine')
+    expect(mine).toMatchObject({ playerOwned: true, owner: 'alice.testnet', houseTest: true })
+    expect(rows.find((r) => r.dealerId === 'late')).toMatchObject({ playerOwned: true, houseTest: false })
+    expect(rows.find((r) => r.dealerId === 'ada')).toMatchObject({ playerOwned: false, houseTest: false })
+    expect(rows.map(tableTag)).toEqual(['house test', 'NPC', 'player-owned', 'NPC'])
+  })
+
+  it('tags no table without configured test accounts', () => {
+    expect(seasonRanking(state()).some((r) => r.houseTest)).toBe(false)
+    // An NPC dealer is never a house test table, even if its account were listed.
+    expect(seasonRanking(state(), ['ada.tilthouse.testnet']).some((r) => r.houseTest)).toBe(false)
   })
 
   it('is empty on an empty lobby', () => {

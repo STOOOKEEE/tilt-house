@@ -52,6 +52,7 @@ describe('readConfig', () => {
       usdFloor: 'floor.tilthouse.near',
       tiltToken: '',
       privyAppId: 'app',
+      testAccounts: [],
       houseContract: 'floor.tilthouse.near',
       tokenContract: 'tusdc.tilthouse.near',
       relayerUrl: '/mainnet/relayer',
@@ -68,6 +69,14 @@ describe('readConfig', () => {
 })
 
 const TILT = { ...ENV, VITE_TILT_FLOOR: 'floor-tilt.tilthouse.testnet' }
+
+describe('test accounts', () => {
+  it('reads the house test wallets, comma-separated, and none by default', () => {
+    expect(readConfig(ENV).testAccounts).toEqual([])
+    const env = { ...ENV, VITE_TEST_ACCOUNTS: ' test-owner-1.tilthouse.testnet, test-owner-2.tilthouse.testnet,' }
+    expect(readConfig(env).testAccounts).toEqual(['test-owner-1.tilthouse.testnet', 'test-owner-2.tilthouse.testnet'])
+  })
+})
 
 describe('currency', () => {
   it('plays in USD with the TILT switch hidden until VITE_TILT_FLOOR is set, whatever was stored', () => {
@@ -99,6 +108,7 @@ describe('currency', () => {
       usdFloor: 'house.tilthouse.testnet',
       tiltToken: 'tilt.tilthouse.testnet',
       privyAppId: 'app',
+      testAccounts: [],
       houseContract: 'floor-tilt.tilthouse.testnet',
       tokenContract: 'tilt.tilthouse.testnet',
       relayerUrl: '/tilt/relayer',

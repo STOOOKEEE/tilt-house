@@ -89,22 +89,22 @@ export function gasFor(method: string): bigint {
 const GAMES: readonly string[] = ["dice", "roulette", "blackjack", "poker"];
 const DECIMAL = /^\d+$/;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function field<T>(entry: Record<string, unknown>, key: string, check: (v: unknown) => v is T): T {
+export function field<T>(entry: Record<string, unknown>, key: string, check: (v: unknown) => v is T): T {
   const value = entry[key];
   if (!check(value)) throw new Error(`get_lobby: invalid ${key}`);
   return value;
 }
 
 const SIGNED_DECIMAL = /^-?\d+$/;
-const isString = (v: unknown): v is string => typeof v === "string";
-const isDecimal = (v: unknown): v is string => typeof v === "string" && DECIMAL.test(v);
-const isInt = (v: unknown): v is number => Number.isSafeInteger(v);
+export const isString = (v: unknown): v is string => typeof v === "string";
+export const isDecimal = (v: unknown): v is string => typeof v === "string" && DECIMAL.test(v);
+export const isInt = (v: unknown): v is number => Number.isSafeInteger(v);
 const isBool = (v: unknown): v is boolean => typeof v === "boolean";
-const isGame = (v: unknown): v is GameKind => typeof v === "string" && GAMES.includes(v);
+export const isGame = (v: unknown): v is GameKind => typeof v === "string" && GAMES.includes(v);
 
 function parseDealer(entry: unknown): DealerView {
   if (!isRecord(entry)) throw new Error("get_lobby: entry is not an object");
