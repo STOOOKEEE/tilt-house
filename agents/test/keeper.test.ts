@@ -194,10 +194,10 @@ describe("close_day (USD floor, after each UTC midnight)", () => {
   it("only logs a day the floor already shows closed (a restart, another keeper)", async () => {
     const calls: Call[] = [];
     const lines: string[] = [];
-    const days = { [DAY - 1]: { ...open, closed: true, report: "ok" as const } };
+    const days = { [DAY - 1]: { ...open, closed: true, report: "reported" as const } };
     await closeDayPass(deps(async (call) => void calls.push(call), (l) => lines.push(l), {}, {}, { chain: { days } }), { closed: null }, midnight(DAY) + 5 * 60_000);
     expect(calls).toEqual([]);
-    expect(JSON.parse(lines[0] ?? "")).toMatchObject({ day: DAY - 1, skipped: "already closed", record: { report: "ok" } });
+    expect(JSON.parse(lines[0] ?? "")).toMatchObject({ day: DAY - 1, skipped: "already closed", record: { report: "reported" } });
   });
 
   it("closes a day the floor keeps no record of (nobody played): the contract decides", async () => {

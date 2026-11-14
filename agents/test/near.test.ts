@@ -26,10 +26,13 @@ describe("views", () => {
 });
 
 describe("get_day", () => {
-  const record = { day: 20_404, closed: true, report: "ok", players_net: "-1500000", wagered: "9000000", players: [{ account_id: "a.testnet", wagered: "9000000", net: "-1500000" }] };
+  // Shape of floor.tilthouse.testnet get_day(20770) after the keeper closed it on 2026-11-14.
+  const record = { day: 20_770, closed: true, report: "reported", players_net: "-7820524", wagered: "61300000", players: [{ account_id: "a.testnet", wagered: "61300000", net: "-7820524" }] };
 
   it("reads a day record, or null when the floor keeps none", () => {
     expect(parseDay(record)).toEqual({ ...record, players: 1 });
+    expect(parseDay({ ...record, report: "pending" })).toMatchObject({ report: "pending" });
+    expect(parseDay({ ...record, report: "failed" })).toMatchObject({ report: "failed" });
     expect(parseDay({ ...record, closed: false, report: null, players: [] })).toMatchObject({ closed: false, report: null, players: 0 });
     expect(parseDay(null)).toBeNull();
   });

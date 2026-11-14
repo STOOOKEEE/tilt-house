@@ -43,8 +43,8 @@ export type Send = (call: Call) => Promise<unknown>;
 export interface DayView {
   day: number;
   closed: boolean;
-  /** How `tilt.report_day` went once closed: null until then. */
-  report: "ok" | "failed" | null;
+  /** How `tilt.report_day` went once closed (the floor's `DayReport`, snake_case): null when nothing was reported. */
+  report: "pending" | "reported" | "failed" | null;
   /** The human players' net result against the house, signed decimal string. */
   players_net: string;
   wagered: string;
@@ -145,7 +145,7 @@ export function parseDay(value: unknown): DayView | null {
   if (!isRecord(value)) throw new Error("get_day: not an object");
   const { day, closed, report, players_net, wagered, players } = value;
   if (!isInt(day) || !isBool(closed)) throw new Error("get_day: invalid day or closed");
-  if (report !== null && report !== "ok" && report !== "failed") throw new Error("get_day: invalid report");
+  if (report !== null && report !== "pending" && report !== "reported" && report !== "failed") throw new Error("get_day: invalid report");
   if (typeof players_net !== "string" || !SIGNED_DECIMAL.test(players_net)) throw new Error("get_day: invalid players_net");
   if (!isDecimal(wagered) || !Array.isArray(players)) throw new Error("get_day: invalid wagered or players");
   return { day, closed, report, players_net, wagered, players: players.length };
