@@ -227,7 +227,7 @@ export function SitCard({ dealer, session, balance, loggedIn, demo }: SitCardPro
     lock === null || lock < BigInt(dealer.min_bet)
       ? `lock at least ${formatUsdc(dealer.min_bet)} ${tokenSymbol()}`
       : balance !== null && lock > balance
-        ? 'not enough balance: deposit in Pools'
+        ? 'not enough in the house: deposit under Your money'
         : ''
   const working = session.phase === 'starting' || session.phase === 'opening'
   const signedIn = loggedIn || demo

@@ -285,7 +285,7 @@ function PoolBody({ floor }: BodyProps) {
       <span>
         owner {owner ?? <span className="muted">unknown</span>} <span className="muted">({table.playerOwned ? 'a player' : 'NPC dealer'})</span>
       </span>
-      <Link to={`/pools?dealer=${d.id}`}>Back {d.name} in Pools →</Link>
+      <Link to={`/pools?dealer=${d.id}`}>Back {d.name} →</Link>
     </div>
   )
 }
