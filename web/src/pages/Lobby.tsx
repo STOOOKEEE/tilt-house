@@ -109,8 +109,8 @@ function OwnerHero({ seats, rentFrom }: { seats: (SeatedTable | null)[] | null; 
   const testPath = practice ? `${tablePath(practice)}?demo=1` : '/poker?demo=1'
   const chips =
     config.currency === 'usd'
-      ? `log in: your first visit brings ${formatUsdc(STARTER_CAPITAL, 0)} ${tokenSymbol()}, deposit them in the house`
-      : `log in, claim your welcome ${tokenSymbol()} and deposit it in the house`
+      ? `your first visit brings ${formatUsdc(STARTER_CAPITAL, 0)} ${tokenSymbol()}; the deposit button is on that page after login`
+      : `claim your welcome ${tokenSymbol()}; the deposit button is on that page after login`
   return (
     <section className="panel owner-hero">
       <h2>Run a table: you are the house</h2>
@@ -120,7 +120,7 @@ function OwnerHero({ seats, rentFrom }: { seats: (SeatedTable | null)[] | null; 
       </p>
       <ol className="owner-steps">
         <li>
-          <Link to="/pools">Get chips</Link>
+          <Link to="/open">Get chips and deposit them in the house</Link>
           <span className="muted">{chips}</span>
         </li>
         <li>

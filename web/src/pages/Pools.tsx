@@ -1,20 +1,16 @@
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { ActionStatus, type ActionState } from '../components/ActionStatus'
-import { LoginPrompt } from '../components/LoginPrompt'
-import { PRICE_SCALE, formatAmount, formatPrice, formatPriceChange, formatUsdc, parseUsdc, tokenSymbol } from '../format'
+import { YourMoney } from '../components/YourMoney'
+import { PRICE_SCALE, formatPrice, formatPriceChange, formatUsdc, parseUsdc, tokenSymbol } from '../format'
 import { freeBankroll, reopenNeeds } from '../house'
-import { claimFaucet, claimWelcome } from '../near/relay'
 import { fullAccessCall } from '../near/session'
 import { useNear } from '../near/useNear'
-import { useLobby, usePlayer, usePoll } from '../near/usePoll'
-import { getTokenBalance, type DealerView, type PlayerView } from '../near/views'
+import { useLobby, usePlayer } from '../near/usePoll'
+import type { DealerView, PlayerView } from '../near/views'
 
 /** `core_rules::SHARES_PER_UNIT`: one LP token (as shown) = what 1 tUSDC bought at launch. */
 const SHARES_PER_UNIT = 1_000_000n
-
-/** Money moves need the Privy (full-access) signature; NEAR wants 1 yocto on deposit and withdraw. */
-const ONE_YOCTO = 1n
 
 export function Pools() {
   const lobby = useLobby()
@@ -24,11 +20,11 @@ export function Pools() {
   const [action, setAction] = useState<ActionState>({ state: 'idle' })
   const selected = lobby.data?.find((d) => d.id === params.get('dealer')) ?? lobby.data?.[0] ?? null
 
-  const run = async (label: string, receiver: string, method: string, args: object, deposit: bigint) => {
+  const poolCall = async (label: string, method: string, args: object) => {
     if (!nearAccount) return
     setAction({ state: 'busy', label })
     try {
-      const { txHash } = await fullAccessCall(nearAccount, config, receiver, method, args, deposit)
+      const { txHash } = await fullAccessCall(nearAccount, config, config.houseContract, method, args, 0n)
       setAction({ state: 'done', label, txHash })
     } catch (error) {
       setAction({ state: 'error', message: error instanceof Error ? error.message : String(error) })
@@ -41,45 +37,36 @@ export function Pools() {
 
   return (
     <>
-      <h1>Pools</h1>
+      <h1>Back a table</h1>
+      <YourMoney
+        player={player.data}
+        onChange={() => {
+          player.refresh()
+          lobby.refresh()
+        }}
+      />
+      <h2>Invest in a table</h2>
       <p className="muted">
-        Each dealer is a liquidity pool. Your {tokenSymbol()} becomes the bankroll: the pool earns the edge on losing bets and pays
-        the winning ones, so your LP tokens rise or fall in value.
+        Buying LP shares is investing in a table's bankroll, the money that pays its winners. It is not needed to play or
+        to run a table. Shares gain when the table's players lose, and drop when they win.
       </p>
-      {lobby.error ? <p className="loss">Could not load the pools: {lobby.error}</p> : null}
+      {lobby.error ? <p className="loss">Could not load the tables: {lobby.error}</p> : null}
       <PoolTable dealers={lobby.data ?? []} player={player.data} onSelect={(id) => setParams({ dealer: id })} />
-
-      {!walletId || !nearAccount ? (
-        <LoginPrompt action="deposit and provide liquidity" />
-      ) : (
+      {walletId && nearAccount && selected ? (
         <>
           <ActionStatus action={action} />
-          <Wallet
+          <Liquidity
+            key={selected.id}
+            dealer={selected}
+            dealers={lobby.data ?? []}
             player={player.data}
             busy={busy}
-            onDeposit={(amount) =>
-              void run('deposit', config.tokenContract, 'ft_transfer_call', { receiver_id: config.houseContract, amount: String(amount), msg: '' }, ONE_YOCTO)
-            }
-            onWithdraw={(amount) => void run('withdraw', config.houseContract, 'withdraw', { amount: String(amount) }, ONE_YOCTO)}
+            onSelect={(id) => setParams({ dealer: id })}
+            onInvest={(amount) => void poolCall(`invest in ${selected.name}`, 'invest', { dealer_id: selected.id, amount: String(amount) })}
+            onDivest={(shares) => void poolCall(`divest from ${selected.name}`, 'divest', { dealer_id: selected.id, shares: String(shares) })}
           />
-          {selected ? (
-            <Liquidity
-              key={selected.id}
-              dealer={selected}
-              dealers={lobby.data ?? []}
-              player={player.data}
-              busy={busy}
-              onSelect={(id) => setParams({ dealer: id })}
-              onInvest={(amount) =>
-                void run(`invest in ${selected.name}`, config.houseContract, 'invest', { dealer_id: selected.id, amount: String(amount) }, 0n)
-              }
-              onDivest={(shares) =>
-                void run(`divest from ${selected.name}`, config.houseContract, 'divest', { dealer_id: selected.id, shares: String(shares) }, 0n)
-              }
-            />
-          ) : null}
         </>
-      )}
+      ) : null}
     </>
   )
 }
@@ -135,70 +122,6 @@ function PoolTable({ dealers, player, onSelect }: { dealers: DealerView[]; playe
   )
 }
 
-interface WalletProps {
-  player: PlayerView | null
-  busy: boolean
-  onDeposit: (amount: bigint) => void
-  onWithdraw: (amount: bigint) => void
-}
-
-function Wallet({ player, busy, onDeposit, onWithdraw }: WalletProps) {
-  const { config, walletId, getAccessToken } = useNear()
-  const wallet = usePoll(
-    useCallback(() => getTokenBalance(config.rpcUrl, config.tokenContract, walletId), [config, walletId]),
-    5_000,
-  )
-  const [faucet, setFaucet] = useState('')
-  const claim = async () => {
-    setFaucet('claiming…')
-    try {
-      const claimFor = config.currency === 'tilt' ? claimWelcome : claimFaucet
-      setFaucet(`+${formatAmount(await claimFor(config.relayerUrl, walletId, await getAccessToken()))} in your wallet`)
-      wallet.refresh()
-    } catch (error) {
-      setFaucet(error instanceof Error ? error.message : String(error))
-    }
-  }
-  return (
-    <section className="panel">
-      <h2>Your money</h2>
-      <p>
-        in the house: <span className="money">{player ? formatUsdc(player.balance) : '—'} {tokenSymbol()}</span> · in your wallet:{' '}
-        <span className="money">{wallet.data ? formatUsdc(wallet.data) : '—'} {tokenSymbol()}</span>{' '}
-        <button type="button" className="ghost" onClick={() => void claim()}>
-          {config.currency === 'tilt' ? 'Claim welcome TILT (once)' : `Get test ${tokenSymbol()}`}
-        </button>{' '}
-        <span className="muted">{faucet}</span>
-      </p>
-      <AmountForm label="Deposit" max={wallet.data ? BigInt(wallet.data) : null} busy={busy} onSubmit={onDeposit} />
-      <AmountForm label="Withdraw" max={player ? BigInt(player.balance) : null} busy={busy} onSubmit={onWithdraw} />
-    </section>
-  )
-}
-
-function AmountForm({ label, max, busy, onSubmit }: { label: string; max: bigint | null; busy: boolean; onSubmit: (amount: bigint) => void }) {
-  const [text, setText] = useState('')
-  const amount = parseUsdc(text)
-  const valid = amount !== null && amount > 0n && max !== null && amount <= max
-  return (
-    <form
-      className="amount-form"
-      onSubmit={(event) => {
-        event.preventDefault()
-        if (valid) onSubmit(amount)
-      }}
-    >
-      <input placeholder={tokenSymbol()} inputMode="decimal" value={text} onChange={(event) => setText(event.target.value)} />
-      <button type="button" className="ghost" disabled={max === null} onClick={() => max !== null && setText(formatUsdc(max, 0))}>
-        max
-      </button>
-      <button type="submit" disabled={!valid || busy}>
-        {label}
-      </button>
-    </form>
-  )
-}
-
 interface LiquidityProps {
   dealer: DealerView
   dealers: DealerView[]
@@ -227,7 +150,7 @@ function Liquidity({ dealer, dealers, player, busy, onSelect, onInvest, onDivest
   return (
     <section className="panel">
       <h2>
-        Liquidity ·{' '}
+        Back{' '}
         <select value={dealer.id} onChange={(event) => onSelect(event.target.value)}>
           {dealers.map((d) => (
             <option key={d.id} value={d.id}>
@@ -237,8 +160,8 @@ function Liquidity({ dealer, dealers, player, busy, onSelect, onInvest, onDivest
         </select>
       </h2>
       <p className="muted">
-        Spread: you buy at {formatPrice(buyPrice)} (as if every open bet loses) and sell at {formatPrice(sellPrice)} (as if
-        every open bet wins), so nobody can sell just before a known loss.
+        You buy at {formatPrice(buyPrice)} and sell at {formatPrice(sellPrice)}. The gap stops anyone selling just before a
+        known loss.
       </p>
       {!dealer.open ? (
         <p className="loss">

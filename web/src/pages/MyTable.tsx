@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { ActionStatus, type ActionState } from '../components/ActionStatus'
 import { LoginPrompt } from '../components/LoginPrompt'
+import { YourMoney } from '../components/YourMoney'
 import { formatAmount, formatBp, formatCountdown, formatUsdc, parseUsdc, tokenSymbol } from '../format'
 import { freeBankroll } from '../house'
 import { PREPAY_HOURS, getFloorState, type FloorState, type SeatView } from '../near/floor'
@@ -136,6 +137,15 @@ export function MyTable() {
             />
           ))
         : null}
+      {previewId === null ? (
+        <YourMoney
+          player={player.data}
+          onChange={() => {
+            player.refresh()
+            floor.refresh()
+          }}
+        />
+      ) : null}
     </>
   )
 }
@@ -329,9 +339,9 @@ function PoolForms({ dealer, busy, send, player }: TableProps & { player: Player
     <>
       <h3 id={`pool-${dealer.id}`}>Pool</h3>
       <p>
-        free bankroll <span className="money">{formatUsdc(freeBankroll(dealer))}</span> {tokenSymbol()} · you hold{' '}
-        <span className="money">{formatUsdc(owned / SHARES_PER_UNIT)}</span> LP tokens · house balance{' '}
-        {formatUsdc(balance)} {tokenSymbol()}
+        pool <span className="money">{formatUsdc(freeBankroll(dealer))}</span> {tokenSymbol()} free (not backing open bets) ·
+        you hold <span className="money">{formatUsdc(owned / SHARES_PER_UNIT)}</span> LP tokens · in the house{' '}
+        {formatUsdc(balance)} {tokenSymbol()} (<a href="#your-money">deposit</a>)
       </p>
       <form
         className="amount-form"
@@ -359,7 +369,7 @@ function PoolForms({ dealer, busy, send, player }: TableProps & { player: Player
         <button type="submit" disabled={!divestValid || busy}>
           Divest
         </button>
-        <span className="muted">only the free bankroll can leave: money backing open sessions stays</span>
+        <span className="muted">only free pool money can leave: money backing open sessions stays</span>
       </form>
     </>
   )

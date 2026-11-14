@@ -239,7 +239,7 @@ export function openTableProblem(input: OpenTableInput): string | null {
   if (rent === null || rent < input.rentToSit) return `rent: at least ${formatUsdc(input.rentToSit)} ${tokenSymbol()}/h takes a seat now`
   if (rent * PREPAY_HOURS > seed) return `the seed must cover ${PREPAY_HOURS} hours of rent, prepaid when you take the seat`
   if (input.balance !== null && seed > input.balance) {
-    return `your house balance is ${formatUsdc(input.balance)} ${tokenSymbol()}: deposit in Pools first`
+    return `your house balance is ${formatUsdc(input.balance)} ${tokenSymbol()}: deposit more under Your money first`
   }
   return null
 }

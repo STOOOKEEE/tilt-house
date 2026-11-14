@@ -9,7 +9,7 @@ const NAV = [
   { to: '/my-table', label: 'My table' },
   { to: '/', label: 'Lobby' },
   { to: '/season', label: 'Season 1' },
-  { to: '/pools', label: 'Pools' },
+  { to: '/pools', label: 'Back a table' },
   { to: '/poker', label: 'Poker' },
   { to: '/tilt', label: '$TILT' },
 ] as const
@@ -104,7 +104,7 @@ export function TopBar() {
         {authenticated && walletId ? (
           <>
             <span title={walletId}>{shortAccount(walletId)}</span>
-            <span className="money" title="your balance in the house (deposit and withdraw in Pools)">
+            <span className="money" title="your balance in the house; deposit and withdraw under Your money, on Back a table or Open a table">
               {player.data ? formatAmount(player.data.balance) : `— ${tokenSymbol()}`}
             </span>
             <span className={gameKey.state === 'error' ? 'loss' : 'key'}>{keyLabel(gameKey)}</span>

@@ -1,8 +1,10 @@
 import { useCallback, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import { LoginPrompt } from '../components/LoginPrompt'
+import { YourMoney } from '../components/YourMoney'
 import { formatUsdc, parseUsdc, tokenSymbol } from '../format'
 import { EXPLORER_TX } from '../house'
+import { missingSeedHint } from '../money'
 import { getFloorState, MIN_TABLE_SEED, openTableProblem, PREPAY_HOURS, SEAT_TRAFFIC_BP, SEATS, type SeatView } from '../near/floor'
 import { fullAccessCall } from '../near/session'
 import { useNear } from '../near/useNear'
@@ -16,7 +18,7 @@ const GAMES: readonly Game[] = ['dice', 'roulette', 'blackjack']
 const TEMPERAMENTS = [
   { id: 'greedy', text: 'high edge, tight max bets, pays little rent: earns more per round, fewer players' },
   { id: 'promoter', text: 'low edge and boosts to fill the table, pays more rent to stay seen: can bleed on streaks' },
-  { id: 'cautious', text: 'protects the bankroll first: cuts max bets when it loses, steady and slow' },
+  { id: 'cautious', text: 'protects its money first: cuts max bets when it loses, steady and slow' },
 ] as const
 type Temperament = (typeof TEMPERAMENTS)[number]['id']
 
@@ -76,6 +78,9 @@ export function OpenTable() {
           balance: player.data ? BigInt(player.data.balance) : null,
         })
   const busy = step.state === 'busy'
+  // Deposit right here while the house cannot cover the seed (the minimum, or more if typed).
+  const seedNeeded = seedUnits !== null && seedUnits > MIN_TABLE_SEED ? seedUnits : MIN_TABLE_SEED
+  const needsDeposit = player.data !== null && BigInt(player.data.balance) < seedNeeded
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -103,9 +108,8 @@ export function OpenTable() {
     <>
       <h1>Open your table</h1>
       <p className="muted">
-        You are the house. Seed a table from your house balance and you own it: you hold its founding LP shares and pick how
-        its dealer plays. Then rent a seat on the floor, where the NPC gamblers, your customers, walk by; the rent goes to
-        the jackpot. A table off the floor takes no bets.
+        You are the house. Seed a table from your house balance and you own it, dealer included. Then rent a seat on the
+        floor, where the NPC gamblers walk by. Rent goes to the jackpot; a table off the floor takes no bets.
       </p>
       <Checklist
         house={player.data ? BigInt(player.data.balance) : null}
@@ -114,6 +118,15 @@ export function OpenTable() {
         rentToSit={rentToSit}
         loggedIn={Boolean(walletId)}
       />
+      {walletId && nearAccount && needsDeposit ? (
+        <YourMoney
+          player={player.data}
+          onChange={() => {
+            player.refresh()
+            wallet.refresh()
+          }}
+        />
+      ) : null}
       {floor.data?.mock ? (
         <p className="loss">
           This contract ({config.houseContract}) has no floor yet (no <code>get_floor</code>): opening a table will fail
@@ -173,7 +186,7 @@ export function OpenTable() {
           seed ({tokenSymbol()})
           <input className="number" inputMode="decimal" value={seed} onChange={(e) => setSeed(e.target.value)} />
           <span className="muted">
-            at least {formatUsdc(MIN_TABLE_SEED)}; your balance: {player.data ? formatUsdc(player.data.balance) : '—'}
+            at least {formatUsdc(MIN_TABLE_SEED)}; in your house: {player.data ? formatUsdc(player.data.balance) : '—'}
           </span>
         </label>
         <label>
@@ -251,8 +264,7 @@ function Checklist({ house, wallet, seats, rentToSit, loggedIn }: ChecklistProps
   const seat = seats ? seatToTake(seats) : null
   const symbol = tokenSymbol()
   const seeded = house !== null && house >= MIN_TABLE_SEED
-  const missing = house === null ? MIN_TABLE_SEED : MIN_TABLE_SEED - house
-  const canDeposit = wallet !== null && wallet >= missing
+  const hint = missingSeedHint({ house, wallet, minSeed: MIN_TABLE_SEED, loggedIn, symbol })
   return (
     <section className="panel">
       <h2>What it takes</h2>
@@ -263,13 +275,7 @@ function Checklist({ house, wallet, seats, rentToSit, loggedIn }: ChecklistProps
       <ol>
         <li className={seeded ? 'win' : undefined}>
           {seeded ? '✓ ' : ''}A seed of at least {formatUsdc(MIN_TABLE_SEED, 0)} {symbol} in the house.{' '}
-          {seeded ? null : loggedIn ? (
-            <span className="muted">
-              {canDeposit ? 'Deposit' : 'Get test chips and deposit'} {formatUsdc(missing)} {symbol} in <Link to="/pools">Pools</Link>.
-            </span>
-          ) : (
-            <span className="muted">Log in first: a new account gets its starting chips on the first visit.</span>
-          )}
+          {hint ? <span className="muted">{hint}</span> : null}
         </li>
         <li>
           A seat: {rentToSit === null || seat === null ? '…' : <SeatPrice seat={seat} rent={rentToSit} />}{' '}

@@ -86,7 +86,7 @@ export function SeatMarket() {
                   {showBuy ? (
                     <button
                       type="button"
-                      title={affordable ? undefined : 'deposit more in Pools first'}
+                      title={affordable ? undefined : 'deposit more in the house first (Your money, on Back a table)'}
                       disabled={!affordable || action.state === 'busy'}
                       onClick={() => buy(row.index, ask, buyWith)}
                     >
